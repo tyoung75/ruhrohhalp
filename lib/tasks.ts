@@ -18,6 +18,10 @@ export function dbTaskToPlannerItem(row: Database["public"]["Tables"]["tasks"]["
     memoryKey: row.memory_key,
     status: row.status,
     sourceText: row.source_text,
+    projectId: row.project_id,
+    delegatedTo: row.delegated_to,
+    isOpenLoop: row.is_open_loop,
+    threadRef: row.thread_ref,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

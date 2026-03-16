@@ -19,6 +19,10 @@ export type PlannerItem = {
   memoryKey: string;
   status: "open" | "done";
   sourceText: string;
+  projectId: string | null;
+  delegatedTo: string | null;
+  isOpenLoop: boolean;
+  threadRef: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -42,3 +46,16 @@ export type AgentChatResponse = {
   modelId: string;
   provider: AIProvider;
 };
+
+// TYOS-277: Knowledge layer types
+export type MemoryCategory = "general" | "personal" | "work" | "technical" | "financial" | "health";
+export type MemorySource = "manual" | "conversation" | "meeting" | "document" | "task";
+export type DecisionStatus = "pending" | "made" | "revisiting" | "reversed";
+export type DecisionCategory = "general" | "career" | "technical" | "financial" | "personal" | "business";
+export type ProjectStatus = "active" | "paused" | "completed" | "archived";
+export type Relationship = "colleague" | "client" | "friend" | "family" | "mentor" | "mentee" | "other";
+export type IdeaSourceType = "typed" | "voice_memo" | "note" | "import";
+export type IdeaStatus = "captured" | "exploring" | "validated" | "parked" | "discarded" | "promoted";
+export type IdeaCategory = "general" | "product" | "business" | "creative" | "technical" | "personal";
+export type DocType = "note" | "article" | "template" | "reference" | "spec" | "journal";
+export type DocStatus = "draft" | "published" | "archived";
