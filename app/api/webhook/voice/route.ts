@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateWebhookSecret } from "@/lib/webhook/auth";
 import { embedAndStore } from "@/lib/embedding";
+import { processWhisper } from "@/lib/processors";
 import { logError } from "@/lib/logger";
 
 const WHISPER_API_URL = "https://api.openai.com/v1/audio/transcriptions";
@@ -26,20 +27,9 @@ async function transcribeAudio(audioBlob: Blob, filename: string): Promise<strin
     throw new Error((data as { error?: { message?: string } }).error?.message ?? `Whisper call failed (${res.status})`);
   }
 
-  // response_format=text returns plain text, not JSON.
   return res.text();
 }
 
-/**
- * POST /api/webhook/voice
- *
- * Expects multipart/form-data with:
- *   - audio: File (audio file — m4a, mp3, wav, webm, etc.)
- *   - userId: string
- *   - projectId?: string
- *   - tags?: string (comma-separated)
- *   - asIdea?: "true" (if set, also upserts to ideas table)
- */
 export async function POST(request: NextRequest) {
   const authError = validateWebhookSecret(request.headers.get("x-webhook-secret"));
   if (authError) return authError;
@@ -63,29 +53,28 @@ export async function POST(request: NextRequest) {
 
     // 1. Transcribe via Whisper
     const transcript = await transcribeAudio(audioFile, filename);
-
     if (!transcript.trim()) {
       return NextResponse.json({ error: "Transcription returned empty" }, { status: 422 });
     }
 
-    // 2. Embed and store
-    const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()).filter(Boolean) : ["voice"];
-
-    const result = await embedAndStore(transcript, {
+    // 2. Process transcript (cleanup, project detection, idea detection)
+    const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()).filter(Boolean) : undefined;
+    const processed = await processWhisper({
       userId,
-      source: "manual",
+      transcript,
       projectId,
-      category: "general",
-      importance: 5,
       tags,
-      extra: asIdea
-        ? { asIdea: true, sourceType: "voice_memo", title: transcript.slice(0, 80) }
-        : undefined,
+      asIdea: asIdea || undefined,
     });
+
+    // 3. Embed and store
+    const result = await embedAndStore(processed.content, processed.metadata);
 
     return NextResponse.json({
       success: true,
-      transcript,
+      transcript: processed.content,
+      isIdea: processed.isIdea,
+      detectedProject: processed.detectedProject,
       memoryIds: result.memoryIds,
       sourceIds: result.sourceIds,
       chunkCount: result.chunkCount,
