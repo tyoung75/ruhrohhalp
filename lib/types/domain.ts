@@ -20,6 +20,9 @@ export type PlannerItem = {
   status: "open" | "done";
   sourceText: string;
   projectId: string | null;
+  delegatedTo: string | null;
+  isOpenLoop: boolean;
+  threadRef: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -51,6 +54,7 @@ export type DecisionStatus = "pending" | "made" | "revisiting" | "reversed";
 export type DecisionCategory = "general" | "career" | "technical" | "financial" | "personal" | "business";
 export type ProjectStatus = "active" | "paused" | "completed" | "archived";
 export type Relationship = "colleague" | "client" | "friend" | "family" | "mentor" | "mentee" | "other";
+export type IdeaSourceType = "typed" | "voice_memo" | "note" | "import";
 export type IdeaStatus = "captured" | "exploring" | "validated" | "parked" | "discarded" | "promoted";
 export type IdeaCategory = "general" | "product" | "business" | "creative" | "technical" | "personal";
 export type DocType = "note" | "article" | "template" | "reference" | "spec" | "journal";

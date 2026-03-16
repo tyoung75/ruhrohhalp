@@ -37,6 +37,7 @@ create table if not exists public.decisions (
   context text not null default '',
   reasoning text not null default '',
   outcome text not null default '',
+  alternatives text[] not null default '{}',
   status text not null default 'pending'
     check (status in ('pending','made','revisiting','reversed')),
   category text not null default 'general'
@@ -61,6 +62,7 @@ create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
+  slug text not null default '',
   description text not null default '',
   status text not null default 'active'
     check (status in ('active','paused','completed','archived')),
@@ -92,6 +94,7 @@ create table if not exists public.people (
   relationship text not null default 'other'
     check (relationship in ('colleague','client','friend','family','mentor','mentee','other')),
   notes text not null default '',
+  commitments text[] not null default '{}',
   last_contact_at timestamptz,
   tags text[] not null default '{}',
   embedding vector(1536),
@@ -110,6 +113,8 @@ create table if not exists public.ideas (
   user_id uuid not null references auth.users(id) on delete cascade,
   title text not null,
   description text not null default '',
+  source_type text not null default 'typed'
+    check (source_type in ('typed','voice_memo','note','import')),
   status text not null default 'captured'
     check (status in ('captured','exploring','validated','parked','discarded','promoted')),
   category text not null default 'general'
@@ -132,10 +137,13 @@ create table if not exists public.meetings (
   user_id uuid not null references auth.users(id) on delete cascade,
   title text not null,
   description text not null default '',
+  summary text not null default '',
   notes text not null default '',
   action_items text[] not null default '{}',
+  extracted_task_ids uuid[] not null default '{}',
   attendee_ids uuid[] not null default '{}',
   project_id uuid,
+  calendar_event_id text,
   meeting_at timestamptz not null default now(),
   duration_minutes integer,
   location text not null default '',
@@ -160,6 +168,9 @@ create table if not exists public.documents (
     check (doc_type in ('note','article','template','reference','spec','journal')),
   status text not null default 'draft'
     check (status in ('draft','published','archived')),
+  drive_file_id text,
+  chunk_index integer not null default 0,
+  parent_doc_id uuid,
   project_id uuid,
   tags text[] not null default '{}',
   embedding vector(1536),
@@ -174,6 +185,9 @@ create index if not exists idx_documents_embedding on public.documents using ivf
 -- Add project_id FK to existing tasks table
 -------------------------------------------------------------------------------
 alter table public.tasks add column if not exists project_id uuid;
+alter table public.tasks add column if not exists delegated_to text;
+alter table public.tasks add column if not exists is_open_loop boolean not null default false;
+alter table public.tasks add column if not exists thread_ref text;
 
 -------------------------------------------------------------------------------
 -- Foreign keys for project_id references (deferred so tables exist first)

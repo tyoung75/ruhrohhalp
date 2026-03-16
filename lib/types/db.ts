@@ -5,6 +5,7 @@ import type {
   DocStatus,
   DocType,
   IdeaCategory,
+  IdeaSourceType,
   IdeaStatus,
   MemoryCategory,
   MemorySource,
@@ -65,6 +66,9 @@ export interface Database {
           status: "open" | "done";
           source_text: string;
           project_id: string | null;
+          delegated_to: string | null;
+          is_open_loop: boolean;
+          thread_ref: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -85,6 +89,9 @@ export interface Database {
           status?: "open" | "done";
           source_text?: string;
           project_id?: string | null;
+          delegated_to?: string | null;
+          is_open_loop?: boolean;
+          thread_ref?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -222,6 +229,7 @@ export interface Database {
           context: string;
           reasoning: string;
           outcome: string;
+          alternatives: string[];
           status: DecisionStatus;
           category: DecisionCategory;
           decided_at: string | null;
@@ -239,6 +247,7 @@ export interface Database {
           context?: string;
           reasoning?: string;
           outcome?: string;
+          alternatives?: string[];
           status?: DecisionStatus;
           category?: DecisionCategory;
           decided_at?: string | null;
@@ -256,6 +265,7 @@ export interface Database {
           id: string;
           user_id: string;
           name: string;
+          slug: string;
           description: string;
           status: ProjectStatus;
           priority: Priority;
@@ -270,6 +280,7 @@ export interface Database {
           id?: string;
           user_id: string;
           name: string;
+          slug?: string;
           description?: string;
           status?: ProjectStatus;
           priority?: Priority;
@@ -294,6 +305,7 @@ export interface Database {
           role: string;
           relationship: Relationship;
           notes: string;
+          commitments: string[];
           last_contact_at: string | null;
           tags: string[];
           created_at: string;
@@ -309,6 +321,7 @@ export interface Database {
           role?: string;
           relationship?: Relationship;
           notes?: string;
+          commitments?: string[];
           last_contact_at?: string | null;
           tags?: string[];
           created_at?: string;
@@ -323,6 +336,7 @@ export interface Database {
           user_id: string;
           title: string;
           description: string;
+          source_type: IdeaSourceType;
           status: IdeaStatus;
           category: IdeaCategory;
           project_id: string | null;
@@ -335,6 +349,7 @@ export interface Database {
           user_id: string;
           title: string;
           description?: string;
+          source_type?: IdeaSourceType;
           status?: IdeaStatus;
           category?: IdeaCategory;
           project_id?: string | null;
@@ -351,10 +366,13 @@ export interface Database {
           user_id: string;
           title: string;
           description: string;
+          summary: string;
           notes: string;
           action_items: string[];
+          extracted_task_ids: string[];
           attendee_ids: string[];
           project_id: string | null;
+          calendar_event_id: string | null;
           meeting_at: string;
           duration_minutes: number | null;
           location: string;
@@ -367,10 +385,13 @@ export interface Database {
           user_id: string;
           title: string;
           description?: string;
+          summary?: string;
           notes?: string;
           action_items?: string[];
+          extracted_task_ids?: string[];
           attendee_ids?: string[];
           project_id?: string | null;
+          calendar_event_id?: string | null;
           meeting_at?: string;
           duration_minutes?: number | null;
           location?: string;
@@ -389,6 +410,9 @@ export interface Database {
           content: string;
           doc_type: DocType;
           status: DocStatus;
+          drive_file_id: string | null;
+          chunk_index: number;
+          parent_doc_id: string | null;
           project_id: string | null;
           tags: string[];
           created_at: string;
@@ -401,6 +425,9 @@ export interface Database {
           content?: string;
           doc_type?: DocType;
           status?: DocStatus;
+          drive_file_id?: string | null;
+          chunk_index?: number;
+          parent_doc_id?: string | null;
           project_id?: string | null;
           tags?: string[];
           created_at?: string;
