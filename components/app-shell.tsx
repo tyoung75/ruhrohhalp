@@ -58,6 +58,10 @@ function createLocalPlannerItem(input: string, userEmail: string): PlannerItem {
     memoryKey: "",
     status: "open",
     sourceText: input,
+    projectId: null,
+    delegatedTo: null,
+    isOpenLoop: false,
+    threadRef: null,
     createdAt: now,
     updatedAt: now,
   };

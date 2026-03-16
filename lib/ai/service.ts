@@ -54,6 +54,10 @@ export async function processInputWithDualAI(params: {
           recommendedAI: r.ai,
           recommendedModel: r.model,
           aiReason: r.reason,
+          projectId: null,
+          delegatedTo: null,
+          isOpenLoop: false,
+          threadRef: null,
         };
       });
 
@@ -69,6 +73,10 @@ export async function processInputWithDualAI(params: {
           recommendedAI: r.ai,
           recommendedModel: r.model,
           aiReason: r.reason,
+          projectId: null,
+          delegatedTo: null,
+          isOpenLoop: false,
+          threadRef: null,
         },
       ];
     }
@@ -114,6 +122,10 @@ export async function processInputWithDualAI(params: {
       memoryKey: audit?.memoryKey ?? "",
       status: "open" as const,
       sourceText: input,
+      projectId: item.projectId ?? null,
+      delegatedTo: item.delegatedTo ?? null,
+      isOpenLoop: item.isOpenLoop ?? false,
+      threadRef: item.threadRef ?? null,
     };
   });
 

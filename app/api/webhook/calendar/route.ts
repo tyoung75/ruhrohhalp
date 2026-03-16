@@ -80,7 +80,6 @@ export async function POST(request: NextRequest) {
       meetingAt,
       durationMinutes,
       location,
-      attendees,
       attendeeIds,
       actionItems,
       projectId,
