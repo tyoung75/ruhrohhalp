@@ -101,7 +101,6 @@ export function TaskRail() {
   function formatDueDate(dueDate: string | undefined): string {
     if (!dueDate) return "";
     const due = new Date(dueDate);
-    const today = new Date();
     if (isToday(dueDate)) return "Today";
     if (isOverdue(dueDate)) return "Overdue";
     return due.toLocaleDateString("en-US", { month: "short", day: "numeric" });

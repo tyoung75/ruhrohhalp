@@ -16,7 +16,7 @@ interface CommandResponse {
   result: string;
   executed: boolean;
   taskId?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   let intent: CommandIntent = "question";
   let result = "";
   let executed = false;
-  let metadata: Record<string, any> = {};
+  const metadata: Record<string, unknown> = {};
   let taskId: string | undefined;
 
   // Pattern: "done TYOS-XXX" or "complete TYOS-XXX"
@@ -185,7 +185,7 @@ export async function POST(request: NextRequest) {
         } else {
           result = `Failed to save note: ${error.message}`;
         }
-      } catch (e) {
+      } catch (_e) {
         result = "Failed to save note";
       }
     } else {

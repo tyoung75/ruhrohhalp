@@ -46,11 +46,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
-  const updates: Record<string, any> = {
+  const updates: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
   };
 
-  let logType = "task_action";
+  const logType = "task_action";
   let logDescription = "";
 
   switch (body.action) {

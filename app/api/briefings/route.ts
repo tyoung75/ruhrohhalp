@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   // Check for webhook auth OR user auth
   const webhookSecret = request.headers.get("x-webhook-secret");
-  let user: any = null;
+  let user: { id: string } | null = null;
 
   if (webhookSecret) {
     const webhookError = validateWebhookSecret(webhookSecret);
