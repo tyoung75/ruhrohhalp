@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateWebhookSecret } from "@/lib/webhook/auth";
 import { requireUser } from "@/lib/auth";
 import { queryBrain } from "@/lib/query";
+import { createClient } from "@/lib/supabase/server";
 import { logError } from "@/lib/logger";
 
 function buildDailyPrompt(): string {
@@ -25,6 +26,75 @@ Calendar events, deadlines, and time-sensitive items for today and the next 48 h
 Patterns, risks, or opportunities Tyler should be aware of. Surface anything that connects across ventures or that might be falling through the cracks.`;
 }
 
+/** Convert parsed sections into the BriefingSection[] format the UI expects */
+function sectionsToContentJson(sections: ReturnType<typeof parseDailySections>) {
+  const sectionDefs = [
+    { key: "leverage_tasks", title: "Leverage Tasks", icon: "⚡", color: "#F59E0B" },
+    { key: "open_decisions", title: "Open Decisions", icon: "◈", color: "#8B5CF6" },
+    { key: "upcoming", title: "Upcoming", icon: "📅", color: "#3B82F6" },
+    { key: "insights", title: "Insights", icon: "💡", color: "#10B981" },
+  ] as const;
+
+  return sectionDefs.map((def) => ({
+    title: def.title,
+    icon: def.icon,
+    color: def.color,
+    items: (sections[def.key] ?? []).map((text: string, i: number) => ({
+      id: `${def.key}-${i}`,
+      text,
+      type: def.key === "leverage_tasks" ? "triage" : def.key === "insights" ? "recommendation" : undefined,
+    })),
+  }));
+}
+
+/** Persist briefing to the briefings table, upserting by date+period */
+async function saveBriefing(userId: string, rawMd: string, contentJson: unknown) {
+  const supabase = await createClient();
+  const today = new Date().toISOString().split("T")[0];
+
+  // Upsert — if a briefing already exists for today, update it
+  const { data: existing } = await supabase
+    .from("briefings")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("date", today)
+    .eq("period", "daily")
+    .maybeSingle();
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from("briefings")
+      .update({
+        content_md: rawMd,
+        content_json: contentJson,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id)
+      .select()
+      .single();
+
+    if (error) logError("briefing.save.update", error);
+    return data;
+  } else {
+    const { data, error } = await supabase
+      .from("briefings")
+      .insert({
+        user_id: userId,
+        content_md: rawMd,
+        content_json: contentJson,
+        date: today,
+        period: "daily",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) logError("briefing.save.insert", error);
+    return data;
+  }
+}
+
 // GET — browser-initiated briefing generation (user-authed)
 export async function GET() {
   const { user, response } = await requireUser();
@@ -38,11 +108,19 @@ export async function GET() {
     });
 
     const sections = parseDailySections(result.answer);
+    const contentJson = sectionsToContentJson(sections);
+
+    // Persist to DB so it survives page reloads
+    const saved = await saveBriefing(user.id, result.answer, contentJson);
 
     return NextResponse.json({
-      ...sections,
+      briefing: saved ?? {
+        content_json: contentJson,
+        content_md: result.answer,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
       sources: result.sources,
-      raw: result.answer,
     });
   } catch (error) {
     logError("briefing.daily.get", error);
@@ -70,11 +148,19 @@ export async function POST(request: NextRequest) {
     });
 
     const sections = parseDailySections(result.answer);
+    const contentJson = sectionsToContentJson(sections);
+
+    // Persist to DB
+    const saved = await saveBriefing(userId, result.answer, contentJson);
 
     return NextResponse.json({
-      ...sections,
+      briefing: saved ?? {
+        content_json: contentJson,
+        content_md: result.answer,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
       sources: result.sources,
-      raw: result.answer,
     });
   } catch (error) {
     logError("briefing.daily", error);

@@ -14,6 +14,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@supabase/auth-helpers-nextjs": "^0.15.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.49.4",
     "next": "15.2.8",

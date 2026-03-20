@@ -87,10 +87,15 @@ begin
 end;
 $$;
 
+drop trigger if exists trg_profiles_updated_at on public.profiles;
 create trigger trg_profiles_updated_at before update on public.profiles for each row execute function public.set_updated_at();
+drop trigger if exists trg_tasks_updated_at on public.tasks;
 create trigger trg_tasks_updated_at before update on public.tasks for each row execute function public.set_updated_at();
+drop trigger if exists trg_user_api_keys_updated_at on public.user_api_keys;
 create trigger trg_user_api_keys_updated_at before update on public.user_api_keys for each row execute function public.set_updated_at();
+drop trigger if exists trg_subscriptions_updated_at on public.subscriptions;
 create trigger trg_subscriptions_updated_at before update on public.subscriptions for each row execute function public.set_updated_at();
+drop trigger if exists trg_usage_counters_updated_at on public.usage_counters;
 create trigger trg_usage_counters_updated_at before update on public.usage_counters for each row execute function public.set_updated_at();
 
 alter table public.profiles enable row level security;
@@ -100,27 +105,46 @@ alter table public.user_api_keys enable row level security;
 alter table public.subscriptions enable row level security;
 alter table public.usage_counters enable row level security;
 
+drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles for select using (auth.uid() = id);
+drop policy if exists "profiles_insert_own" on public.profiles;
 create policy "profiles_insert_own" on public.profiles for insert with check (auth.uid() = id);
+drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own" on public.profiles for update using (auth.uid() = id);
 
+drop policy if exists "tasks_select_own" on public.tasks;
 create policy "tasks_select_own" on public.tasks for select using (auth.uid() = user_id);
+drop policy if exists "tasks_insert_own" on public.tasks;
 create policy "tasks_insert_own" on public.tasks for insert with check (auth.uid() = user_id);
+drop policy if exists "tasks_update_own" on public.tasks;
 create policy "tasks_update_own" on public.tasks for update using (auth.uid() = user_id);
+drop policy if exists "tasks_delete_own" on public.tasks;
 create policy "tasks_delete_own" on public.tasks for delete using (auth.uid() = user_id);
 
+drop policy if exists "task_messages_select_own" on public.task_messages;
 create policy "task_messages_select_own" on public.task_messages for select using (auth.uid() = user_id);
+drop policy if exists "task_messages_insert_own" on public.task_messages;
 create policy "task_messages_insert_own" on public.task_messages for insert with check (auth.uid() = user_id);
 
+drop policy if exists "user_api_keys_select_own" on public.user_api_keys;
 create policy "user_api_keys_select_own" on public.user_api_keys for select using (auth.uid() = user_id);
+drop policy if exists "user_api_keys_insert_own" on public.user_api_keys;
 create policy "user_api_keys_insert_own" on public.user_api_keys for insert with check (auth.uid() = user_id);
+drop policy if exists "user_api_keys_update_own" on public.user_api_keys;
 create policy "user_api_keys_update_own" on public.user_api_keys for update using (auth.uid() = user_id);
+drop policy if exists "user_api_keys_delete_own" on public.user_api_keys;
 create policy "user_api_keys_delete_own" on public.user_api_keys for delete using (auth.uid() = user_id);
 
+drop policy if exists "subscriptions_select_own" on public.subscriptions;
 create policy "subscriptions_select_own" on public.subscriptions for select using (auth.uid() = user_id);
+drop policy if exists "subscriptions_insert_own" on public.subscriptions;
 create policy "subscriptions_insert_own" on public.subscriptions for insert with check (auth.uid() = user_id);
+drop policy if exists "subscriptions_update_own" on public.subscriptions;
 create policy "subscriptions_update_own" on public.subscriptions for update using (auth.uid() = user_id);
 
+drop policy if exists "usage_counters_select_own" on public.usage_counters;
 create policy "usage_counters_select_own" on public.usage_counters for select using (auth.uid() = user_id);
+drop policy if exists "usage_counters_insert_own" on public.usage_counters;
 create policy "usage_counters_insert_own" on public.usage_counters for insert with check (auth.uid() = user_id);
+drop policy if exists "usage_counters_update_own" on public.usage_counters;
 create policy "usage_counters_update_own" on public.usage_counters for update using (auth.uid() = user_id);
