@@ -185,7 +185,7 @@ export async function POST(request: NextRequest) {
         } else {
           result = `Failed to save note: ${error.message}`;
         }
-      } catch (_e) {
+      } catch {
         result = "Failed to save note";
       }
     } else {
