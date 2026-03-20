@@ -39,7 +39,7 @@ export function TaskRail() {
     setError("");
     try {
       const data = await api<TasksResponse>("/api/tasks?state=backlog,unstarted,started");
-      setTasks(data.tasks);
+      setTasks(data.tasks ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load tasks");
     } finally {

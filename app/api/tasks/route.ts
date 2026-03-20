@@ -66,21 +66,50 @@ export async function GET(request: NextRequest) {
 
   // If project filter is needed, fetch projects and filter in memory
   // (Supabase RLS would handle this in a real scenario)
-  let items = (data ?? []).map(dbTaskToPlannerItem);
+  let rows = data ?? [];
 
-  if (projectParam) {
+  // Fetch projects for name mapping
+  const projectIds = [...new Set(rows.map(r => r.project_id).filter(Boolean))];
+  const projectMap = new Map<string, { name: string; slug: string }>();
+
+  if (projectIds.length > 0) {
     const { data: projects } = await supabase
       .from("projects")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("slug", projectParam);
+      .select("id, name, slug")
+      .in("id", projectIds);
 
-    const projectIds = (projects ?? []).map(p => p.id);
-    items = items.filter(item => item.projectId && projectIds.includes(item.projectId));
+    (projects ?? []).forEach(p => projectMap.set(p.id, { name: p.name, slug: p.slug }));
   }
 
+  if (projectParam) {
+    const matchingIds = [...projectMap.entries()]
+      .filter(([, p]) => p.slug === projectParam)
+      .map(([id]) => id);
+    rows = rows.filter(r => r.project_id && matchingIds.includes(r.project_id));
+  }
+
+  // Return both formats for backward compat
+  const tasks = rows.map(r => ({
+    id: r.id,
+    identifier: r.identifier ?? "",
+    title: r.title,
+    description: r.description,
+    priority_num: r.priority_num ?? 3,
+    priority: r.priority,
+    state: r.state ?? (r.status === "done" ? "done" : "unstarted"),
+    status: r.status,
+    due_date: r.due_date,
+    project_id: r.project_id,
+    project_name: r.project_id ? (projectMap.get(r.project_id)?.name ?? "—") : "—",
+    project_color: "#6B7280",
+    source: r.source,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  }));
+
   return NextResponse.json({
-    items,
+    tasks,
+    items: rows.map(dbTaskToPlannerItem),
     pagination: {
       limit,
       offset,
