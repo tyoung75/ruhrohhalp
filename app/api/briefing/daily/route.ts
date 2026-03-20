@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateWebhookSecret } from "@/lib/webhook/auth";
+import { requireUser } from "@/lib/auth";
 import { queryBrain } from "@/lib/query";
 import { logError } from "@/lib/logger";
 
@@ -24,6 +25,32 @@ Calendar events, deadlines, and time-sensitive items for today and the next 48 h
 Patterns, risks, or opportunities Tyler should be aware of. Surface anything that connects across ventures or that might be falling through the cracks.`;
 }
 
+// GET — browser-initiated briefing generation (user-authed)
+export async function GET() {
+  const { user, response } = await requireUser();
+  if (response || !user) return response;
+
+  try {
+    const result = await queryBrain(buildDailyPrompt(), {
+      userId: user.id,
+      topK: 12,
+      threshold: 0.55,
+    });
+
+    const sections = parseDailySections(result.answer);
+
+    return NextResponse.json({
+      ...sections,
+      sources: result.sources,
+      raw: result.answer,
+    });
+  } catch (error) {
+    logError("briefing.daily.get", error);
+    return NextResponse.json({ error: "Daily briefing failed" }, { status: 500 });
+  }
+}
+
+// POST — webhook-initiated briefing generation (webhook secret auth)
 export async function POST(request: NextRequest) {
   const authError = validateWebhookSecret(request.headers.get("x-webhook-secret"));
   if (authError) return authError;
