@@ -17,9 +17,9 @@ export const TIERS: Record<
     label: "Free",
     price: 0,
     models: ["claude-haiku-4-5", "gpt-4o-mini", "gemini-1.5-flash"],
-    monthlyLimit: 5,
-    desc: "Try ruhrohhalp with basic models",
-    features: ["5 tasks/month", "Basic models only", "No agent chat", "No memory sync"],
+    monthlyLimit: null,
+    desc: "Tyler's personal OS — no limits",
+    features: ["Unlimited tasks", "Basic models", "No agent chat", "No memory sync"],
   },
   starter: {
     id: "starter",

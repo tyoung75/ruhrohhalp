@@ -162,6 +162,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Remove protected fields
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { user_id, embedding, created_at, ...safeData } = data || {};
 
     const supabase = await createClient();

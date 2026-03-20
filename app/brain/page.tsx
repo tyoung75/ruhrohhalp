@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
-import { Spinner } from "@/components/primitives";
+// Spinner available if needed for future loading states
 import { CeoMode } from "@/components/brain/CeoMode";
 
 interface SearchSource {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
@@ -248,7 +248,7 @@ export default function DashboardPage() {
             No briefing loaded
           </div>
           <div style={{ fontFamily: C.sans, fontSize: 12, color: C.textFaint, maxWidth: 340, margin: "0 auto" }}>
-            Click "Generate Briefing" above, or your next briefing will generate automatically at 6 AM ET via the daily cron.
+            Click &quot;Generate Briefing&quot; above, or your next briefing will generate automatically at 6 AM ET via the daily cron.
           </div>
         </div>
       )}

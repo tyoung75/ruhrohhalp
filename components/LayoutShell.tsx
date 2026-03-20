@@ -6,7 +6,7 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/client";
 import { api } from "@/lib/client-api";
 import type { PlanTier } from "@/lib/types/domain";
 import { C } from "@/lib/ui";
-import { TIERS } from "@/lib/tiers";
+// TIERS import removed — tier display handled in settings
 import { Spinner } from "@/components/primitives";
 import { NavSidebar } from "@/components/NavSidebar";
 import { PricingModal } from "@/components/pricing-modal";
