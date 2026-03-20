@@ -22,6 +22,9 @@ export function dbTaskToPlannerItem(row: Database["public"]["Tables"]["tasks"]["
     delegatedTo: row.delegated_to,
     isOpenLoop: row.is_open_loop,
     threadRef: row.thread_ref,
+    linearIssueId: row.linear_issue_id,
+    linearUrl: row.linear_url,
+    linearSyncedAt: row.linear_synced_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

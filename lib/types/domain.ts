@@ -23,6 +23,9 @@ export type PlannerItem = {
   delegatedTo: string | null;
   isOpenLoop: boolean;
   threadRef: string | null;
+  linearIssueId: string | null;
+  linearUrl: string | null;
+  linearSyncedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

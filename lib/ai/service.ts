@@ -58,6 +58,9 @@ export async function processInputWithDualAI(params: {
           delegatedTo: null,
           isOpenLoop: false,
           threadRef: null,
+          linearIssueId: null,
+          linearUrl: null,
+          linearSyncedAt: null,
         };
       });
 
@@ -77,6 +80,9 @@ export async function processInputWithDualAI(params: {
           delegatedTo: null,
           isOpenLoop: false,
           threadRef: null,
+          linearIssueId: null,
+          linearUrl: null,
+          linearSyncedAt: null,
         },
       ];
     }
@@ -126,6 +132,9 @@ export async function processInputWithDualAI(params: {
       delegatedTo: item.delegatedTo ?? null,
       isOpenLoop: item.isOpenLoop ?? false,
       threadRef: item.threadRef ?? null,
+      linearIssueId: item.linearIssueId ?? null,
+      linearUrl: item.linearUrl ?? null,
+      linearSyncedAt: item.linearSyncedAt ?? null,
     };
   });
 

@@ -49,6 +49,9 @@ function createLocalPlannerItem(input: string, userEmail: string): PlannerItem {
     delegatedTo: null,
     isOpenLoop: false,
     threadRef: null,
+    linearIssueId: null,
+    linearUrl: null,
+    linearSyncedAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -71,6 +74,38 @@ export default function TasksPage() {
   const [usageLimit, setUsageLimit] = useState<number | null>(5);
   const [view, setView] = useState<ViewMode>("list");
   const [loaded, setLoaded] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
+  async function handleLinearSync() {
+    if (syncing || localMode) return;
+    setSyncing(true);
+    setSyncStatus("Syncing with Linear...");
+    try {
+      const result = await api<{ pulled: number; pushed: number; skipped: number; errors: string[] }>(
+        "/api/sync/linear?direction=both",
+        { method: "POST" },
+      );
+      const parts: string[] = [];
+      if (result.pulled > 0) parts.push(`${result.pulled} pulled`);
+      if (result.pushed > 0) parts.push(`${result.pushed} pushed`);
+      if (result.skipped > 0) parts.push(`${result.skipped} unchanged`);
+      setSyncStatus(parts.length > 0 ? parts.join(", ") : "Already in sync");
+
+      // Refresh task list after sync
+      if (result.pulled > 0 || result.pushed > 0) {
+        const tasksData = await api<{ items: PlannerItem[] }>("/api/tasks");
+        setItems(tasksData.items);
+      }
+
+      setTimeout(() => setSyncStatus(null), 4000);
+    } catch (error) {
+      setSyncStatus(error instanceof Error ? error.message : "Sync failed");
+      setTimeout(() => setSyncStatus(null), 5000);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   useEffect(() => {
     async function boot() {
@@ -218,26 +253,67 @@ export default function TasksPage() {
             </div>
           </div>
 
-          {/* View switcher */}
-          <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 6, padding: 2 }}>
-            {(["list", "kanban"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                style={{
-                  padding: "4px 10px",
-                  borderRadius: 4,
-                  border: "none",
-                  background: view === v ? C.card : "transparent",
-                  color: view === v ? C.cream : C.textFaint,
-                  fontFamily: C.mono,
-                  fontSize: 10,
-                  cursor: "pointer",
-                }}
-              >
-                {v === "list" ? "☰ List" : "▦ Kanban"}
-              </button>
-            ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {/* Linear sync */}
+            <button
+              onClick={handleLinearSync}
+              disabled={syncing || localMode}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: `1px solid ${syncing ? "#5e6ad240" : "#5e6ad260"}`,
+                background: syncing ? "#5e6ad214" : "#5e6ad20a",
+                color: syncing ? "#5e6ad2" : "#8b8fa8",
+                fontFamily: C.mono,
+                fontSize: 9,
+                cursor: syncing ? "wait" : "pointer",
+                transition: "all 0.15s",
+                opacity: localMode ? 0.4 : 1,
+              }}
+              onMouseEnter={(e) => {
+                if (!syncing && !localMode) {
+                  e.currentTarget.style.background = "#5e6ad220";
+                  e.currentTarget.style.color = "#5e6ad2";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!syncing) {
+                  e.currentTarget.style.background = "#5e6ad20a";
+                  e.currentTarget.style.color = "#8b8fa8";
+                }
+              }}
+            >
+              <span style={{ fontSize: 11, transform: syncing ? "none" : undefined, animation: syncing ? "spin 1s linear infinite" : "none" }}>▦</span>
+              {syncing ? "Syncing..." : "Linear Sync"}
+            </button>
+            {syncStatus && (
+              <span style={{ fontSize: 9, fontFamily: C.mono, color: "#5e6ad2" }}>{syncStatus}</span>
+            )}
+
+            {/* View switcher */}
+            <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 6, padding: 2 }}>
+              {(["list", "kanban"] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 4,
+                    border: "none",
+                    background: view === v ? C.card : "transparent",
+                    color: view === v ? C.cream : C.textFaint,
+                    fontFamily: C.mono,
+                    fontSize: 10,
+                    cursor: "pointer",
+                  }}
+                >
+                  {v === "list" ? "☰ List" : "▦ Kanban"}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -512,6 +588,11 @@ export default function TasksPage() {
           <div style={{ padding: "6px 18px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 12 }}>
             <span style={{ fontSize: 9, fontFamily: C.mono, color: C.task }}>{openCount} open</span>
             <span style={{ fontSize: 9, fontFamily: C.mono, color: C.textFaint }}>{doneCount} done</span>
+            {items.filter((i) => i.linearIssueId).length > 0 && (
+              <span style={{ fontSize: 9, fontFamily: C.mono, color: "#5e6ad2" }}>
+                {items.filter((i) => i.linearIssueId).length} linked to Linear
+              </span>
+            )}
           </div>
         )}
       </div>

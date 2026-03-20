@@ -69,6 +69,9 @@ export interface Database {
           delegated_to: string | null;
           is_open_loop: boolean;
           thread_ref: string | null;
+          linear_issue_id: string | null;
+          linear_url: string | null;
+          linear_synced_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -92,6 +95,9 @@ export interface Database {
           delegated_to?: string | null;
           is_open_loop?: boolean;
           thread_ref?: string | null;
+          linear_issue_id?: string | null;
+          linear_url?: string | null;
+          linear_synced_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
