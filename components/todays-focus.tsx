@@ -54,42 +54,43 @@ export function TodaysFocus() {
 
       // Fetch high-leverage tasks
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tasks: any[] = await api("/api/tasks?filter=high_leverage&status=pending");
+      const tasksRes: any = await api("/api/tasks?state=started,unstarted&priority=1,2");
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const items: FocusItem[] = (tasks ?? []).map((task: any) => ({
+      const items: FocusItem[] = (tasksRes?.tasks ?? []).map((task: any) => ({
         id: task.id,
         title: task.title,
         priority: task.priority || "high",
-        rationale: task.rationale || "",
-        leverageReason: task.leverage_reason,
-        pillar: task.pillar,
+        rationale: task.description || "",
+        leverageReason: undefined,
+        pillar: task.project_name !== "—" ? task.project_name : undefined,
         source: task.source,
-        estimate: task.estimate_minutes,
-        actions: task.actions || [],
+        estimate: undefined,
+        actions: [],
       }));
 
       setFocusItems(items);
 
       // Fetch goal spotlight
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const goals: any[] = await api("/api/goals?spotlight=true&limit=1");
+      const goalsRes: any = await api("/api/goals");
+      const goalsList = goalsRes?.goals ?? [];
 
-      if (goals && goals.length > 0) {
-        const goal = goals[0];
+      if (goalsList.length > 0) {
+        const goal = goalsList[0];
+        const current = goal.progress_current ?? 0;
+        const target = goal.progress_target ?? 1;
         setGoalSpotlight({
           id: goal.id,
           title: goal.title,
-          progress: goal.progress || 0,
-          metric: goal.metric || "",
-          deadline: goal.deadline || "",
+          progress: target > 0 ? Math.round((current / target) * 100) : 0,
+          metric: goal.progress_metric || "",
+          deadline: goal.due_date || "",
         });
       }
 
-      // Fetch timeline status
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const timeline: any = await api("/api/timeline/status");
-      setTimelineStatus(timeline?.status || "On track");
+      // Timeline status — no dedicated endpoint, default to "On track"
+      setTimelineStatus("On track");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load today's focus");
       console.error("Error loading today's focus:", err);
