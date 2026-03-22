@@ -1,332 +1,368 @@
-"use client";
-
-import React, { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { C } from "@/lib/ui";
-import { Spinner } from "@/components/primitives";
-import { api } from "@/lib/client-api";
 import { GoalProgressCompact, type GoalData } from "@/components/goal-progress-card";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+interface PillarGoal extends GoalData {
+  id: string;
+  title: string;
+  progress: number;
+  metric?: string;
+  deadline?: string;
+}
 
-export interface PillarData {
+interface Pillar {
   id: string;
   name: string;
-  icon: string;
-  color: string;
-  /** 0–100 aggregate health score */
-  health: number;
-  /** Summary line from latest briefing or computed */
-  status?: string;
-  /** Goals under this pillar */
-  goals: GoalData[];
-  /** How many active tasks are under this pillar */
-  activeTaskCount: number;
-  /** How many signals received in last 7 days */
-  recentSignalCount: number;
+  health: "strong" | "stable" | "at_risk" | "critical";
+  goals: PillarGoal[];
+  recentActivities?: string[];
 }
 
-// ---------------------------------------------------------------------------
-// Pillar color map — matches seed_pillars_and_goals.sql
-// ---------------------------------------------------------------------------
-
-export const PILLAR_COLORS: Record<string, string> = {
-  "Fitness & Athletics":   "#e07d4a",
-  "Career & Instacart":    "#5d9ef8",
-  "Ventures & BDHE":       "#41c998",
-  "Financial":             "#f4c842",
-  "Relationship & Family": "#ef7f7f",
-  "Health & Recovery":     "#9ec8f5",
-  "Content & Brand":       "#e07d4a",
-  "Travel & Experiences":  "#6fcf9a",
-  "Personal Growth":       "#5d9ef8",
-  "Community & Impact":    "#41c998",
-};
-
-export const PILLAR_ICONS: Record<string, string> = {
-  "Fitness & Athletics":   "◉",
-  "Career & Instacart":    "▣",
-  "Ventures & BDHE":       "◈",
-  "Financial":             "◇",
-  "Relationship & Family": "♡",
-  "Health & Recovery":     "✦",
-  "Content & Brand":       "✎",
-  "Travel & Experiences":  "▸",
-  "Personal Growth":       "◎",
-  "Community & Impact":    "☍",
-};
-
-// ---------------------------------------------------------------------------
-// Health indicator — ring-style gauge
-// ---------------------------------------------------------------------------
-
-function HealthRing({ health, color, size = 32 }: { health: number; color: string; size?: number }) {
-  const strokeWidth = 3;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (health / 100) * circumference;
-
-  // Color shifts based on health: < 30 = red, 30-60 = amber, > 60 = pillar color
-  const ringColor = health < 30 ? C.reminder : health < 60 ? C.task : color;
-
-  return (
-    <svg width={size} height={size} style={{ transform: "rotate(-90deg)", flexShrink: 0 }}>
-      {/* Background ring */}
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={`${color}15`}
-        strokeWidth={strokeWidth}
-      />
-      {/* Progress ring */}
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={ringColor}
-        strokeWidth={strokeWidth}
-        strokeDasharray={circumference}
-        strokeDashoffset={offset}
-        strokeLinecap="round"
-        style={{ transition: "stroke-dashoffset 0.8s ease" }}
-      />
-    </svg>
-  );
+interface PillarHealthProps {
+  pillars?: Pillar[];
+  loading?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Single pillar row
-// ---------------------------------------------------------------------------
+export function PillarHealth({ pillars = [], loading = false }: PillarHealthProps) {
+  const router = useRouter();
+  const [expandedPillar, setExpandedPillar] = useState<string | null>(null);
 
-function PillarRow({
-  pillar,
-  isExpanded,
-  onToggle,
-}: {
-  pillar: PillarData;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div
-      style={{
-        borderBottom: `1px solid ${C.border}`,
-        transition: "background 0.15s",
-      }}
-    >
-      {/* Clickable header */}
-      <button
-        onClick={onToggle}
+  const healthColors: Record<string, string> = {
+    strong: C.gem,
+    stable: C.task,
+    at_risk: "#FFA500",
+    critical: C.reminder,
+  };
+
+  const healthLabels: Record<string, string> = {
+    strong: "Strong",
+    stable: "Stable",
+    at_risk: "At Risk",
+    critical: "Critical",
+  };
+
+  const togglePillarExpanded = (pillarId: string) => {
+    setExpandedPillar(expandedPillar === pillarId ? null : pillarId);
+  };
+
+  const handleGoalClick = (goalId: string) => {
+    router.push(`/goals/${goalId}`);
+  };
+
+  if (loading) {
+    return (
+      <div
         style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "10px 12px",
-          background: isExpanded ? `${pillar.color}06` : "transparent",
-          border: "none",
-          cursor: "pointer",
-          textAlign: "left",
+          padding: 16,
+          textAlign: "center",
+          color: C.textDim,
+          fontSize: 13,
         }}
       >
-        {/* Health ring */}
-        <HealthRing health={pillar.health} color={pillar.color} size={28} />
+        Loading pillar health...
+      </div>
+    );
+  }
 
-        {/* Pillar info */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontFamily: C.serif,
-              fontStyle: "italic",
-              fontSize: 12,
-              color: C.cream,
-              lineHeight: 1.3,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <span style={{ color: pillar.color, marginRight: 4 }}>{pillar.icon}</span>
-            {pillar.name}
-          </div>
+  if (pillars.length === 0) {
+    return (
+      <div
+        style={{
+          padding: 16,
+          textAlign: "center",
+          color: C.textDim,
+          fontSize: 13,
+        }}
+      >
+        No pillars configured yet.
+      </div>
+    );
+  }
 
-          {pillar.status && (
-            <div
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {pillars.map((pillar) => {
+        const isExpanded = expandedPillar === pillar.id;
+        const healthColor = healthColors[pillar.health] || C.textDim;
+        const healthLabel = healthLabels[pillar.health] || pillar.health;
+
+        return (
+          <div key={pillar.id}>
+            {/* Pillar Header */}
+            <button
+              onClick={() => togglePillarExpanded(pillar.id)}
               style={{
-                fontFamily: C.mono,
-                fontSize: 8,
-                color: C.textDim,
-                marginTop: 2,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                width: "100%",
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                padding: "12px 14px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                cursor: "pointer",
+                transition: "border-color 0.2s, background 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.background = C.card;
+                (e.currentTarget as HTMLElement).style.borderColor = C.cl;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.background = C.surface;
+                (e.currentTarget as HTMLElement).style.borderColor = C.border;
               }}
             >
-              {pillar.status}
-            </div>
-          )}
-        </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, textAlign: "left" }}>
+                <div
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: healthColor,
+                    flexShrink: 0,
+                  }}
+                />
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>
+                    {pillar.name}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.textDim, marginTop: 2 }}>
+                    {healthLabel}
+                  </div>
+                </div>
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: C.textFaint,
+                  transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.2s",
+                }}
+              >
+                ▼
+              </div>
+            </button>
 
-        {/* Counts */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, flexShrink: 0 }}>
-          <span style={{ fontFamily: C.mono, fontSize: 9, color: pillar.color, fontWeight: 600 }}>
-            {pillar.health}
-          </span>
-          <div style={{ display: "flex", gap: 4 }}>
-            {pillar.activeTaskCount > 0 && (
-              <span style={{ fontFamily: C.mono, fontSize: 7, color: C.textFaint }}>
-                {pillar.activeTaskCount}t
-              </span>
+            {/* Expanded Content: Goals */}
+            {isExpanded && pillar.goals.length > 0 && (
+              <div style={{ padding: "4px 12px 10px 48px" }}>
+                {pillar.goals.map((goal) => (
+                  <div
+                    key={goal.id}
+                    onClick={() => handleGoalClick(goal.id)}
+                    style={{
+                      cursor: "pointer",
+                      borderRadius: 6,
+                      transition: "border-color 0.2s, background 0.2s",
+                      marginBottom: 8,
+                    }}
+                    onMouseEnter={(e) => {
+                      const elem = e.currentTarget as HTMLElement;
+                      elem.style.borderColor = C.cl;
+                      elem.style.background = C.surface + "40";
+                    }}
+                    onMouseLeave={(e) => {
+                      const elem = e.currentTarget as HTMLElement;
+                      elem.style.borderColor = C.border;
+                      elem.style.background = "transparent";
+                    }}
+                  >
+                    <GoalProgressCompact goal={goal} />
+                  </div>
+                ))}
+              </div>
             )}
-            {pillar.recentSignalCount > 0 && (
-              <span style={{ fontFamily: C.mono, fontSize: 7, color: C.textFaint }}>
-                {pillar.recentSignalCount}s
-              </span>
+
+            {/* Expanded Content: No Goals */}
+            {isExpanded && pillar.goals.length === 0 && (
+              <div
+                style={{
+                  padding: "12px 48px",
+                  color: C.textDim,
+                  fontSize: 12,
+                  fontStyle: "italic",
+                }}
+              >
+                No goals in this pillar yet.
+              </div>
+            )}
+
+            {/* Expanded Content: Recent Activities */}
+            {isExpanded && pillar.recentActivities && pillar.recentActivities.length > 0 && (
+              <div style={{ padding: "8px 12px 0 48px" }}>
+                <div style={{ fontSize: 11, textTransform: "uppercase", color: C.textFaint, marginBottom: 6 }}>
+                  Recent Activity
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {pillar.recentActivities.map((activity, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        fontSize: 12,
+                        color: C.textDim,
+                        paddingLeft: 8,
+                        borderLeft: `2px solid ${C.border}`,
+                      }}
+                    >
+                      {activity}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
-        </div>
-      </button>
-
-      {/* Expanded: goals list */}
-      {isExpanded && pillar.goals.length > 0 && (
-        <div style={{ padding: "4px 12px 10px 48px" }}>
-          {pillar.goals.map((goal) => (
-            <GoalProgressCompact key={goal.id} goal={goal} />
-          ))}
-        </div>
-      )}
-
-      {isExpanded && pillar.goals.length === 0 && (
-        <div style={{ padding: "8px 12px 10px 48px", fontFamily: C.mono, fontSize: 9, color: C.textFaint }}>
-          No goals tracked yet
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// PillarHealth sidebar component
-// ---------------------------------------------------------------------------
+interface PillarRowProps {
+  pillar: Pillar;
+  isExpanded: boolean;
+  onToggleExpanded: () => void;
+  healthColor: string;
+  healthLabel: string;
+}
 
-export function PillarHealth() {
-  const [pillars, setPillars] = useState<PillarData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+function PillarRow({
+  pillar,
+  isExpanded,
+  onToggleExpanded,
+  healthColor,
+  healthLabel,
+}: PillarRowProps) {
+  const router = useRouter();
 
-  const loadPillars = useCallback(async () => {
-    try {
-      // Fetch goals grouped by pillar
-      const data = await api<{ pillars: PillarData[] }>("/api/goals?withPillars=true");
-      if (data.pillars) {
-        setPillars(data.pillars);
-      }
-    } catch (e) {
-      console.error("Failed to load pillars:", e);
-      // Fallback: show pillar names without data
-      setPillars(
-        Object.entries(PILLAR_COLORS).map(([name, color]) => ({
-          id: name,
-          name,
-          icon: PILLAR_ICONS[name] ?? "◈",
-          color,
-          health: 0,
-          goals: [],
-          activeTaskCount: 0,
-          recentSignalCount: 0,
-          status: "No data yet",
-        }))
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadPillars();
-  }, [loadPillars]);
-
-  // Listen for goal/task updates
-  useEffect(() => {
-    function handleRefresh() {
-      loadPillars();
-    }
-    window.addEventListener("goals:refresh", handleRefresh);
-    window.addEventListener("tasks:refresh", handleRefresh);
-    return () => {
-      window.removeEventListener("goals:refresh", handleRefresh);
-      window.removeEventListener("tasks:refresh", handleRefresh);
-    };
-  }, [loadPillars]);
-
-  // Aggregate health
-  const overallHealth = pillars.length > 0
-    ? Math.round(pillars.reduce((sum, p) => sum + p.health, 0) / pillars.length)
-    : 0;
+  const handleGoalClick = (goalId: string) => {
+    router.push(`/goals/${goalId}`);
+  };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Header */}
-      <div
+    <div>
+      {/* Pillar Header */}
+      <button
+        onClick={onToggleExpanded}
         style={{
-          padding: "16px 12px 12px",
-          borderBottom: `1px solid ${C.border}`,
+          width: "100%",
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          padding: "12px 14px",
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
+          justifyContent: "space-between",
+          cursor: "pointer",
+          transition: "border-color 0.2s, background 0.2s",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.background = C.card;
+          (e.currentTarget as HTMLElement).style.borderColor = C.cl;
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.background = C.surface;
+          (e.currentTarget as HTMLElement).style.borderColor = C.border;
         }}
       >
-        <div>
-          <h3
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, textAlign: "left" }}>
+          <div
             style={{
-              fontFamily: C.serif,
-              fontStyle: "italic",
-              fontSize: 14,
-              color: C.cream,
-              margin: 0,
-              fontWeight: 400,
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: healthColor,
+              flexShrink: 0,
             }}
-          >
-            Life Pillars
-          </h3>
-          <div style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint, marginTop: 2 }}>
-            {pillars.length} pillars · {pillars.reduce((s, p) => s + p.goals.length, 0)} goals
+          />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>
+              {pillar.name}
+            </div>
+            <div style={{ fontSize: 12, color: C.textDim, marginTop: 2 }}>
+              {healthLabel}
+            </div>
           </div>
         </div>
+        <div
+          style={{
+            fontSize: 12,
+            color: C.textFaint,
+            transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 0.2s",
+          }}
+        >
+          ▼
+        </div>
+      </button>
 
-        {pillars.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <HealthRing health={overallHealth} color={C.cl} size={24} />
-            <span style={{ fontFamily: C.mono, fontSize: 11, color: C.cl, fontWeight: 600 }}>
-              {overallHealth}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Loading */}
-      {loading && (
-        <div style={{ textAlign: "center", padding: "24px 12px", color: C.textFaint }}>
-          <Spinner color={C.cl} size={12} />
-          <div style={{ fontFamily: C.mono, fontSize: 9, marginTop: 6 }}>Loading pillars…</div>
+      {/* Expanded Content: Goals */}
+      {isExpanded && pillar.goals.length > 0 && (
+        <div style={{ padding: "4px 12px 10px 48px" }}>
+          {pillar.goals.map((goal) => (
+            <div
+              key={goal.id}
+              onClick={() => handleGoalClick(goal.id)}
+              style={{
+                cursor: "pointer",
+                borderRadius: 6,
+                padding: "4px",
+                transition: "border-color 0.2s, background 0.2s",
+                marginBottom: 8,
+                border: `1px solid ${C.border}`,
+              }}
+              onMouseEnter={(e) => {
+                const elem = e.currentTarget as HTMLElement;
+                elem.style.borderColor = C.cl;
+                elem.style.background = C.surface + "40";
+              }}
+              onMouseLeave={(e) => {
+                const elem = e.currentTarget as HTMLElement;
+                elem.style.borderColor = C.border;
+                elem.style.background = "transparent";
+              }}
+            >
+              <GoalProgressCompact goal={goal} />
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Pillar list */}
-      {!loading && (
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {pillars.map((pillar) => (
-            <PillarRow
-              key={pillar.id}
-              pillar={pillar}
-              isExpanded={expandedId === pillar.id}
-              onToggle={() => setExpandedId(expandedId === pillar.id ? null : pillar.id)}
-            />
-          ))}
+      {/* Expanded Content: No Goals */}
+      {isExpanded && pillar.goals.length === 0 && (
+        <div
+          style={{
+            padding: "12px 48px",
+            color: C.textDim,
+            fontSize: 12,
+            fontStyle: "italic",
+          }}
+        >
+          No goals in this pillar yet.
+        </div>
+      )}
+
+      {/* Expanded Content: Recent Activities */}
+      {isExpanded && pillar.recentActivities && pillar.recentActivities.length > 0 && (
+        <div style={{ padding: "8px 12px 0 48px" }}>
+          <div style={{ fontSize: 11, textTransform: "uppercase", color: C.textFaint, marginBottom: 6 }}>
+            Recent Activity
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {pillar.recentActivities.map((activity, idx) => (
+              <div
+                key={idx}
+                style={{
+                  fontSize: 12,
+                  color: C.textDim,
+                  paddingLeft: 8,
+                  borderLeft: `2px solid ${C.border}`,
+                }}
+              >
+                {activity}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
