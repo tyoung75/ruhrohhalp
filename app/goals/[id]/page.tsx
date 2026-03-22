@@ -201,6 +201,8 @@ export default function GoalDetailPage() {
   const [loadingPrompt, setLoadingPrompt] = useState(false);
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [applyingChanges, setApplyingChanges] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   // History expand
   const [historyExpanded, setHistoryExpanded] = useState(false);
@@ -315,6 +317,17 @@ export default function GoalDetailPage() {
       // noop
     } finally {
       setApplyingChanges(false);
+    }
+  };
+
+  const handleCancelGoal = async () => {
+    try {
+      setCancelling(true);
+      await api(`/api/goals/${goalId}`, { method: 'DELETE' });
+      router.push('/');
+    } catch {
+      setCancelling(false);
+      setConfirmCancel(false);
     }
   };
 
@@ -452,6 +465,47 @@ export default function GoalDetailPage() {
           <span style={{ color: C.textFaint, fontSize: 11, fontFamily: C.mono, marginLeft: 'auto' }}>
             Updated {relativeTime(goal.updated_at)}
           </span>
+          {!confirmCancel ? (
+            <button
+              onClick={() => setConfirmCancel(true)}
+              style={{
+                padding: '3px 10px', background: 'none',
+                border: `1px solid ${C.border}`, borderRadius: 4,
+                color: C.textDim, fontSize: 11, fontFamily: C.mono,
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.reminder; e.currentTarget.style.color = C.reminder; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textDim; }}
+            >
+              Cancel Goal
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: C.reminder, fontFamily: C.mono }}>Abandon this goal?</span>
+              <button
+                onClick={handleCancelGoal}
+                disabled={cancelling}
+                style={{
+                  padding: '3px 10px', background: C.reminder, border: 'none',
+                  borderRadius: 4, color: 'white', fontSize: 11, fontFamily: C.mono,
+                  fontWeight: 600, cursor: cancelling ? 'default' : 'pointer',
+                  opacity: cancelling ? 0.6 : 1,
+                }}
+              >
+                {cancelling ? 'Cancelling...' : 'Yes, Cancel'}
+              </button>
+              <button
+                onClick={() => setConfirmCancel(false)}
+                style={{
+                  padding: '3px 10px', background: C.surface, border: `1px solid ${C.border}`,
+                  borderRadius: 4, color: C.text, fontSize: 11, fontFamily: C.mono,
+                  cursor: 'pointer',
+                }}
+              >
+                Keep
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
