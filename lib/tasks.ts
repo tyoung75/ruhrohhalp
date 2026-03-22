@@ -22,6 +22,8 @@ export function dbTaskToPlannerItem(row: Database["public"]["Tables"]["tasks"]["
     delegatedTo: row.delegated_to,
     isOpenLoop: row.is_open_loop,
     threadRef: row.thread_ref,
+    leverageReason: row.leverage_reason,
+    githubPrUrl: row.github_pr_url,
     linearIssueId: row.linear_issue_id,
     linearUrl: row.linear_url,
     linearSyncedAt: row.linear_synced_at,
