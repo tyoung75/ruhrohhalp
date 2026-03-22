@@ -3,10 +3,12 @@ import { validateWebhookSecret } from "@/lib/webhook/auth";
 import { logError } from "@/lib/logger";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 // Valid app slugs — reject anything else
 const VALID_SLUGS = ["motus", "ironpassport"];
@@ -38,6 +40,7 @@ export async function GET(
   }
 
   try {
+    const supabase = getSupabase();
     const { data, error } = await supabase
       .from("app_stats")
       .select("*")
@@ -101,6 +104,7 @@ export async function POST(
     };
 
     // Upsert — one row per app, always overwrite
+    const supabase = getSupabase();
     const { error } = await supabase
       .from("app_stats")
       .upsert(record, { onConflict: "app" });

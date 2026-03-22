@@ -5,10 +5,18 @@ import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
 
+interface CommandApiResponse {
+  intent: string;
+  result: string;
+  executed: boolean;
+  taskId?: string;
+  goalId?: string;
+  metadata?: Record<string, unknown>;
+}
+
 interface CommandResult {
   success: boolean;
   message: string;
-  data?: unknown;
 }
 
 export function CommandBar() {
@@ -41,14 +49,18 @@ export function CommandBar() {
     setShowResult(true);
 
     try {
-      const data = await api<CommandResult>("/api/command", {
+      const data = await api<CommandApiResponse>("/api/command", {
         method: "POST",
         body: JSON.stringify({ input: command }),
       });
-      setResult(data);
+      const mapped: CommandResult = {
+        success: data.executed,
+        message: data.result || `${data.intent}: ${data.executed ? "done" : "pending"}`,
+      };
+      setResult(mapped);
 
       // Notify other components to refresh after a successful command
-      if (data.success) {
+      if (mapped.success) {
         window.dispatchEvent(new CustomEvent("tasks:refresh"));
         window.dispatchEvent(new CustomEvent("briefing:refresh"));
       }

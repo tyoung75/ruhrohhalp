@@ -43,6 +43,7 @@ export function PlannerCard({
         borderRadius: 10,
         overflow: "hidden",
         opacity: item.status === "done" ? 0.45 : 1,
+        flexShrink: 0,
       }}
     >
       <div style={{ padding: "12px 14px", display: "flex", gap: 11, alignItems: "flex-start" }}>
