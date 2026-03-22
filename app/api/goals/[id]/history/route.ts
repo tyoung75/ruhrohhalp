@@ -25,11 +25,11 @@ async function getSupabaseClient() {
 // GET /api/goals/[id]/history
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = await getSupabaseClient();
-    const goalId = params.id;
+    const { id: goalId } = await params;
 
     // Verify goal exists
     const { data: goal, error: goalError } = await supabase

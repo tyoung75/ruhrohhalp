@@ -25,11 +25,11 @@ async function getSupabaseClient() {
 // GET /api/goals/[id]
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = await getSupabaseClient();
-    const goalId = params.id;
+    const { id: goalId } = await params;
 
     // Get goal with related pillar
     const { data: goal, error: goalError } = await supabase
@@ -67,11 +67,11 @@ export async function GET(
 // PATCH /api/goals/[id]
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = await getSupabaseClient();
-    const goalId = params.id;
+    const { id: goalId } = await params;
     const body = await req.json();
 
     // Handle NL prompt — generate suggestion without applying
@@ -186,11 +186,11 @@ export async function PATCH(
 // DELETE /api/goals/[id]
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const supabase = await getSupabaseClient();
-    const goalId = params.id;
+    const { id: goalId } = await params;
 
     // Soft delete — set status to 'abandoned'
     const { data: goal, error: fetchError } = await supabase
