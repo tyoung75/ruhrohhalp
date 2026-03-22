@@ -7,7 +7,6 @@ import { getUserProviderKey } from "@/lib/ai/credentials";
 import { AI_MODELS } from "@/lib/ai-config";
 import type { PlanTier } from "@/lib/types/domain";
 import { logError } from "@/lib/logger";
-import OpenAI from "openai"; // reuse existing package
 
 export async function processInputWithDualAI(params: {
   userId: string;
@@ -148,33 +147,42 @@ export async function processInputWithDualAI(params: {
 // Llama 4 Scout audit via Groq (replaces GPT audit)
 // ---------------------------------------------------------------------------
 
-const groq = new OpenAI({
-  baseURL: "https://api.groq.com/openai/v1",
-  apiKey: process.env.GROQ_API_KEY,
-});
+const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 async function auditTaskWithLlama(claudeOutput: string, taskContext: string) {
   // Replaced GPT audit with Llama 4 Scout via Groq (Llama Guard safety enabled)
-  const response = await groq.chat.completions.create({
-    model: AI_MODELS.AUDIT,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an audit model. Review the following AI-generated task " +
-          "plan and validate: (1) priority assignment accuracy, (2) action " +
-          "type correctness, (3) missing subtasks or risks. Return JSON: " +
-          "{ valid: boolean, confidence: number, issues: string[], " +
-          "suggestions: string[] }",
-      },
-      {
-        role: "user",
-        content: `Task context:\n${taskContext}\n\nClaude output:\n${claudeOutput}`,
-      },
-    ],
-    response_format: { type: "json_object" },
+  const res = await fetch(GROQ_CHAT_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: AI_MODELS.AUDIT,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an audit model. Review the following AI-generated task " +
+            "plan and validate: (1) priority assignment accuracy, (2) action " +
+            "type correctness, (3) missing subtasks or risks. Return JSON: " +
+            "{ valid: boolean, confidence: number, issues: string[], " +
+            "suggestions: string[] }",
+        },
+        {
+          role: "user",
+          content: `Task context:\n${taskContext}\n\nClaude output:\n${claudeOutput}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+    }),
   });
-  return JSON.parse(response.choices[0].message.content ?? "{}");
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message ?? `Groq audit call failed (${res.status})`);
+  }
+  return JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
 }
 
 export async function chatWithTaskAgent(params: {
