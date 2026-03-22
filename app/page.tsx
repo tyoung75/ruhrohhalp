@@ -31,14 +31,52 @@
  *  - Cognitive load: Max 5 focus items, categorized signals
  */
 
+import { useState, useEffect } from "react";
 import { C } from "@/lib/ui";
+import { api } from "@/lib/client-api";
 import { CommandBar } from "@/components/command-bar";
 import { AgentStatus } from "@/components/agent-status";
 import { PillarHealth } from "@/components/pillar-health";
 import { TodaysFocus } from "@/components/todays-focus";
 import { SignalsPanel } from "@/components/signals-panel";
 
+function healthNumberToEnum(health: number): "strong" | "stable" | "at_risk" | "critical" {
+  if (health >= 75) return "strong";
+  if (health >= 50) return "stable";
+  if (health >= 25) return "at_risk";
+  return "critical";
+}
+
 export default function CommandConsolePage() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [pillars, setPillars] = useState<any[]>([]);
+  const [pillarsLoading, setPillarsLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadPillars() {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const res: any = await api("/api/goals?withPillars=true");
+        const raw = res?.pillars ?? [];
+        // Map API shape to PillarHealth component shape
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mapped = raw.map((p: any) => ({
+          id: p.id,
+          name: `${p.icon ?? ""} ${p.name}`.trim(),
+          health: healthNumberToEnum(p.health ?? 0),
+          goals: p.goals ?? [],
+          recentActivities: [],
+        }));
+        setPillars(mapped);
+      } catch (err) {
+        console.error("Failed to load pillars:", err);
+      } finally {
+        setPillarsLoading(false);
+      }
+    }
+    void loadPillars();
+  }, []);
+
   return (
     <div
       style={{
@@ -75,7 +113,7 @@ export default function CommandConsolePage() {
             background: C.surface,
           }}
         >
-          <PillarHealth />
+          <PillarHealth pillars={pillars} loading={pillarsLoading} />
         </div>
 
         {/* Center: Today's Focus (flex, takes remaining space) */}

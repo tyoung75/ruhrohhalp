@@ -1,35 +1,40 @@
 import { useState, useEffect } from "react";
 import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
-import { type ActionType } from "@/components/one-tap-action";
-import { GoalProgressCard } from "@/components/goal-progress-card";
+import { GoalProgressCard, type GoalData } from "@/components/goal-progress-card";
 import { Spinner } from "@/components/primitives";
+
+// AI tool config for launch buttons
+const AI_TOOLS: Record<string, { label: string; icon: string; color: string; urlPrefix: string }> = {
+  claude: { label: "Open in Claude", icon: "◈", color: C.cl, urlPrefix: "https://claude.ai/new" },
+  chatgpt: { label: "Open in ChatGPT", icon: "◉", color: "#10a37f", urlPrefix: "https://chatgpt.com" },
+  gemini: { label: "Open in Gemini", icon: "◇", color: "#4285f4", urlPrefix: "https://gemini.google.com/app" },
+};
+
+// Friendly source labels
+const SOURCE_LABELS: Record<string, string> = {
+  linear_import: "imported task",
+  manual: "manually added",
+  cowork: "from cowork",
+  api: "via API",
+  command: "from command bar",
+};
 
 interface FocusItem {
   id: string;
   title: string;
   priority: "urgent" | "high" | "medium" | "low";
-  rationale: string;
+  description: string;
   leverageReason?: string;
-  pillar?: string;
   source?: string;
-  estimate?: string;
-  actions?: ActionType[];
-}
-
-interface GoalSpotlight {
-  id: string;
-  title: string;
-  progress: number;
-  metric: string;
-  deadline: string;
+  recommendedAI?: string;
+  howTo?: string;
 }
 
 export function TodaysFocus() {
   const [greeting, setGreeting] = useState("");
-  const [timelineStatus, setTimelineStatus] = useState("");
   const [focusItems, setFocusItems] = useState<FocusItem[]>([]);
-  const [goalSpotlight, setGoalSpotlight] = useState<GoalSpotlight | null>(null);
+  const [goalSpotlight, setGoalSpotlight] = useState<GoalData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedWhy, setExpandedWhy] = useState<Set<string>>(new Set());
@@ -53,45 +58,64 @@ export function TodaysFocus() {
       setLoading(true);
       setError(null);
 
-      // Fetch high-leverage tasks
+      // Fetch high-priority tasks — use items[] for full PlannerItem data
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tasksRes: any = await api("/api/tasks?state=started,unstarted&priority=1,2");
+      const tasksRes: any = await api("/api/tasks?state=started,unstarted&priority=1,2&limit=5");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rawItems: any[] = tasksRes?.items ?? [];
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const items: FocusItem[] = (tasksRes?.tasks ?? []).map((task: any) => ({
+      const items: FocusItem[] = rawItems.map((task) => ({
         id: task.id,
         title: task.title,
         priority: task.priority || "high",
-        rationale: task.description || "",
-        leverageReason: undefined,
-        pillar: task.project_name !== "—" ? task.project_name : undefined,
-        source: task.source,
-        estimate: undefined,
-        actions: [],
+        description: task.description || "",
+        leverageReason: task.leverageReason || task.aiReason || undefined,
+        source: task.sourceText || undefined,
+        recommendedAI: task.recommendedAI || "claude",
+        howTo: task.howTo || undefined,
       }));
 
       setFocusItems(items);
 
-      // Fetch goal spotlight
+      // Fetch goals with pillar info — pick the one with nearest target_date
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const goalsRes: any = await api("/api/goals");
-      const goalsList = goalsRes?.goals ?? [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const goalsList: any[] = goalsRes?.goals ?? [];
 
       if (goalsList.length > 0) {
-        const goal = goalsList[0];
-        const current = goal.progress_current ?? 0;
-        const target = goal.progress_target ?? 1;
-        setGoalSpotlight({
-          id: goal.id,
-          title: goal.title,
-          progress: target > 0 ? Math.round((current / target) * 100) : 0,
-          metric: goal.progress_metric || "",
-          deadline: goal.due_date || "",
-        });
-      }
+        const now = new Date();
+        const scored = goalsList
+          .filter((g) => g.status === "active")
+          .map((g) => {
+            const targetDate = g.target_date ? new Date(g.target_date) : null;
+            const daysUntil = targetDate ? Math.ceil((targetDate.getTime() - now.getTime()) / 86400000) : 999;
+            const priorityScore = g.priority === "critical" ? 0 : g.priority === "high" ? 1 : g.priority === "medium" ? 2 : 3;
+            return { goal: g, daysUntil, priorityScore };
+          })
+          .sort((a, b) => {
+            if (a.daysUntil !== b.daysUntil) return a.daysUntil - b.daysUntil;
+            return a.priorityScore - b.priorityScore;
+          });
 
-      // Timeline status — no dedicated endpoint, default to "On track"
-      setTimelineStatus("On track");
+        if (scored.length > 0) {
+          const best = scored[0].goal;
+          const pillarName = best.pillars?.name || "";
+          const pillarEmoji = best.pillars?.emoji || "";
+
+          setGoalSpotlight({
+            id: best.id,
+            title: best.title,
+            pillar: pillarEmoji ? `${pillarEmoji} ${pillarName}` : pillarName,
+            pillarColor: C.cl,
+            progress: 0,
+            currentValue: best.progress_current || undefined,
+            targetValue: best.progress_target || undefined,
+            metricLabel: best.progress_metric || undefined,
+            activeMethods: best.methods || [],
+          });
+        }
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load today's focus");
       console.error("Error loading today's focus:", err);
@@ -114,11 +138,8 @@ export function TodaysFocus() {
   const toggleWhyExpanded = (taskId: string) => {
     setExpandedWhy((prev) => {
       const next = new Set(prev);
-      if (next.has(taskId)) {
-        next.delete(taskId);
-      } else {
-        next.add(taskId);
-      }
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
       return next;
     });
   };
@@ -150,9 +171,6 @@ export function TodaysFocus() {
         <div style={{ fontSize: 28, fontWeight: 600, color: C.text, marginBottom: 4 }}>
           {greeting}
         </div>
-        <div style={{ fontSize: 14, color: C.textDim }}>
-          {timelineStatus && `Timeline: ${timelineStatus}`}
-        </div>
       </div>
 
       {/* Goal Spotlight */}
@@ -161,15 +179,7 @@ export function TodaysFocus() {
           <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: C.textFaint, marginBottom: 8 }}>
             Goal Spotlight
           </div>
-          <GoalProgressCard
-            goal={{
-              id: goalSpotlight.id,
-              title: goalSpotlight.title,
-              progress: goalSpotlight.progress,
-              metric: goalSpotlight.metric,
-              deadline: goalSpotlight.deadline,
-            }}
-          />
+          <GoalProgressCard goal={goalSpotlight} />
         </div>
       )}
 
@@ -240,13 +250,44 @@ interface FocusCardProps {
 function FocusCard(props: FocusCardProps) {
   const { item, onDelete, onMarkDone, onSnooze, isDeleting, onDeleteClick, onCancelDelete, expandedWhy, onToggleWhy } = props;
   const isExpanded = expandedWhy.has(item.id);
-  const whyContent = item.leverageReason || item.rationale;
+  const whyContent = item.leverageReason;
   const priorityColors: Record<string, string> = {
     urgent: C.reminder,
     high: C.task,
     medium: C.gem,
     low: C.textDim,
   };
+
+  // Determine the AI tool to launch
+  const aiKey = item.recommendedAI || "claude";
+  const aiTool = AI_TOOLS[aiKey] || AI_TOOLS.claude;
+
+  // Build the prompt to pre-fill when opening the AI tool
+  const buildPrompt = () => {
+    const parts = [`Task: ${item.title}`];
+    if (item.description) parts.push(`\nContext: ${item.description}`);
+    if (item.howTo) parts.push(`\nSteps:\n${item.howTo}`);
+    return parts.join("");
+  };
+
+  const handleOpenAI = () => {
+    const prompt = buildPrompt();
+    const encoded = encodeURIComponent(prompt);
+    // Each AI tool has different URL patterns for pre-filling prompts
+    let url: string;
+    if (aiKey === "chatgpt") {
+      url = `https://chatgpt.com/?q=${encoded}`;
+    } else if (aiKey === "gemini") {
+      url = `https://gemini.google.com/app?q=${encoded}`;
+    } else {
+      // Claude — open new conversation
+      url = `https://claude.ai/new?q=${encoded}`;
+    }
+    window.open(url, "_blank", "noopener");
+  };
+
+  // Friendly source label
+  const sourceLabel = item.source ? (SOURCE_LABELS[item.source] || item.source) : undefined;
 
   return (
     <div
@@ -258,7 +299,7 @@ function FocusCard(props: FocusCardProps) {
         position: "relative",
       }}
     >
-      {/* Header: Priority + Title + Estimate + Delete Button */}
+      {/* Header: Priority + Title + Delete Button */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
         <div
           style={{
@@ -275,21 +316,6 @@ function FocusCard(props: FocusCardProps) {
             {item.title}
           </div>
         </div>
-        {item.estimate && (
-          <div
-            style={{
-              fontSize: 12,
-              background: C.surface,
-              border: `1px solid ${C.border}`,
-              borderRadius: 4,
-              padding: "4px 8px",
-              color: C.textDim,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {item.estimate}m
-          </div>
-        )}
         {!isDeleting && (
           <button
             onClick={onDeleteClick}
@@ -369,26 +395,12 @@ function FocusCard(props: FocusCardProps) {
         </div>
       )}
 
-      {/* Pillar + Source */}
-      {(item.pillar || item.source) && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 8, fontSize: 12, color: C.textDim }}>
-          {item.pillar && (
-            <span
-              style={{
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                borderRadius: 4,
-                padding: "3px 8px",
-              }}
-            >
-              {item.pillar}
-            </span>
-          )}
-          {item.source && (
-            <span style={{ fontSize: 11, fontStyle: "italic", color: C.textFaint }}>
-              {item.source}
-            </span>
-          )}
+      {/* Source badge */}
+      {sourceLabel && (
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ fontSize: 11, fontStyle: "italic", color: C.textFaint }}>
+            {sourceLabel}
+          </span>
         </div>
       )}
 
@@ -435,10 +447,11 @@ function FocusCard(props: FocusCardProps) {
 
       {/* Action Row */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {/* Primary: Open in recommended AI tool */}
         <button
-          onClick={() => onMarkDone(item.id)}
+          onClick={handleOpenAI}
           style={{
-            background: C.cl,
+            background: aiTool.color,
             color: "white",
             border: "none",
             borderRadius: 6,
@@ -447,6 +460,26 @@ function FocusCard(props: FocusCardProps) {
             fontWeight: 500,
             cursor: "pointer",
             flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+          }}
+        >
+          <span>{aiTool.icon}</span>
+          {aiTool.label}
+        </button>
+        <button
+          onClick={() => onMarkDone(item.id)}
+          style={{
+            background: C.surface,
+            color: C.text,
+            border: `1px solid ${C.border}`,
+            borderRadius: 6,
+            padding: "8px 12px",
+            fontSize: 13,
+            fontWeight: 500,
+            cursor: "pointer",
           }}
         >
           Done

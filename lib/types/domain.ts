@@ -23,6 +23,8 @@ export type PlannerItem = {
   delegatedTo: string | null;
   isOpenLoop: boolean;
   threadRef: string | null;
+  leverageReason: string;
+  githubPrUrl: string | null;
   linearIssueId: string | null;
   linearUrl: string | null;
   linearSyncedAt: string | null;

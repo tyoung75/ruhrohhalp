@@ -274,7 +274,21 @@ function CategoryFilter({
 export function SignalsPanel() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
   const [activeFilter, setActiveFilter] = useState<SignalCategory | "all">("all");
+
+  const generateBriefing = useCallback(async () => {
+    try {
+      setGenerating(true);
+      await api("/api/briefing/daily");
+      // Refresh signals after briefing is generated
+      window.dispatchEvent(new Event("briefing:refresh"));
+    } catch (e) {
+      console.error("Failed to generate briefing:", e);
+    } finally {
+      setGenerating(false);
+    }
+  }, []);
 
   const loadSignals = useCallback(async () => {
     try {
@@ -362,21 +376,36 @@ export function SignalsPanel() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 12 }}>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <h3
-            style={{
-              fontFamily: C.serif,
-              fontStyle: "italic",
-              fontSize: 14,
-              color: C.cream,
-              margin: 0,
-              fontWeight: 400,
-            }}
-          >
-            Signals & Insights
-          </h3>
-        </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3
+          style={{
+            fontFamily: C.serif,
+            fontStyle: "italic",
+            fontSize: 14,
+            color: C.cream,
+            margin: 0,
+            fontWeight: 400,
+          }}
+        >
+          Signals & Insights
+        </h3>
+        <button
+          onClick={generateBriefing}
+          disabled={generating}
+          style={{
+            background: generating ? C.surface : `${C.cl}14`,
+            border: `1px solid ${generating ? C.border : `${C.cl}30`}`,
+            color: generating ? C.textDim : C.cl,
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 9,
+            fontFamily: C.mono,
+            cursor: generating ? "default" : "pointer",
+            transition: "all 0.15s",
+          }}
+        >
+          {generating ? "Generating…" : "Generate Briefing"}
+        </button>
       </div>
 
       {/* Quick stats */}
@@ -409,14 +438,35 @@ export function SignalsPanel() {
               style={{
                 textAlign: "center",
                 padding: "24px 12px",
-                fontFamily: C.mono,
-                fontSize: 10,
-                color: C.textFaint,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 10,
               }}
             >
-              {activeFilter === "all"
-                ? "No signals yet. Generate a briefing to populate."
-                : `No ${activeFilter} signals.`}
+              <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
+                {activeFilter === "all"
+                  ? "No signals yet."
+                  : `No ${activeFilter} signals.`}
+              </div>
+              {activeFilter === "all" && (
+                <button
+                  onClick={generateBriefing}
+                  disabled={generating}
+                  style={{
+                    background: generating ? C.surface : C.cl,
+                    border: "none",
+                    color: generating ? C.textDim : "white",
+                    borderRadius: 6,
+                    padding: "8px 16px",
+                    fontSize: 11,
+                    fontWeight: 500,
+                    cursor: generating ? "default" : "pointer",
+                  }}
+                >
+                  {generating ? "Generating…" : "Generate Briefing"}
+                </button>
+              )}
             </div>
           )}
         </div>
