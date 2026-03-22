@@ -30,15 +30,15 @@ interface HistoryEntry {
   id: string;
   goal_id: string;
   change_type: string;
-  old_value: Record<string, any>;
-  new_value: Record<string, any>;
+  old_value: Record<string, unknown>;
+  new_value: Record<string, unknown>;
   created_at: string;
   user_id: string;
 }
 
 interface Suggestion {
   reasoning: string;
-  proposed_changes: Record<string, any>;
+  proposed_changes: Record<string, unknown>;
   downstream_effects: string[];
 }
 

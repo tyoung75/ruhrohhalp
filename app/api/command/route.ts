@@ -43,7 +43,7 @@ interface Goal {
  * Returns the best matching task or null
  */
 async function findTaskByKeywords(
-  supabase: any,
+  supabase: ReturnType<typeof import("@supabase/ssr").createServerClient>,
   userId: string,
   keywords: string
 ): Promise<Task | null> {
@@ -79,7 +79,7 @@ async function findTaskByKeywords(
     return { task, score };
   });
 
-  const best = scored.sort((a, b) => b.score - a.score)[0];
+  const best = scored.sort((a: { score: number }, b: { score: number }) => b.score - a.score)[0];
   return best && best.score > 0 ? best.task : null;
 }
 
@@ -133,7 +133,7 @@ function parseRelativeDate(dateStr: string): string | null {
     if (!isNaN(parsed.getTime())) {
       return parsed.toISOString().split("T")[0];
     }
-  } catch (e) {}
+  } catch (_e) {}
 
   return null;
 }
@@ -508,7 +508,7 @@ export async function POST(request: NextRequest) {
           return { goal: g, score };
         });
 
-        const best = scored.sort((a, b) => b.score - a.score)[0];
+        const best = scored.sort((a: { score: number }, b: { score: number }) => b.score - a.score)[0];
         goal = best && best.score > 0 ? best.goal : goals[0]; // Default to first if no match
       }
 

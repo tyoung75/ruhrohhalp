@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
-import { OneTapAction, MarkDoneAction, type ActionType } from "@/components/one-tap-action";
-import { GoalProgressCard, type GoalData } from "@/components/goal-progress-card";
+import { OneTapAction, MarkDoneAction } from "@/components/one-tap-action";
+import { GoalProgressCard } from "@/components/goal-progress-card";
 import { Spinner } from "@/components/primitives";
 
 interface FocusItem {
@@ -27,7 +26,6 @@ interface GoalSpotlight {
 }
 
 export function TodaysFocus() {
-  const router = useRouter();
   const [greeting, setGreeting] = useState("");
   const [timelineStatus, setTimelineStatus] = useState("");
   const [focusItems, setFocusItems] = useState<FocusItem[]>([]);
@@ -63,6 +61,7 @@ export function TodaysFocus() {
         },
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const items: FocusItem[] = tasksResponse.data.map((task: any) => ({
         id: task.id,
         title: task.title,
@@ -96,8 +95,8 @@ export function TodaysFocus() {
       // Fetch timeline status
       const timelineResponse = await api.get("/api/timeline/status");
       setTimelineStatus(timelineResponse.data?.status || "On track");
-    } catch (err: any) {
-      setError(err.message || "Failed to load today's focus");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load today's focus");
       console.error("Error loading today's focus:", err);
     } finally {
       setLoading(false);
@@ -109,7 +108,7 @@ export function TodaysFocus() {
       await api.delete(`/api/tasks/${taskId}`);
       setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
       setDeletingId(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error deleting task:", err);
       setError("Failed to delete task");
     }
@@ -131,7 +130,7 @@ export function TodaysFocus() {
     try {
       await api.patch(`/api/tasks/${taskId}`, { status: "done" });
       setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error marking task done:", err);
       setError("Failed to mark task done");
     }
@@ -141,7 +140,7 @@ export function TodaysFocus() {
     try {
       await api.patch(`/api/tasks/${taskId}`, { snoozed_until: new Date(Date.now() + 3600000).toISOString() });
       setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error snoozing task:", err);
       setError("Failed to snooze task");
     }
@@ -243,7 +242,7 @@ interface FocusCardProps {
 
 function FocusCard({
   item,
-  index,
+  index: _index,
   onDelete,
   onMarkDone,
   onSnooze,

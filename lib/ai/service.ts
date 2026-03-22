@@ -18,7 +18,6 @@ export async function processInputWithDualAI(params: {
   const ctxItems = existingItems.slice(0, 8).map((i) => `- [${i.type}] ${i.title}`).join("\n") || "none";
 
   const claudeKey = await getUserProviderKey(userId, tier, "claude");
-  const chatgptKey = await getUserProviderKey(userId, tier, "chatgpt");
 
   let claudeItems: Array<
     Omit<PlannerItem, "id" | "userId" | "status" | "selectedModel" | "createdAt" | "updatedAt" | "auditNotes" | "memoryKey" | "sourceText">

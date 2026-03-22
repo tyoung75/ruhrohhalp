@@ -226,6 +226,7 @@ interface PillarRowProps {
   healthLabel: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function PillarRow({
   pillar,
   isExpanded,
