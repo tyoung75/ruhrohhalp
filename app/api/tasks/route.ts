@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
   const stateParam = url.searchParams.get("state");
   const priorityParam = url.searchParams.get("priority");
   const projectParam = url.searchParams.get("project");
+  const goalIdParam = url.searchParams.get("goal_id");
   const dueBeforeParam = url.searchParams.get("due_before");
   const updatedAfterParam = url.searchParams.get("updated_after");
 
@@ -45,6 +46,10 @@ export async function GET(request: NextRequest) {
   if (priorityParam) {
     const priorities = priorityParam.split(",").map(p => parseInt(p));
     query = query.in("priority_num", priorities);
+  }
+
+  if (goalIdParam) {
+    query = query.eq("goal_id", goalIdParam);
   }
 
   if (dueBeforeParam) {
