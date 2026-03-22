@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
       .not("goal_id", "is", null);
 
     // Fetch recent signal counts per pillar
-    let signalCounts: Record<string, number> = {};
+    const signalCounts: Record<string, number> = {};
     if (withSignals) {
       const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
       const { data: signals } = await supabase

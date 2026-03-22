@@ -284,8 +284,8 @@ function getGreeting(): { greeting: string; timeContext: string } {
 
 export function TodaysFocus() {
   const [focusItems, setFocusItems] = useState<FocusItem[]>([]);
-  const [events, setEvents] = useState<UpcomingEvent[]>([]);
-  const [topGoals, setTopGoals] = useState<GoalData[]>([]);
+  const [events] = useState<UpcomingEvent[]>([]);
+  const [topGoals] = useState<GoalData[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
