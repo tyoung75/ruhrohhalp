@@ -39,6 +39,8 @@ import { AgentStatus } from "@/components/agent-status";
 import { PillarHealth } from "@/components/pillar-health";
 import { TodaysFocus } from "@/components/todays-focus";
 import { SignalsPanel } from "@/components/signals-panel";
+import { BrainDumpModal } from "@/components/brain-dump-modal";
+import { BriefingView } from "@/components/briefing-view";
 
 function healthNumberToEnum(health: number): "strong" | "stable" | "at_risk" | "critical" {
   if (health >= 75) return "strong";
@@ -51,6 +53,8 @@ export default function CommandConsolePage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pillars, setPillars] = useState<any[]>([]);
   const [pillarsLoading, setPillarsLoading] = useState(true);
+  const [showBrainDump, setShowBrainDump] = useState(false);
+  const [centerTab, setCenterTab] = useState<"focus" | "briefing">("focus");
 
   useEffect(() => {
     async function loadPillars() {
@@ -116,18 +120,84 @@ export default function CommandConsolePage() {
           <PillarHealth pillars={pillars} loading={pillarsLoading} />
         </div>
 
-        {/* Center: Today's Focus (flex, takes remaining space) */}
+        {/* Center: Tabbed panel (flex, takes remaining space) */}
         <div
           style={{
             flex: 1,
             overflowY: "auto",
             borderRight: `1px solid ${C.border}`,
+            display: "flex",
+            flexDirection: "column",
           }}
         >
-          <div style={{ padding: "24px 28px", maxWidth: 720 }}>
-            <TodaysFocus />
+          {/* Tab bar + Brain Dump button */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              borderBottom: `1px solid ${C.border}`,
+              padding: "0 28px",
+              flexShrink: 0,
+            }}
+          >
+            {(["focus", "briefing"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setCenterTab(tab)}
+                style={{
+                  padding: "10px 16px",
+                  background: "none",
+                  border: "none",
+                  borderBottom: centerTab === tab ? `2px solid ${C.cl}` : "2px solid transparent",
+                  color: centerTab === tab ? C.cream : C.textDim,
+                  fontFamily: C.mono,
+                  fontSize: 11,
+                  fontWeight: centerTab === tab ? 600 : 400,
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                }}
+              >
+                {tab === "focus" ? "Today's Focus" : "Briefing"}
+              </button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <button
+              onClick={() => setShowBrainDump(true)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 12px",
+                background: `${C.cl}14`,
+                border: `1px solid ${C.cl}30`,
+                borderRadius: 6,
+                color: C.cl,
+                fontFamily: C.mono,
+                fontSize: 10,
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            >
+              ◈ Brain Dump
+            </button>
+          </div>
+
+          {/* Tab content */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {centerTab === "focus" ? (
+              <div style={{ padding: "24px 28px", maxWidth: 720 }}>
+                <TodaysFocus />
+              </div>
+            ) : (
+              <div style={{ padding: "24px 28px", maxWidth: 720, display: "flex", flexDirection: "column", minHeight: "100%" }}>
+                <BriefingView />
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Brain Dump Modal */}
+        <BrainDumpModal open={showBrainDump} onClose={() => setShowBrainDump(false)} />
 
         {/* Right: Signals & Insights (300px fixed) */}
         <div

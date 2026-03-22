@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
@@ -167,6 +167,53 @@ export function BriefingView() {
       });
     } catch (e) {
       console.error("Draft error:", e);
+    }
+  }
+
+  // --- Interactive adjustment input ---
+  const [adjustInput, setAdjustInput] = useState("");
+  const [adjusting, setAdjusting] = useState(false);
+  const [adjustResult, setAdjustResult] = useState<string | null>(null);
+  const adjustRef = useRef<HTMLTextAreaElement | null>(null);
+
+  async function handleAdjust() {
+    if (!adjustInput.trim() || adjusting) return;
+    const input = adjustInput.trim();
+    setAdjustInput("");
+    setAdjusting(true);
+    setAdjustResult(null);
+
+    try {
+      // 1. Store the context as a high-importance memory
+      await api("/api/brain/dump", {
+        method: "POST",
+        body: JSON.stringify({ topOfMind: input }),
+      });
+
+      // 2. Re-generate the briefing so it incorporates the new context
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+      const res = await fetch("/api/briefing/daily", {
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
+
+      if (res.ok && data.briefing) {
+        setBriefing(data.briefing);
+        const titles = data.briefing.content_json?.map((s: BriefingSection) => s.title) ?? [];
+        setExpandedSections(new Set(titles));
+        setAdjustResult("Got it — briefing updated with your context.");
+        window.dispatchEvent(new CustomEvent("briefing:refresh"));
+      } else {
+        setAdjustResult("Saved to memory, but briefing regeneration failed. Try generating manually.");
+      }
+    } catch {
+      setAdjustResult("Context saved to memory. Briefing will reflect it on next generation.");
+    } finally {
+      setAdjusting(false);
+      setTimeout(() => setAdjustResult(null), 5000);
     }
   }
 
@@ -487,6 +534,83 @@ export function BriefingView() {
           })}
         </div>
       )}
+
+      {/* Interactive adjustment input */}
+      <div
+        style={{
+          marginTop: "auto",
+          paddingTop: 16,
+          borderTop: `1px solid ${C.border}`,
+        }}
+      >
+        {adjustResult && (
+          <div
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              background: `${C.gpt}14`,
+              border: `1px solid ${C.gpt}28`,
+              color: C.gpt,
+              fontFamily: C.mono,
+              fontSize: 10,
+              marginBottom: 10,
+            }}
+          >
+            {adjustResult}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <textarea
+            ref={adjustRef}
+            value={adjustInput}
+            onChange={(e) => setAdjustInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleAdjust();
+              }
+            }}
+            placeholder="Tell the briefing something... context, corrections, preferences. It'll remember and adapt."
+            rows={2}
+            style={{
+              flex: 1,
+              background: C.card,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              padding: "8px 12px",
+              fontFamily: C.mono,
+              fontSize: 11,
+              color: C.text,
+              outline: "none",
+              resize: "none",
+              lineHeight: 1.5,
+            }}
+            disabled={adjusting}
+          />
+          <button
+            onClick={handleAdjust}
+            disabled={!adjustInput.trim() || adjusting}
+            style={{
+              padding: "8px 14px",
+              background: adjustInput.trim() && !adjusting ? C.cl : C.border,
+              color: adjustInput.trim() && !adjusting ? C.bg : C.textFaint,
+              border: "none",
+              borderRadius: 6,
+              fontFamily: C.mono,
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: adjustInput.trim() && !adjusting ? "pointer" : "default",
+              whiteSpace: "nowrap",
+              height: "fit-content",
+            }}
+          >
+            {adjusting ? <Spinner color={C.textFaint} size={10} /> : "Update"}
+          </button>
+        </div>
+        <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginTop: 4 }}>
+          Enter to send. This gets stored as context and regenerates your briefing.
+        </div>
+      </div>
     </div>
   );
 }
