@@ -1,0 +1,492 @@
+"use client";
+
+import React, { useEffect, useState, useCallback } from "react";
+import { C } from "@/lib/ui";
+import { Spinner } from "@/components/primitives";
+import { api } from "@/lib/client-api";
+import { OneTapAction, type ActionType } from "@/components/one-tap-action";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type SignalCategory = "insight" | "recommendation" | "proposal" | "alert" | "opportunity";
+
+interface Signal {
+  id: string;
+  /** Display text */
+  text: string;
+  /** Category determines visual treatment */
+  category: SignalCategory;
+  /** Where this signal came from */
+  source: string;
+  /** When it was generated */
+  timestamp: string;
+  /** Relevance / importance score (0-1) */
+  relevance?: number;
+  /** Associated pillar */
+  pillar?: string;
+  pillarColor?: string;
+  /** One-tap action if actionable */
+  action?: {
+    label: string;
+    actionType: ActionType;
+    context: string;
+    taskId?: string;
+    url?: string;
+  };
+  /** Has the user seen/interacted with this? */
+  seen?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Category styling
+// ---------------------------------------------------------------------------
+
+const CATEGORY_META: Record<SignalCategory, { icon: string; color: string; label: string }> = {
+  insight:        { icon: "◎", color: C.gem,      label: "Insight" },
+  recommendation: { icon: "◈", color: C.cl,       label: "Recommendation" },
+  proposal:       { icon: "✎", color: C.gpt,      label: "Proposal" },
+  alert:          { icon: "⚡", color: C.reminder,  label: "Alert" },
+  opportunity:    { icon: "◇", color: C.gold,     label: "Opportunity" },
+};
+
+// ---------------------------------------------------------------------------
+// Signal card
+// ---------------------------------------------------------------------------
+
+function SignalCard({ signal, index }: { signal: Signal; index: number }) {
+  const meta = CATEGORY_META[signal.category] ?? CATEGORY_META.insight;
+  const [dismissed, setDismissed] = useState(false);
+
+  if (dismissed) return null;
+
+  return (
+    <div
+      style={{
+        background: C.card,
+        border: `1px solid ${signal.seen ? C.border : `${meta.color}30`}`,
+        borderRadius: 8,
+        padding: "10px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        animation: `fadeUp 0.3s ease ${index * 0.06}s both`,
+        opacity: signal.seen ? 0.7 : 1,
+        transition: "opacity 0.3s, border-color 0.2s",
+      }}
+    >
+      {/* Header: category + source + time */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ color: meta.color, fontSize: 10 }}>{meta.icon}</span>
+        <span
+          style={{
+            fontFamily: C.mono,
+            fontSize: 8,
+            color: meta.color,
+            background: `${meta.color}14`,
+            borderRadius: 3,
+            padding: "1px 5px",
+            letterSpacing: 0.3,
+          }}
+        >
+          {meta.label}
+        </span>
+
+        {signal.pillar && (
+          <span
+            style={{
+              fontFamily: C.mono,
+              fontSize: 8,
+              color: signal.pillarColor ?? C.textDim,
+              letterSpacing: 0.3,
+            }}
+          >
+            {signal.pillar}
+          </span>
+        )}
+
+        <span style={{ flex: 1 }} />
+
+        <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint }}>
+          {formatTime(signal.timestamp)}
+        </span>
+
+        {/* Dismiss */}
+        <button
+          onClick={() => setDismissed(true)}
+          style={{
+            background: "none",
+            border: "none",
+            color: C.textFaint,
+            cursor: "pointer",
+            fontSize: 10,
+            padding: "0 2px",
+            lineHeight: 1,
+          }}
+          title="Dismiss"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Content */}
+      <div
+        style={{
+          fontFamily: C.sans,
+          fontSize: 11,
+          color: C.text,
+          lineHeight: 1.6,
+        }}
+      >
+        {signal.text}
+      </div>
+
+      {/* Source + action */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint }}>
+          via {signal.source}
+        </span>
+
+        {signal.action && (
+          <OneTapAction
+            label={signal.action.label}
+            actionType={signal.action.actionType}
+            context={signal.action.context}
+            taskId={signal.action.taskId}
+            url={signal.action.url}
+            color={meta.color}
+            size="sm"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Quick stats row
+// ---------------------------------------------------------------------------
+
+function QuickStats({
+  signalCount,
+  unreadCount,
+  topSource,
+}: {
+  signalCount: number;
+  unreadCount: number;
+  topSource?: string;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <StatChip label="Signals" value={signalCount.toString()} color={C.gem} />
+      {unreadCount > 0 && <StatChip label="New" value={unreadCount.toString()} color={C.cl} />}
+      {topSource && <StatChip label="Top Source" value={topSource} color={C.textDim} />}
+    </div>
+  );
+}
+
+function StatChip({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        fontFamily: C.mono,
+        fontSize: 8,
+        color: C.textDim,
+        background: `${color}10`,
+        border: `1px solid ${color}20`,
+        borderRadius: 4,
+        padding: "2px 6px",
+      }}
+    >
+      <span style={{ color, fontWeight: 600 }}>{value}</span>
+      {label}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Category filter tabs
+// ---------------------------------------------------------------------------
+
+function CategoryFilter({
+  active,
+  onChange,
+  counts,
+}: {
+  active: SignalCategory | "all";
+  onChange: (cat: SignalCategory | "all") => void;
+  counts: Record<string, number>;
+}) {
+  const tabs: Array<{ key: SignalCategory | "all"; label: string }> = [
+    { key: "all", label: "All" },
+    { key: "recommendation", label: "Recs" },
+    { key: "insight", label: "Insights" },
+    { key: "proposal", label: "Proposals" },
+    { key: "alert", label: "Alerts" },
+    { key: "opportunity", label: "Opps" },
+  ];
+
+  return (
+    <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+      {tabs.map((tab) => {
+        const count = tab.key === "all" ? Object.values(counts).reduce((s, c) => s + c, 0) : (counts[tab.key] ?? 0);
+        if (tab.key !== "all" && count === 0) return null;
+
+        const isActive = active === tab.key;
+        const meta = tab.key !== "all" ? CATEGORY_META[tab.key] : null;
+        const accentColor = meta?.color ?? C.cl;
+
+        return (
+          <button
+            key={tab.key}
+            onClick={() => onChange(tab.key)}
+            style={{
+              fontFamily: C.mono,
+              fontSize: 8,
+              color: isActive ? accentColor : C.textFaint,
+              background: isActive ? `${accentColor}14` : "transparent",
+              border: `1px solid ${isActive ? `${accentColor}30` : "transparent"}`,
+              borderRadius: 4,
+              padding: "3px 6px",
+              cursor: "pointer",
+              transition: "all 0.15s",
+            }}
+          >
+            {tab.label}
+            {count > 0 && (
+              <span style={{ marginLeft: 3, opacity: 0.6 }}>{count}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SignalsPanel — right sidebar
+// ---------------------------------------------------------------------------
+
+export function SignalsPanel() {
+  const [signals, setSignals] = useState<Signal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeFilter, setActiveFilter] = useState<SignalCategory | "all">("all");
+
+  const loadSignals = useCallback(async () => {
+    try {
+      // Pull from briefing content + activity feed
+      const [briefingRes, activityRes] = await Promise.allSettled([
+        api<{ briefing: { content_json?: Array<{ title: string; color: string; items: Array<{ id?: string; text: string; type?: string }> }> } | null }>("/api/briefings"),
+        api<{ entries: Array<{ id: string; type: string; description: string; created_at: string; metadata?: Record<string, unknown> }> }>("/api/activity?limit=20"),
+      ]);
+
+      const sigs: Signal[] = [];
+
+      // Extract signals from briefing sections
+      if (briefingRes.status === "fulfilled" && briefingRes.value.briefing?.content_json) {
+        const sections = briefingRes.value.briefing.content_json;
+        for (const section of sections) {
+          for (const item of section.items) {
+            const category = classifySignal(item.text, item.type, section.title);
+            const action = inferSignalAction(item.text, item.type);
+
+            sigs.push({
+              id: item.id ?? `sig-${Math.random().toString(36).slice(2, 8)}`,
+              text: item.text,
+              category,
+              source: "daily briefing",
+              timestamp: new Date().toISOString(),
+              action: action ?? undefined,
+            });
+          }
+        }
+      }
+
+      // Extract from activity feed
+      if (activityRes.status === "fulfilled" && activityRes.value.entries) {
+        for (const entry of activityRes.value.entries.slice(0, 10)) {
+          if (entry.type === "agent_complete" || entry.type === "signal") {
+            sigs.push({
+              id: entry.id,
+              text: entry.description,
+              category: "insight",
+              source: entry.type,
+              timestamp: entry.created_at,
+              seen: true,
+            });
+          }
+        }
+      }
+
+      setSignals(sigs);
+    } catch (e) {
+      console.error("Failed to load signals:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSignals();
+  }, [loadSignals]);
+
+  useEffect(() => {
+    function handleRefresh() {
+      loadSignals();
+    }
+    window.addEventListener("briefing:refresh", handleRefresh);
+    window.addEventListener("signals:refresh", handleRefresh);
+    return () => {
+      window.removeEventListener("briefing:refresh", handleRefresh);
+      window.removeEventListener("signals:refresh", handleRefresh);
+    };
+  }, [loadSignals]);
+
+  // Filter signals
+  const filteredSignals =
+    activeFilter === "all" ? signals : signals.filter((s) => s.category === activeFilter);
+
+  // Category counts
+  const counts: Record<string, number> = {};
+  for (const s of signals) {
+    counts[s.category] = (counts[s.category] ?? 0) + 1;
+  }
+
+  const unreadCount = signals.filter((s) => !s.seen).length;
+  const topSource = signals.length > 0 ? getMostCommon(signals.map((s) => s.source)) : undefined;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 12 }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <h3
+            style={{
+              fontFamily: C.serif,
+              fontStyle: "italic",
+              fontSize: 14,
+              color: C.cream,
+              margin: 0,
+              fontWeight: 400,
+            }}
+          >
+            Signals & Insights
+          </h3>
+        </div>
+      </div>
+
+      {/* Quick stats */}
+      {signals.length > 0 && (
+        <QuickStats signalCount={signals.length} unreadCount={unreadCount} topSource={topSource} />
+      )}
+
+      {/* Category filter */}
+      {signals.length > 0 && (
+        <CategoryFilter active={activeFilter} onChange={setActiveFilter} counts={counts} />
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div style={{ textAlign: "center", padding: "24px 12px", color: C.textFaint }}>
+          <Spinner color={C.gem} size={12} />
+          <div style={{ fontFamily: C.mono, fontSize: 9, marginTop: 6 }}>Loading signals…</div>
+        </div>
+      )}
+
+      {/* Signals list */}
+      {!loading && (
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+          {filteredSignals.map((signal, i) => (
+            <SignalCard key={signal.id} signal={signal} index={i} />
+          ))}
+
+          {filteredSignals.length === 0 && (
+            <div
+              style={{
+                textAlign: "center",
+                padding: "24px 12px",
+                fontFamily: C.mono,
+                fontSize: 10,
+                color: C.textFaint,
+              }}
+            >
+              {activeFilter === "all"
+                ? "No signals yet. Generate a briefing to populate."
+                : `No ${activeFilter} signals.`}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function classifySignal(text: string, type?: string, sectionTitle?: string): SignalCategory {
+  if (type === "triage") return "alert";
+  if (type === "recommendation") return "recommendation";
+  if (type === "insight") return "insight";
+
+  const lower = text.toLowerCase();
+  const titleLower = sectionTitle?.toLowerCase() ?? "";
+
+  if (titleLower.includes("decision") || lower.includes("decide") || lower.includes("proposal")) return "proposal";
+  if (titleLower.includes("insight") || lower.includes("trend") || lower.includes("data shows")) return "insight";
+  if (lower.includes("opportunity") || lower.includes("potential") || lower.includes("could")) return "opportunity";
+  if (lower.includes("alert") || lower.includes("urgent") || lower.includes("overdue")) return "alert";
+  if (lower.includes("recommend") || lower.includes("should") || lower.includes("suggest")) return "recommendation";
+
+  return "insight";
+}
+
+function inferSignalAction(
+  text: string,
+  type?: string,
+): { label: string; actionType: ActionType; context: string } | null {
+  const lower = text.toLowerCase();
+
+  if (lower.includes("email") || lower.includes("reach out") || lower.includes("follow up")) {
+    return { label: "Draft Email", actionType: "email_draft", context: text };
+  }
+  if (lower.includes("build") || lower.includes("implement") || lower.includes("code")) {
+    return { label: "Send to Code", actionType: "code", context: text };
+  }
+  if (lower.includes("post") || lower.includes("content") || lower.includes("draft")) {
+    return { label: "Draft Content", actionType: "content", context: text };
+  }
+  if (lower.includes("research") || lower.includes("analyze")) {
+    return { label: "Research", actionType: "research", context: text };
+  }
+  if (type === "triage") {
+    return { label: "Review", actionType: "admin", context: text };
+  }
+
+  return null;
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffMin < 1) return "now";
+  if (diffMin < 60) return `${diffMin}m`;
+  if (diffHr < 24) return `${diffHr}h`;
+  return `${diffDay}d`;
+}
+
+function getMostCommon(arr: string[]): string {
+  const freq: Record<string, number> = {};
+  for (const v of arr) freq[v] = (freq[v] ?? 0) + 1;
+  return Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+}
