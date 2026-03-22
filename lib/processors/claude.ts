@@ -2,8 +2,10 @@
  * Shared Claude API helper for processors that need LLM enrichment.
  */
 
+import { AI_MODELS } from "@/lib/ai-config";
+
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
-const CLAUDE_MODEL = "claude-sonnet-4-20250514";
+const CLAUDE_MODEL = AI_MODELS.PRIMARY;
 
 export async function callClaude(system: string, userMessage: string, maxTokens = 1024): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;

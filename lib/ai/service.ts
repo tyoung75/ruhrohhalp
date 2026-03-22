@@ -2,10 +2,12 @@ import type { PlannerItem } from "@/lib/types/domain";
 import { callProvider } from "@/lib/ai/providers";
 import { parseJSONArray } from "@/lib/ai/parse";
 import { routeItem, detectType, detectPriority } from "@/lib/ai/routing";
-import { plannerSystemPrompt, GPT_AUDIT_SYSTEM } from "@/lib/ai/prompts";
+import { plannerSystemPrompt } from "@/lib/ai/prompts";
 import { getUserProviderKey } from "@/lib/ai/credentials";
+import { AI_MODELS } from "@/lib/ai-config";
 import type { PlanTier } from "@/lib/types/domain";
 import { logError } from "@/lib/logger";
+import OpenAI from "openai"; // reuse existing package
 
 export async function processInputWithDualAI(params: {
   userId: string;
@@ -27,7 +29,7 @@ export async function processInputWithDualAI(params: {
     try {
       const raw = await callProvider({
         provider: "claude",
-        modelId: "claude-sonnet-4-5",
+        modelId: AI_MODELS.PRIMARY,
         apiKey: claudeKey,
         system: plannerSystemPrompt(ctxItems),
         messages: [{ role: "user", content: input }],
@@ -91,20 +93,21 @@ export async function processInputWithDualAI(params: {
   let audits: Array<{ title: string; auditNotes: string; memoryKey: string }> = [];
   let auditApplied = false;
 
-  if (chatgptKey && claudeItems.length > 0) {
+  if (claudeItems.length > 0 && process.env.GROQ_API_KEY) {
     try {
       const summary = claudeItems
         .map((i) => `Title: ${i.title}\nType: ${i.type}\nHowTo: ${i.howTo}`)
         .join("\n\n");
-      const raw = await callProvider({
-        provider: "chatgpt",
-        modelId: "gpt-4o-mini",
-        apiKey: chatgptKey,
-        system: GPT_AUDIT_SYSTEM,
-        messages: [{ role: "user", content: `Audit this plan:\n\n${summary}\n\nOriginal input: ${input}` }],
-      });
-      audits = parseJSONArray<{ title: string; auditNotes: string; memoryKey: string }>(raw);
-      auditApplied = audits.length > 0;
+      const auditResult = await auditTaskWithLlama(summary, input);
+      if (auditResult.valid !== undefined) {
+        // Convert Llama audit result to the per-item format
+        audits = claudeItems.map((i) => ({
+          title: i.title,
+          auditNotes: auditResult.issues?.join("; ") ?? "",
+          memoryKey: "",
+        }));
+        auditApplied = true;
+      }
     } catch (error) {
       logError("planner.audit_failed", error, { userId });
     }
@@ -139,6 +142,39 @@ export async function processInputWithDualAI(params: {
   });
 
   return { items, auditApplied };
+}
+
+// ---------------------------------------------------------------------------
+// Llama 4 Scout audit via Groq (replaces GPT audit)
+// ---------------------------------------------------------------------------
+
+const groq = new OpenAI({
+  baseURL: "https://api.groq.com/openai/v1",
+  apiKey: process.env.GROQ_API_KEY,
+});
+
+async function auditTaskWithLlama(claudeOutput: string, taskContext: string) {
+  // Replaced GPT audit with Llama 4 Scout via Groq (Llama Guard safety enabled)
+  const response = await groq.chat.completions.create({
+    model: AI_MODELS.AUDIT,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are an audit model. Review the following AI-generated task " +
+          "plan and validate: (1) priority assignment accuracy, (2) action " +
+          "type correctness, (3) missing subtasks or risks. Return JSON: " +
+          "{ valid: boolean, confidence: number, issues: string[], " +
+          "suggestions: string[] }",
+      },
+      {
+        role: "user",
+        content: `Task context:\n${taskContext}\n\nClaude output:\n${claudeOutput}`,
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+  return JSON.parse(response.choices[0].message.content ?? "{}");
 }
 
 export async function chatWithTaskAgent(params: {

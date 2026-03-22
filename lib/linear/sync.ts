@@ -126,7 +126,7 @@ export function linearIssueToTaskData(issue: LinearIssue) {
     status: linearStateToStatus(issue.state.type),
     how_to: "",
     recommended_ai: "claude" as const,
-    recommended_model: "claude-sonnet-4-5",
+    recommended_model: "claude-sonnet-4-6",
     ai_reason: "Synced from Linear",
     source_text: `Linear: ${issue.identifier}`,
     linear_issue_id: issue.id,
