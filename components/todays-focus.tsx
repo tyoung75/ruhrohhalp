@@ -4,17 +4,31 @@ import { C } from "@/lib/ui";
 import { GoalProgressCard, type GoalData } from "@/components/goal-progress-card";
 import { Spinner } from "@/components/primitives";
 
+// AI tool config for launch buttons
+const AI_TOOLS: Record<string, { label: string; icon: string; color: string; urlPrefix: string }> = {
+  claude: { label: "Open in Claude", icon: "◈", color: C.cl, urlPrefix: "https://claude.ai/new" },
+  chatgpt: { label: "Open in ChatGPT", icon: "◉", color: "#10a37f", urlPrefix: "https://chatgpt.com" },
+  gemini: { label: "Open in Gemini", icon: "◇", color: "#4285f4", urlPrefix: "https://gemini.google.com/app" },
+};
+
+// Friendly source labels
+const SOURCE_LABELS: Record<string, string> = {
+  linear_import: "imported task",
+  manual: "manually added",
+  cowork: "from cowork",
+  api: "via API",
+  command: "from command bar",
+};
+
 interface FocusItem {
   id: string;
   title: string;
   priority: "urgent" | "high" | "medium" | "low";
   description: string;
   leverageReason?: string;
-  pillar?: string;
   source?: string;
-  linearUrl?: string;
-  githubPrUrl?: string;
-  goalId?: string;
+  recommendedAI?: string;
+  howTo?: string;
 }
 
 export function TodaysFocus() {
@@ -44,7 +58,7 @@ export function TodaysFocus() {
       setLoading(true);
       setError(null);
 
-      // Fetch high-priority tasks — use items[] for full data (linearUrl, leverage_reason, etc.)
+      // Fetch high-priority tasks — use items[] for full PlannerItem data
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tasksRes: any = await api("/api/tasks?state=started,unstarted&priority=1,2&limit=5");
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,11 +70,9 @@ export function TodaysFocus() {
         priority: task.priority || "high",
         description: task.description || "",
         leverageReason: task.leverageReason || task.aiReason || undefined,
-        pillar: undefined,
         source: task.sourceText || undefined,
-        linearUrl: task.linearUrl || undefined,
-        githubPrUrl: task.githubPrUrl || undefined,
-        goalId: task.goalId || undefined,
+        recommendedAI: task.recommendedAI || "claude",
+        howTo: task.howTo || undefined,
       }));
 
       setFocusItems(items);
@@ -72,7 +84,6 @@ export function TodaysFocus() {
       const goalsList: any[] = goalsRes?.goals ?? [];
 
       if (goalsList.length > 0) {
-        // Pick the goal with the nearest upcoming target_date, or the highest-priority active one
         const now = new Date();
         const scored = goalsList
           .filter((g) => g.status === "active")
@@ -83,7 +94,6 @@ export function TodaysFocus() {
             return { goal: g, daysUntil, priorityScore };
           })
           .sort((a, b) => {
-            // Nearest deadline first, then highest priority
             if (a.daysUntil !== b.daysUntil) return a.daysUntil - b.daysUntil;
             return a.priorityScore - b.priorityScore;
           });
@@ -98,7 +108,7 @@ export function TodaysFocus() {
             title: best.title,
             pillar: pillarEmoji ? `${pillarEmoji} ${pillarName}` : pillarName,
             pillarColor: C.cl,
-            progress: 0, // text-based metrics, not numeric percentage
+            progress: 0,
             currentValue: best.progress_current || undefined,
             targetValue: best.progress_target || undefined,
             metricLabel: best.progress_metric || undefined,
@@ -128,11 +138,8 @@ export function TodaysFocus() {
   const toggleWhyExpanded = (taskId: string) => {
     setExpandedWhy((prev) => {
       const next = new Set(prev);
-      if (next.has(taskId)) {
-        next.delete(taskId);
-      } else {
-        next.add(taskId);
-      }
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
       return next;
     });
   };
@@ -251,7 +258,36 @@ function FocusCard(props: FocusCardProps) {
     low: C.textDim,
   };
 
-  const hasExternalLink = item.linearUrl || item.githubPrUrl;
+  // Determine the AI tool to launch
+  const aiKey = item.recommendedAI || "claude";
+  const aiTool = AI_TOOLS[aiKey] || AI_TOOLS.claude;
+
+  // Build the prompt to pre-fill when opening the AI tool
+  const buildPrompt = () => {
+    const parts = [`Task: ${item.title}`];
+    if (item.description) parts.push(`\nContext: ${item.description}`);
+    if (item.howTo) parts.push(`\nSteps:\n${item.howTo}`);
+    return parts.join("");
+  };
+
+  const handleOpenAI = () => {
+    const prompt = buildPrompt();
+    const encoded = encodeURIComponent(prompt);
+    // Each AI tool has different URL patterns for pre-filling prompts
+    let url: string;
+    if (aiKey === "chatgpt") {
+      url = `https://chatgpt.com/?q=${encoded}`;
+    } else if (aiKey === "gemini") {
+      url = `https://gemini.google.com/app?q=${encoded}`;
+    } else {
+      // Claude — open new conversation
+      url = `https://claude.ai/new?q=${encoded}`;
+    }
+    window.open(url, "_blank", "noopener");
+  };
+
+  // Friendly source label
+  const sourceLabel = item.source ? (SOURCE_LABELS[item.source] || item.source) : undefined;
 
   return (
     <div
@@ -360,16 +396,10 @@ function FocusCard(props: FocusCardProps) {
       )}
 
       {/* Source badge */}
-      {item.source && (
+      {sourceLabel && (
         <div style={{ marginBottom: 8 }}>
-          <span
-            style={{
-              fontSize: 11,
-              fontStyle: "italic",
-              color: C.textFaint,
-            }}
-          >
-            {item.source}
+          <span style={{ fontSize: 11, fontStyle: "italic", color: C.textFaint }}>
+            {sourceLabel}
           </span>
         </div>
       )}
@@ -417,86 +447,43 @@ function FocusCard(props: FocusCardProps) {
 
       {/* Action Row */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        {/* External link buttons */}
-        {item.linearUrl && (
-          <a
-            href={item.linearUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              background: C.cl,
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              padding: "8px 16px",
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: "pointer",
-              textDecoration: "none",
-              flex: 1,
-              textAlign: "center",
-            }}
-          >
-            Open in Linear
-          </a>
-        )}
-        {item.githubPrUrl && (
-          <a
-            href={item.githubPrUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              background: C.cl,
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              padding: "8px 16px",
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: "pointer",
-              textDecoration: "none",
-              flex: hasExternalLink && item.linearUrl ? undefined : 1,
-              textAlign: "center",
-            }}
-          >
-            Open PR
-          </a>
-        )}
-        {!hasExternalLink && (
-          <button
-            onClick={() => onMarkDone(item.id)}
-            style={{
-              background: C.cl,
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              padding: "8px 16px",
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: "pointer",
-              flex: 1,
-            }}
-          >
-            Done
-          </button>
-        )}
-        {hasExternalLink && (
-          <button
-            onClick={() => onMarkDone(item.id)}
-            style={{
-              background: C.surface,
-              color: C.text,
-              border: `1px solid ${C.border}`,
-              borderRadius: 6,
-              padding: "8px 12px",
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
-          >
-            Done
-          </button>
-        )}
+        {/* Primary: Open in recommended AI tool */}
+        <button
+          onClick={handleOpenAI}
+          style={{
+            background: aiTool.color,
+            color: "white",
+            border: "none",
+            borderRadius: 6,
+            padding: "8px 16px",
+            fontSize: 13,
+            fontWeight: 500,
+            cursor: "pointer",
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+          }}
+        >
+          <span>{aiTool.icon}</span>
+          {aiTool.label}
+        </button>
+        <button
+          onClick={() => onMarkDone(item.id)}
+          style={{
+            background: C.surface,
+            color: C.text,
+            border: `1px solid ${C.border}`,
+            borderRadius: 6,
+            padding: "8px 12px",
+            fontSize: 13,
+            fontWeight: 500,
+            cursor: "pointer",
+          }}
+        >
+          Done
+        </button>
         <button
           onClick={() => onSnooze(item.id)}
           style={{

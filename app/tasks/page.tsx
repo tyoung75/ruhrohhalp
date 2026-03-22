@@ -49,6 +49,8 @@ function createLocalPlannerItem(input: string, userEmail: string): PlannerItem {
     delegatedTo: null,
     isOpenLoop: false,
     threadRef: null,
+    leverageReason: "",
+    githubPrUrl: null,
     linearIssueId: null,
     linearUrl: null,
     linearSyncedAt: null,
