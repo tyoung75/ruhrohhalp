@@ -547,7 +547,7 @@ export async function POST(request: NextRequest) {
   // ============================================================================
   else {
     intent = "question";
-    result = input;
+    result = `Unrecognized command. Try: "add [task]", "done TYOS-XXX", "snooze [task] until [date]", "delete [task]", or "priority [task] to P1-P4"`;
     executed = false;
   }
 

@@ -17,6 +17,7 @@ interface CommandApiResponse {
 interface CommandResult {
   success: boolean;
   message: string;
+  data?: Record<string, unknown>;
 }
 
 export function CommandBar() {
@@ -56,6 +57,7 @@ export function CommandBar() {
       const mapped: CommandResult = {
         success: data.executed,
         message: data.result || `${data.intent}: ${data.executed ? "done" : "pending"}`,
+        data: data.metadata,
       };
       setResult(mapped);
 
