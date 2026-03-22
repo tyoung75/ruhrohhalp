@@ -126,7 +126,8 @@ export async function GET() {
     });
   } catch (error) {
     logError("briefing.daily.get", error);
-    return NextResponse.json({ error: "Daily briefing failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Daily briefing failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -166,7 +167,8 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     logError("briefing.daily", error);
-    return NextResponse.json({ error: "Daily briefing failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Daily briefing failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
