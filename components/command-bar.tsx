@@ -5,12 +5,6 @@ import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
 
-interface CommandResult {
-  success: boolean;
-  message: string;
-  data?: unknown;
-}
-
 interface CommandApiResponse {
   intent: string;
   result: string;
@@ -18,6 +12,12 @@ interface CommandApiResponse {
   taskId?: string;
   goalId?: string;
   metadata?: Record<string, unknown>;
+}
+
+interface CommandResult {
+  success: boolean;
+  message: string;
+  data?: Record<string, unknown>;
 }
 
 export function CommandBar() {
@@ -54,14 +54,15 @@ export function CommandBar() {
         method: "POST",
         body: JSON.stringify({ input: command }),
       });
-      setResult({
+      const mapped: CommandResult = {
         success: data.executed,
-        message: data.result,
+        message: data.result || `${data.intent}: ${data.executed ? "done" : "pending"}`,
         data: data.metadata,
-      });
+      };
+      setResult(mapped);
 
       // Notify other components to refresh after a successful command
-      if (data.success) {
+      if (mapped.success) {
         window.dispatchEvent(new CustomEvent("tasks:refresh"));
         window.dispatchEvent(new CustomEvent("briefing:refresh"));
       }

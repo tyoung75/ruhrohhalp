@@ -1,50 +1,54 @@
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth';
+import { createClient } from '@/lib/supabase/server';
 
-async function getSupabaseClient() {
-  const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
+// Pillar colors derived from name (pillars table has no color column)
+const PILLAR_COLORS: Record<string, string> = {
+  "Fitness & Athletics":   "#e07d4a",
+  "Career & Instacart":    "#5d9ef8",
+  "Ventures & BDHE":       "#41c998",
+  "Financial":             "#f4c842",
+  "Relationship & Family": "#ef7f7f",
+  "Health & Recovery":     "#9ec8f5",
+  "Content & Brand":       "#e07d4a",
+  "Travel & Experiences":  "#6fcf9a",
+  "Personal Growth":       "#5d9ef8",
+  "Community & Impact":    "#41c998",
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function attachPillarColor(goal: any) {
+  if (goal?.pillar) {
+    goal.pillar.color = PILLAR_COLORS[goal.pillar.name] ?? "#e07d4a";
+  }
+  return goal;
 }
+
+const PILLAR_SELECT = `
+  *,
+  pillar:pillar_id (
+    id,
+    name
+  )
+`;
 
 // GET /api/goals/[id]
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { user, response } = await requireUser();
+  if (response || !user) return response;
+
   try {
-    const supabase = await getSupabaseClient();
+    const supabase = await createClient();
     const { id: goalId } = await params;
 
-    // Get goal with related pillar
     const { data: goal, error: goalError } = await supabase
       .from('goals')
-      .select(
-        `
-        *,
-        pillar:pillar_id (
-          id,
-          name,
-          color
-        )
-      `
-      )
+      .select(PILLAR_SELECT)
       .eq('id', goalId)
+      .eq('user_id', user.id)
       .single();
 
     if (goalError || !goal) {
@@ -54,7 +58,7 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(goal);
+    return NextResponse.json(attachPillarColor(goal));
   } catch (error) {
     console.error('GET /api/goals/[id] error:', error);
     return NextResponse.json(
@@ -69,8 +73,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { user, response } = await requireUser();
+  if (response || !user) return response;
+
   try {
-    const supabase = await getSupabaseClient();
+    const supabase = await createClient();
     const { id: goalId } = await params;
     const body = await req.json();
 
@@ -80,6 +87,7 @@ export async function PATCH(
         .from('goals')
         .select('*')
         .eq('id', goalId)
+        .eq('user_id', user.id)
         .single();
 
       if (goalError || !goal) {
@@ -89,9 +97,8 @@ export async function PATCH(
         );
       }
 
-      // Template suggestion based on goal data
       const suggestion = {
-        reasoning: `Based on your current progress of ${goal.progress_current} ${goal.progress_unit} toward your target of ${goal.progress_target} ${goal.progress_unit}, and considering the timeline of this goal, here are some adjustments that could help optimize your approach.`,
+        reasoning: `Based on your current progress of ${goal.progress_current} toward your target of ${goal.progress_target}, and considering the timeline of this goal, here are some adjustments that could help optimize your approach.`,
         proposed_changes: {
           progress_target: goal.progress_target,
           title: goal.title,
@@ -110,6 +117,7 @@ export async function PATCH(
       .from('goals')
       .select('*')
       .eq('id', goalId)
+      .eq('user_id', user.id)
       .single();
 
     if (fetchError || !currentGoal) {
@@ -137,16 +145,8 @@ export async function PATCH(
       .from('goals')
       .update(changedFields)
       .eq('id', goalId)
-      .select(
-        `
-        *,
-        pillar:pillar_id (
-          id,
-          name,
-          color
-        )
-      `
-      )
+      .eq('user_id', user.id)
+      .select(PILLAR_SELECT)
       .single();
 
     if (updateError) {
@@ -159,21 +159,17 @@ export async function PATCH(
 
     // Record change in history if anything changed
     if (Object.keys(changedFields).length > 0) {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
       await supabase.from('goal_history').insert({
         goal_id: goalId,
-        user_id: user?.id || 'unknown',
-        change_type: 'updated',
-        old_value: oldValues,
-        new_value: newValues,
+        user_id: user.id,
+        field_changed: Object.keys(changedFields).join(', '),
+        old_value: JSON.stringify(oldValues),
+        new_value: JSON.stringify(newValues),
         created_at: new Date().toISOString(),
       });
     }
 
-    return NextResponse.json(updated);
+    return NextResponse.json(attachPillarColor(updated));
   } catch (error) {
     console.error('PATCH /api/goals/[id] error:', error);
     return NextResponse.json(
@@ -185,18 +181,21 @@ export async function PATCH(
 
 // DELETE /api/goals/[id]
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { user, response } = await requireUser();
+  if (response || !user) return response;
+
   try {
-    const supabase = await getSupabaseClient();
+    const supabase = await createClient();
     const { id: goalId } = await params;
 
-    // Soft delete — set status to 'abandoned'
     const { data: goal, error: fetchError } = await supabase
       .from('goals')
       .select('*')
       .eq('id', goalId)
+      .eq('user_id', user.id)
       .single();
 
     if (fetchError || !goal) {
@@ -209,7 +208,8 @@ export async function DELETE(
     const { error: updateError } = await supabase
       .from('goals')
       .update({ status: 'abandoned' })
-      .eq('id', goalId);
+      .eq('id', goalId)
+      .eq('user_id', user.id);
 
     if (updateError) {
       console.error('DELETE soft delete error:', updateError);
@@ -220,16 +220,12 @@ export async function DELETE(
     }
 
     // Record deletion in history
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
     await supabase.from('goal_history').insert({
       goal_id: goalId,
-      user_id: user?.id || 'unknown',
-      change_type: 'abandoned',
-      old_value: { status: goal.status },
-      new_value: { status: 'abandoned' },
+      user_id: user.id,
+      field_changed: 'status',
+      old_value: goal.status,
+      new_value: 'abandoned',
       created_at: new Date().toISOString(),
     });
 
