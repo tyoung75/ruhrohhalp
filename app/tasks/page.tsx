@@ -194,7 +194,7 @@ export default function TasksPage() {
   const doneCount = items.filter((i) => i.status === "done").length;
 
   return (
-    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
       <div
         style={{
           display: "flex",
