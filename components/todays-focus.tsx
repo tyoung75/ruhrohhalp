@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
+import { type ActionType } from "@/components/one-tap-action";
 import { GoalProgressCard } from "@/components/goal-progress-card";
 import { Spinner } from "@/components/primitives";
 
@@ -53,12 +54,7 @@ export function TodaysFocus() {
       setError(null);
 
       // Fetch high-leverage tasks
-      const tasksResponse = await api.get("/api/tasks", {
-        params: {
-          filter: "high_leverage",
-          status: "pending",
-        },
-      });
+      const tasksResponse = await api("/api/tasks?filter=high_leverage&status=pending");
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const items: FocusItem[] = tasksResponse.data.map((task: any) => ({
@@ -76,9 +72,7 @@ export function TodaysFocus() {
       setFocusItems(items);
 
       // Fetch goal spotlight
-      const goalsResponse = await api.get("/api/goals", {
-        params: { spotlight: true, limit: 1 },
-      });
+      const goalsResponse = await api("/api/goals?spotlight=true&limit=1");
 
       if (goalsResponse.data && goalsResponse.data.length > 0) {
         const goal = goalsResponse.data[0];
@@ -92,7 +86,7 @@ export function TodaysFocus() {
       }
 
       // Fetch timeline status
-      const timelineResponse = await api.get("/api/timeline/status");
+      const timelineResponse = await api("/api/timeline/status");
       setTimelineStatus(timelineResponse.data?.status || "On track");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load today's focus");
@@ -104,7 +98,7 @@ export function TodaysFocus() {
 
   const handleDeleteTask = async (taskId: string) => {
     try {
-      await api.delete(`/api/tasks/${taskId}`);
+      await api(`/api/tasks/${taskId}`, { method: "DELETE" });
       setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
       setDeletingId(null);
     } catch (err: unknown) {
@@ -127,7 +121,7 @@ export function TodaysFocus() {
 
   const handleMarkDone = async (taskId: string) => {
     try {
-      await api.patch(`/api/tasks/${taskId}`, { status: "done" });
+      await api(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ status: "done" }) });
       setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
     } catch (err: unknown) {
       console.error("Error marking task done:", err);
@@ -137,7 +131,7 @@ export function TodaysFocus() {
 
   const handleSnooze = async (taskId: string) => {
     try {
-      await api.patch(`/api/tasks/${taskId}`, { snoozed_until: new Date(Date.now() + 3600000).toISOString() });
+      await api(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ snoozed_until: new Date(Date.now() + 3600000).toISOString() }) });
       setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
     } catch (err: unknown) {
       console.error("Error snoozing task:", err);
