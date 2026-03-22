@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
+import { type ActionType } from "@/components/one-tap-action";
 import { GoalProgressCard } from "@/components/goal-progress-card";
 import { Spinner } from "@/components/primitives";
 
