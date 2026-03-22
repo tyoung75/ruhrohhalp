@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { createClient } from '@/lib/supabase/server';
+import { AI_MODELS } from '@/lib/ai-config';
+import { logError } from '@/lib/logger';
 
 // Pillar colors derived from name (pillars table has no color column)
 const PILLAR_COLORS: Record<string, string> = {
@@ -31,6 +33,105 @@ const PILLAR_SELECT = `
     name
   )
 `;
+
+// ---------------------------------------------------------------------------
+// AI-powered goal suggestion
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function generateGoalSuggestion(goal: any, userPrompt: string) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY');
+
+  const goalContext = JSON.stringify({
+    title: goal.title,
+    description: goal.description,
+    progress_metric: goal.progress_metric,
+    progress_current: goal.progress_current,
+    progress_target: goal.progress_target,
+    target_date: goal.target_date,
+    status: goal.status,
+    priority: goal.priority,
+    methods: goal.methods,
+    tags: goal.tags,
+  }, null, 2);
+
+  const updatableFields = [
+    'title', 'description', 'progress_current', 'progress_target',
+    'progress_metric', 'target_date', 'status', 'priority', 'methods', 'tags',
+  ];
+
+  const systemPrompt = `You are TylerOS, a personal AI assistant helping manage goals.
+
+You will receive a goal's current state and a natural language instruction from the user. Your job is to interpret what the user wants to change and return a structured JSON response.
+
+CRITICAL RULES:
+- Parse the user's input EXACTLY. If they say their time is 3:22:16, use 3:22:16 — not 3:23:02 or any other value.
+- If they say they want "Sub 3:05:00", use "3:05:00" or "Sub 3:05:00" as the target — do not round or adjust.
+- Only propose changes to fields the user is actually asking to change.
+- The updatable fields are: ${updatableFields.join(', ')}
+- For time-based metrics (marathon, race times), keep the exact format the user provides.
+- methods is a text array of short labels.
+- tags is a text array.
+- target_date format is YYYY-MM-DD.
+- priority must be one of: critical, high, medium, low.
+- status must be one of: active, paused, completed, archived.
+
+Respond with ONLY valid JSON matching this schema:
+{
+  "reasoning": "Brief explanation of what you understood and what you're changing",
+  "proposed_changes": { /* only the fields being changed, with their new values */ },
+  "downstream_effects": ["effect 1", "effect 2"]
+}`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: AI_MODELS.FAST,
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{
+        role: 'user',
+        content: `Current goal state:\n${goalContext}\n\nUser instruction: ${userPrompt}`,
+      }],
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message ?? `AI call failed (${res.status})`);
+  }
+
+  const text = data.content?.find((c: { type: string }) => c.type === 'text')?.text ?? '';
+
+  // Extract JSON from the response (handle markdown code blocks)
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('AI did not return valid JSON');
+  }
+
+  const suggestion = JSON.parse(jsonMatch[0]);
+
+  // Validate: only allow known fields in proposed_changes
+  if (suggestion.proposed_changes) {
+    for (const key of Object.keys(suggestion.proposed_changes)) {
+      if (!updatableFields.includes(key)) {
+        delete suggestion.proposed_changes[key];
+      }
+    }
+  }
+
+  return {
+    reasoning: suggestion.reasoning || 'Here are the proposed changes based on your input.',
+    proposed_changes: suggestion.proposed_changes || {},
+    downstream_effects: suggestion.downstream_effects || [],
+  };
+}
 
 // GET /api/goals/[id]
 export async function GET(
@@ -81,7 +182,7 @@ export async function PATCH(
     const { id: goalId } = await params;
     const body = await req.json();
 
-    // Handle NL prompt — generate suggestion without applying
+    // Handle NL prompt — use AI to generate suggestion from user's input
     if (body.prompt) {
       const { data: goal, error: goalError } = await supabase
         .from('goals')
@@ -97,19 +198,16 @@ export async function PATCH(
         );
       }
 
-      const suggestion = {
-        reasoning: `Based on your current progress of ${goal.progress_current} toward your target of ${goal.progress_target}, and considering the timeline of this goal, here are some adjustments that could help optimize your approach.`,
-        proposed_changes: {
-          progress_target: goal.progress_target,
-          title: goal.title,
-        },
-        downstream_effects: [
-          'Training plan pace targets will be recalculated',
-          'Weekly progress targets will be adjusted',
-        ],
-      };
-
-      return NextResponse.json({ suggestion });
+      try {
+        const suggestion = await generateGoalSuggestion(goal, body.prompt);
+        return NextResponse.json({ suggestion });
+      } catch (err) {
+        logError('goals.prompt', err);
+        return NextResponse.json(
+          { error: err instanceof Error ? err.message : 'Failed to generate suggestion' },
+          { status: 500 }
+        );
+      }
     }
 
     // Get current goal state for history
