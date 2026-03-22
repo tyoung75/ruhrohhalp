@@ -307,7 +307,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
             Local dev mode for <span style={{ color: C.cream }}>{localEmail}</span>. Agent chat, billing, and synced settings are disabled.
           </div>
         )}
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
           {children}
         </div>
       </div>
