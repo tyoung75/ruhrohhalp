@@ -133,7 +133,7 @@ function parseRelativeDate(dateStr: string): string | null {
     if (!isNaN(parsed.getTime())) {
       return parsed.toISOString().split("T")[0];
     }
-  } catch (_e) {}
+  } catch { /* non-parsable date */ }
 
   return null;
 }

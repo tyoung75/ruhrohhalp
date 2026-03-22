@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
-import { OneTapAction, MarkDoneAction } from "@/components/one-tap-action";
 import { GoalProgressCard } from "@/components/goal-progress-card";
 import { Spinner } from "@/components/primitives";
 
@@ -240,18 +239,8 @@ interface FocusCardProps {
   onToggleWhy: (id: string) => void;
 }
 
-function FocusCard({
-  item,
-  index: _index,
-  onDelete,
-  onMarkDone,
-  onSnooze,
-  isDeleting,
-  onDeleteClick,
-  onCancelDelete,
-  expandedWhy,
-  onToggleWhy,
-}: FocusCardProps) {
+function FocusCard(props: FocusCardProps) {
+  const { item, onDelete, onMarkDone, onSnooze, isDeleting, onDeleteClick, onCancelDelete, expandedWhy, onToggleWhy } = props;
   const isExpanded = expandedWhy.has(item.id);
   const whyContent = item.leverageReason || item.rationale;
   const priorityColors: Record<string, string> = {

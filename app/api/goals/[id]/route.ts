@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
-async function getSupabaseClient(_req: NextRequest) {
+async function getSupabaseClient() {
   const cookieStore = await cookies();
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -28,7 +28,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = await getSupabaseClient(req);
+    const supabase = await getSupabaseClient();
     const goalId = params.id;
 
     // Get goal with related pillar
@@ -70,7 +70,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = await getSupabaseClient(req);
+    const supabase = await getSupabaseClient();
     const goalId = params.id;
     const body = await req.json();
 
@@ -189,7 +189,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = await getSupabaseClient(req);
+    const supabase = await getSupabaseClient();
     const goalId = params.id;
 
     // Soft delete — set status to 'abandoned'
