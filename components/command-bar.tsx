@@ -11,6 +11,15 @@ interface CommandResult {
   data?: unknown;
 }
 
+interface CommandApiResponse {
+  intent: string;
+  result: string;
+  executed: boolean;
+  taskId?: string;
+  goalId?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export function CommandBar() {
   const [input, setInput] = useState("");
   const [result, setResult] = useState<CommandResult | null>(null);
@@ -41,11 +50,15 @@ export function CommandBar() {
     setShowResult(true);
 
     try {
-      const data = await api<CommandResult>("/api/command", {
+      const data = await api<CommandApiResponse>("/api/command", {
         method: "POST",
         body: JSON.stringify({ input: command }),
       });
-      setResult(data);
+      setResult({
+        success: data.executed,
+        message: data.result,
+        data: data.metadata,
+      });
 
       // Notify other components to refresh after a successful command
       if (data.success) {
