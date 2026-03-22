@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
@@ -26,6 +26,30 @@ interface Briefing {
   updated_at: string;
 }
 
+/** Simple inline markdown → React: handles **bold**, *italic*, `code`, and TYOS-XXX refs */
+function renderMarkdown(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|TYOS-\d+)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i} style={{ color: C.cream, fontWeight: 600 }}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={i} style={{ color: C.textDim }}>{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return (
+        <code key={i} style={{ fontFamily: C.mono, fontSize: "0.9em", background: `${C.surface}`, padding: "1px 4px", borderRadius: 3 }}>
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    if (/^TYOS-\d+$/.test(part)) {
+      return <span key={i} style={{ fontFamily: C.mono, color: C.cl, fontWeight: 500 }}>{part}</span>;
+    }
+    return part;
+  });
+}
+
 export function BriefingView() {
   const [briefing, setBriefing] = useState<Briefing | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,7 +64,6 @@ export function BriefingView() {
       const data = await api<{ briefing: Briefing | null }>("/api/briefings");
       if (data.briefing && data.briefing.content_json) {
         setBriefing(data.briefing);
-        // Expand all sections by default so you see everything
         const titles = data.briefing.content_json.map((s) => s.title);
         setExpandedSections(new Set(titles));
       }
@@ -53,7 +76,7 @@ export function BriefingView() {
     loadBriefing().finally(() => setLoading(false));
   }, [loadBriefing]);
 
-  // Listen for briefing refresh events (fired by command bar, task actions, etc.)
+  // Listen for briefing refresh events
   useEffect(() => {
     function handleRefresh() {
       loadBriefing();
@@ -66,14 +89,35 @@ export function BriefingView() {
     setGenerating(true);
     setError("");
     try {
-      const data = await api<{ briefing: Briefing }>("/api/briefing/daily");
+      // Use AbortController with 60s timeout for long-running RAG query
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+
+      const res = await fetch("/api/briefing/daily", {
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+      });
+      clearTimeout(timeout);
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error ?? `Briefing generation failed (${res.status})`);
+      }
+
       if (data.briefing) {
         setBriefing(data.briefing);
-        const titles = data.briefing.content_json.map((s) => s.title);
+        const titles = data.briefing.content_json?.map((s: BriefingSection) => s.title) ?? [];
         setExpandedSections(new Set(titles));
+      } else {
+        setError("Briefing generated but returned empty. Check that OPENAI_API_KEY and ANTHROPIC_API_KEY are set in Vercel env vars.");
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to generate briefing");
+      if (e instanceof DOMException && e.name === "AbortError") {
+        setError("Briefing generation timed out (>60s). The RAG query may need optimization, or check Vercel function timeout settings.");
+      } else {
+        setError(e instanceof Error ? e.message : "Failed to generate briefing");
+      }
     } finally {
       setGenerating(false);
     }
@@ -108,7 +152,6 @@ export function BriefingView() {
           priority_num: 2,
         }),
       });
-      // Notify task rail to refresh
       window.dispatchEvent(new CustomEvent("tasks:refresh"));
     } catch (e) {
       console.error("Triage error:", e);
@@ -207,6 +250,7 @@ export function BriefingView() {
             color: C.reminder,
             fontFamily: C.mono,
             fontSize: 10,
+            lineHeight: 1.5,
           }}
         >
           {error}
@@ -338,13 +382,13 @@ export function BriefingView() {
                         {/* Item text */}
                         <div
                           style={{
-                            fontSize: 11,
+                            fontSize: 12,
                             fontFamily: C.sans,
                             color: C.text,
-                            lineHeight: 1.5,
+                            lineHeight: 1.6,
                           }}
                         >
-                          {item.text}
+                          {renderMarkdown(item.text)}
                         </div>
 
                         {/* Action buttons */}
