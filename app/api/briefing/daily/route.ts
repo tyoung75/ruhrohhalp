@@ -11,6 +11,8 @@ function buildDailyPrompt(): string {
 
 Today's date: ${today}
 
+IMPORTANT: Pay special attention to any recent "Brain Dump" entries — these represent Tyler's current stated priorities, weekly plans, and top-of-mind concerns. The briefing should align with and adapt to these inputs. If Tyler has provided personal context (health, fitness, nutrition, etc.), factor that into relevant recommendations.
+
 Return a structured daily briefing with exactly these four sections. Be specific — reference real items, people, deadlines, and context from the memories.
 
 ## Leverage Tasks
