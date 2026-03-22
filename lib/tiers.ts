@@ -1,4 +1,5 @@
 import type { PlanTier } from "@/lib/types/domain";
+import { AI_MODELS } from "@/lib/ai-config";
 
 export const TIERS: Record<
   PlanTier,
@@ -16,7 +17,7 @@ export const TIERS: Record<
     id: "free",
     label: "Free",
     price: 0,
-    models: ["claude-haiku-4-5", "gpt-4o-mini", "gemini-1.5-flash"],
+    models: [AI_MODELS.FAST, "gpt-4o-mini", "gemini-1.5-flash"],
     monthlyLimit: null,
     desc: "Tyler's personal OS — no limits",
     features: ["Unlimited tasks", "Basic models", "No agent chat", "No memory sync"],
@@ -25,7 +26,7 @@ export const TIERS: Record<
     id: "starter",
     label: "Starter",
     price: 12,
-    models: ["claude-sonnet-4-5", "gpt-4o", "gemini-1.5-flash"],
+    models: [AI_MODELS.PRIMARY, "gpt-4o", "gemini-1.5-flash"],
     monthlyLimit: 100,
     desc: "Best for individuals",
     features: ["100 tasks/month", "Balanced models", "Agent chat on all tasks", "ChatGPT audit"],
@@ -34,7 +35,7 @@ export const TIERS: Record<
     id: "pro",
     label: "Pro",
     price: 25,
-    models: ["claude-opus-4-5", "gpt-4o", "gemini-1.5-pro"],
+    models: [AI_MODELS.PRIMARY, "gpt-4o", "gemini-1.5-pro"],
     monthlyLimit: null,
     desc: "For power users and founders",
     features: ["Unlimited tasks", "Flagship models", "Full memory and audit", "Priority processing"],

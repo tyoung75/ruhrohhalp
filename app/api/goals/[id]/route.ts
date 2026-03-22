@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
-async function getSupabaseClient(req: NextRequest) {
+async function getSupabaseClient() {
   const cookieStore = await cookies();
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -25,11 +25,11 @@ async function getSupabaseClient(req: NextRequest) {
 // GET /api/goals/[id]
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = await getSupabaseClient(req);
-    const goalId = params.id;
+    const supabase = await getSupabaseClient();
+    const { id: goalId } = await params;
 
     // Get goal with related pillar
     const { data: goal, error: goalError } = await supabase
@@ -67,11 +67,11 @@ export async function GET(
 // PATCH /api/goals/[id]
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = await getSupabaseClient(req);
-    const goalId = params.id;
+    const supabase = await getSupabaseClient();
+    const { id: goalId } = await params;
     const body = await req.json();
 
     // Handle NL prompt — generate suggestion without applying
@@ -120,9 +120,9 @@ export async function PATCH(
     }
 
     // Determine what changed
-    const changedFields: Record<string, any> = {};
-    const oldValues: Record<string, any> = {};
-    const newValues: Record<string, any> = {};
+    const changedFields: Record<string, unknown> = {};
+    const oldValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
 
     for (const [key, newValue] of Object.entries(body)) {
       if (currentGoal[key] !== newValue) {
@@ -186,11 +186,11 @@ export async function PATCH(
 // DELETE /api/goals/[id]
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = await getSupabaseClient(req);
-    const goalId = params.id;
+    const supabase = await getSupabaseClient();
+    const { id: goalId } = await params;
 
     // Soft delete — set status to 'abandoned'
     const { data: goal, error: fetchError } = await supabase

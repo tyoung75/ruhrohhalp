@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
-async function getSupabaseClient(req: NextRequest) {
+async function getSupabaseClient() {
   const cookieStore = await cookies();
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -25,11 +25,11 @@ async function getSupabaseClient(req: NextRequest) {
 // GET /api/goals/[id]/history
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = await getSupabaseClient(req);
-    const goalId = params.id;
+    const supabase = await getSupabaseClient();
+    const { id: goalId } = await params;
 
     // Verify goal exists
     const { data: goal, error: goalError } = await supabase

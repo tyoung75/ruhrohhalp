@@ -1,4 +1,5 @@
 import type { AIProvider } from "@/lib/types/domain";
+import { AI_MODELS } from "@/lib/ai-config";
 
 export type ModelDef = {
   id: string;
@@ -24,19 +25,19 @@ export const MODELS: Record<string, ModelDef> = {
     badge: "★ Best",
     blurb: "Highest reasoning, best for complex strategy & analysis",
   },
-  "claude-sonnet-4-5": {
-    id: "claude-sonnet-4-5",
+  [AI_MODELS.PRIMARY]: {
+    id: AI_MODELS.PRIMARY,
     provider: "claude",
-    label: "Claude Sonnet 4.5",
+    label: "Claude Sonnet 4.6",
     tier: "balanced",
-    newest: false,
+    newest: true,
     priceIn: 3,
     priceOut: 15,
     badge: "Balanced",
     blurb: "Best quality-to-speed ratio for most tasks",
   },
-  "claude-haiku-4-5": {
-    id: "claude-haiku-4-5",
+  [AI_MODELS.FAST]: {
+    id: AI_MODELS.FAST,
     provider: "claude",
     label: "Claude Haiku 4.5",
     tier: "fast",
@@ -93,7 +94,7 @@ export const MODELS: Record<string, ModelDef> = {
 };
 
 export const PROVIDER_DEFAULT_MODEL: Record<AIProvider, string> = {
-  claude: "claude-sonnet-4-5",
+  claude: AI_MODELS.PRIMARY,
   chatgpt: "gpt-4o",
   gemini: "gemini-1.5-pro",
 };

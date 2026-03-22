@@ -1,43 +1,41 @@
 /**
- * Thin wrapper around the OpenAI embeddings endpoint.
- * Uses raw fetch to stay consistent with the rest of the codebase (no SDK).
+ * Embedding utility — BGE-M3 via Hugging Face Inference API.
+ * Replaced OpenAI text-embedding-3-small with BGE-M3 (1024-dim, MIT license).
  */
 
-const EMBEDDING_MODEL = "text-embedding-3-small";
-const EMBEDDING_DIMENSIONS = 1536;
-const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
+import { AI_MODELS } from "@/lib/ai-config";
 
 export type EmbeddingResult = { embedding: number[]; index: number };
 
+async function generateEmbedding(text: string): Promise<number[]> {
+  // Replaced OpenAI text-embedding-3-small with BGE-M3 (1024-dim, MIT license)
+  const response = await fetch(
+    `https://api-inference.huggingface.co/models/${AI_MODELS.EMBEDDING_MODEL}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.HF_API_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ inputs: text }),
+    }
+  );
+  const data = await response.json();
+  return Array.isArray(data[0]) ? data[0] : data;
+}
+
 /**
- * Generate embeddings for one or more text inputs in a single API call.
- * OpenAI supports batched input — pass an array to reduce round-trips.
+ * Generate embeddings for one or more text inputs.
+ * Calls BGE-M3 sequentially per input (HF Inference API doesn't batch like OpenAI).
  */
 export async function generateEmbeddings(
   texts: string[],
-  apiKey: string,
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
 
-  const res = await fetch(OPENAI_EMBEDDINGS_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      input: texts,
-      dimensions: EMBEDDING_DIMENSIONS,
-    }),
-  });
-
-  const data = await res.json();
-  if (!res.ok || data.error) {
-    throw new Error(data.error?.message ?? `OpenAI embeddings call failed (${res.status})`);
+  const results: number[][] = [];
+  for (const text of texts) {
+    results.push(await generateEmbedding(text));
   }
-
-  // Sort by index to guarantee ordering matches input.
-  const sorted = (data.data as EmbeddingResult[]).sort((a, b) => a.index - b.index);
-  return sorted.map((d) => d.embedding);
+  return results;
 }

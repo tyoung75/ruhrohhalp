@@ -4,7 +4,7 @@
  * Single entry point: `embedAndStore(content, metadata)`
  *
  * 1. Chunks text by semantic boundaries (~500 tokens per chunk).
- * 2. Calls OpenAI text-embedding-3-small for each chunk (batched).
+ * 2. Calls BGE-M3 for each chunk (batched).
  * 3. Upserts every chunk to the `memories` table with full metadata.
  * 4. Routes to a source-specific table when applicable
  *    (voice_memo → ideas, meeting → meetings, document → documents).
@@ -45,9 +45,9 @@ export interface EmbedResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getOpenAIKey(): string {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error("Missing OPENAI_API_KEY env var for embedding pipeline");
+function getHFToken(): string {
+  const key = process.env.HF_API_TOKEN;
+  if (!key) throw new Error("Missing HF_API_TOKEN env var for embedding pipeline");
   return key;
 }
 
@@ -60,7 +60,7 @@ function batch<T>(arr: T[], size: number): T[][] {
   return batches;
 }
 
-// OpenAI allows up to 2048 inputs per call; keep batches reasonable.
+// BGE-M3 via HF Inference API — keep batches reasonable.
 const EMBED_BATCH_SIZE = 100;
 
 // ---------------------------------------------------------------------------
@@ -80,10 +80,10 @@ export async function embedAndStore(
   }
 
   // 2. Embed (batched)
-  const apiKey = getOpenAIKey();
+  getHFToken(); // validate token is present
   const allEmbeddings: number[][] = [];
   for (const group of batch(chunks, EMBED_BATCH_SIZE)) {
-    const embeddings = await generateEmbeddings(group, apiKey);
+    const embeddings = await generateEmbeddings(group);
     allEmbeddings.push(...embeddings);
   }
 

@@ -219,7 +219,7 @@ export async function POST(request: NextRequest) {
       status: "open",
       type: "task",
       recommended_ai: "claude",
-      recommended_model: "claude-3-5-sonnet",
+      recommended_model: "claude-sonnet-4-6",
       ai_reason: "",
       how_to: "",
       audit_notes: "",

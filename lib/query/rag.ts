@@ -4,25 +4,26 @@
  * Single entry point: `queryBrain(question, options?)`
  *
  * Flow:
- *  1. Embed the question via text-embedding-3-small (reuses lib/embedding).
+ *  1. Embed the question via BGE-M3 (reuses lib/embedding).
  *  2. Call search_by_embedding() RPC for cosine-similarity retrieval.
  *  3. Hydrate matching memory rows (content + metadata).
  *  4. Optionally filter by project_id / category / source.
  *  5. Assemble retrieved chunks into a context block.
- *  6. Call Claude (claude-sonnet-4-20250514) with system prompt + context + question.
+ *  6. Call Claude with system prompt + context + question.
  *  7. Return { answer, sources, chunks }.
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { generateEmbeddings } from "@/lib/embedding/openai";
 import { logError } from "@/lib/logger";
+import { AI_MODELS } from "@/lib/ai-config";
 import type { MemoryCategory, MemorySource } from "@/lib/types/domain";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const CLAUDE_MODEL = "claude-sonnet-4-20250514";
+const CLAUDE_MODEL = AI_MODELS.PRIMARY;
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MAX_TOKENS = 2048;
 
@@ -109,12 +110,6 @@ function getAnthropicKey(): string {
   return key;
 }
 
-function getOpenAIKey(): string {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error("Missing OPENAI_API_KEY env var for RAG query engine");
-  return key;
-}
-
 /** Build the user message that includes retrieved context + the question. */
 export function buildContextMessage(chunks: RetrievedChunk[], question: string): string {
   if (chunks.length === 0) {
@@ -159,8 +154,7 @@ export async function queryBrain(
   const hasFilters = !!(projectId || category || source);
 
   // 1. Embed the question
-  const openaiKey = getOpenAIKey();
-  const [embedding] = await generateEmbeddings([question], openaiKey);
+  const [embedding] = await generateEmbeddings([question]);
 
   // 2. Call search_by_embedding RPC
   const supabase = createAdminClient();

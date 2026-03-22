@@ -1,4 +1,5 @@
 import type { AIProvider, Priority, TaskType } from "@/lib/types/domain";
+import { AI_MODELS } from "@/lib/ai-config";
 
 type RouteResult = { ai: AIProvider; model: string; reason: string };
 
@@ -44,7 +45,7 @@ const ROUTES: Rule[] = [
   {
     test: (t) => /write|draft|strategy|plan|analyze|review|assess|product|evaluate|content/i.test(t),
     ai: "claude",
-    model: "claude-sonnet-4-5",
+    model: AI_MODELS.PRIMARY,
     reason: "Writing and strategy -> Claude Sonnet provides structured reasoning",
   },
 ];
@@ -56,7 +57,7 @@ export function routeItem(text: string): RouteResult {
   }
   return {
     ai: "claude",
-    model: "claude-sonnet-4-5",
+    model: AI_MODELS.PRIMARY,
     reason: "General planning -> Claude Sonnet for organized reasoning",
   };
 }
