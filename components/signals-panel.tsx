@@ -276,14 +276,18 @@ export function SignalsPanel() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [activeFilter, setActiveFilter] = useState<SignalCategory | "all">("all");
+  const [error, setError] = useState("");
 
   const generateBriefing = useCallback(async () => {
     try {
       setGenerating(true);
+      setError("");
       await api("/api/briefing/daily");
       // Refresh signals after briefing is generated
       window.dispatchEvent(new Event("briefing:refresh"));
     } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to generate briefing";
+      setError(msg);
       console.error("Failed to generate briefing:", e);
     } finally {
       setGenerating(false);
@@ -407,6 +411,25 @@ export function SignalsPanel() {
           {generating ? "Generating…" : "Generate Briefing"}
         </button>
       </div>
+
+      {/* Error state */}
+      {error && (
+        <div
+          style={{
+            padding: "8px 12px",
+            margin: "0 12px",
+            borderRadius: 4,
+            background: `${C.reminder}14`,
+            border: `1px solid ${C.reminder}28`,
+            color: C.reminder,
+            fontFamily: C.mono,
+            fontSize: 9,
+            lineHeight: 1.5,
+          }}
+        >
+          {error}
+        </div>
+      )}
 
       {/* Quick stats */}
       {signals.length > 0 && (
