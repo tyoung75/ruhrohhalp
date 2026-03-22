@@ -43,7 +43,7 @@ export function CommandBar() {
     try {
       const data = await api<CommandResult>("/api/command", {
         method: "POST",
-        body: JSON.stringify({ command }),
+        body: JSON.stringify({ input: command }),
       });
       setResult(data);
 

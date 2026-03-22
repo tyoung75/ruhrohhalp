@@ -14,13 +14,11 @@ const NAV_ITEMS = [
 
 interface NavSidebarProps {
   userEmail?: string | null;
-  tier?: string;
   onSignOut: () => void;
   onOpenSettings?: () => void;
-  onOpenPricing?: () => void;
 }
 
-export function NavSidebar({ userEmail, tier = "free", onSignOut, onOpenSettings, onOpenPricing }: NavSidebarProps) {
+export function NavSidebar({ userEmail, onSignOut, onOpenSettings }: NavSidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -124,25 +122,6 @@ export function NavSidebar({ userEmail, tier = "free", onSignOut, onOpenSettings
           gap: 6,
         }}
       >
-        {onOpenPricing && (
-          <button
-            onClick={onOpenPricing}
-            style={{
-              background: C.clDim,
-              color: C.cl,
-              border: `1px solid ${C.cl}35`,
-              borderRadius: 6,
-              padding: "5px 10px",
-              fontFamily: C.mono,
-              fontSize: 9,
-              cursor: "pointer",
-              textAlign: "center",
-            }}
-          >
-            {tier.toUpperCase()}
-          </button>
-        )}
-
         {onOpenSettings && (
           <button
             onClick={onOpenSettings}

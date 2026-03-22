@@ -288,10 +288,8 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
 
       <NavSidebar
         userEmail={localMode ? localEmail : user?.email}
-        tier={tier}
         onSignOut={() => void signOut()}
         onOpenSettings={localMode ? undefined : () => setShowSettings(true)}
-        onOpenPricing={() => setShowPricing(true)}
       />
 
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
