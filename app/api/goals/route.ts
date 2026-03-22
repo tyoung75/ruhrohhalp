@@ -22,13 +22,27 @@ export async function GET(request: NextRequest) {
   const pillarId = url.searchParams.get("pillarId");
   const withSignals = url.searchParams.get("withSignals") === "true";
 
+  // Color map — pillars table doesn't store color, so derive from name
+  const PILLAR_COLORS: Record<string, string> = {
+    "Fitness & Athletics":   "#e07d4a",
+    "Career & Instacart":    "#5d9ef8",
+    "Ventures & BDHE":       "#41c998",
+    "Financial":             "#f4c842",
+    "Relationship & Family": "#ef7f7f",
+    "Health & Recovery":     "#9ec8f5",
+    "Content & Brand":       "#e07d4a",
+    "Travel & Experiences":  "#6fcf9a",
+    "Personal Growth":       "#5d9ef8",
+    "Community & Impact":    "#41c998",
+  };
+
   const supabase = await createClient();
 
   if (withPillars) {
     // Fetch pillars + goals + task counts
     const { data: pillars, error: pillarError } = await supabase
       .from("pillars")
-      .select("id, name, description, icon, color, sort_order")
+      .select("id, name, description, emoji, sort_order")
       .eq("user_id", user.id)
       .order("sort_order", { ascending: true });
 
@@ -36,7 +50,7 @@ export async function GET(request: NextRequest) {
 
     const { data: goals, error: goalError } = await supabase
       .from("goals")
-      .select("id, title, pillar_id, progress_metric, current_value, target_value, methods, tags, status, created_at")
+      .select("id, title, pillar_id, progress_metric, progress_current, progress_target, methods, tags, status, created_at")
       .eq("user_id", user.id)
       .neq("status", "abandoned");
 
@@ -88,8 +102,8 @@ export async function GET(request: NextRequest) {
 
       // Compute health: average goal progress, penalized by staleness
       const goalProgresses = pGoals.map((g) => {
-        const current = parseFloat(g.current_value ?? "0");
-        const target = parseFloat(g.target_value ?? "100");
+        const current = parseFloat(g.progress_current ?? "0");
+        const target = parseFloat(g.progress_target ?? "100");
         if (target === 0) return 50;
         return Math.min(100, Math.round((current / target) * 100));
       });
@@ -102,11 +116,13 @@ export async function GET(request: NextRequest) {
       const signalBoost = Math.min(10, (signalCounts[p.id] ?? 0) * 2);
       const health = pGoals.length === 0 ? 0 : Math.min(100, avgProgress + signalBoost);
 
+      const pillarColor = PILLAR_COLORS[p.name] ?? "#e07d4a";
+
       return {
         id: p.id,
         name: p.name,
-        icon: p.icon ?? "◈",
-        color: p.color ?? "#e07d4a",
+        icon: p.emoji ?? "◈",
+        color: pillarColor,
         health,
         status: pGoals.length === 0
           ? "No goals tracked"
@@ -115,15 +131,15 @@ export async function GET(request: NextRequest) {
           id: g.id,
           title: g.title,
           pillar: p.name,
-          pillarColor: p.color ?? "#e07d4a",
+          pillarColor,
           progress: (() => {
-            const current = parseFloat(g.current_value ?? "0");
-            const target = parseFloat(g.target_value ?? "100");
+            const current = parseFloat(g.progress_current ?? "0");
+            const target = parseFloat(g.progress_target ?? "100");
             if (target === 0) return 50;
             return Math.min(100, Math.round((current / target) * 100));
           })(),
-          currentValue: g.current_value ?? undefined,
-          targetValue: g.target_value ?? undefined,
+          currentValue: g.progress_current ?? undefined,
+          targetValue: g.progress_target ?? undefined,
           metricLabel: g.progress_metric ?? undefined,
           activeMethods: g.methods ?? [],
         })),
@@ -138,7 +154,7 @@ export async function GET(request: NextRequest) {
   // Simple goals list
   let query = supabase
     .from("goals")
-    .select("*, pillars(name, color, icon)")
+    .select("*, pillars(name, emoji)")
     .eq("user_id", user.id)
     .neq("status", "abandoned")
     .order("created_at", { ascending: false });
