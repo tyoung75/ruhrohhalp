@@ -2,7 +2,60 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { embedAndStore } from "@/lib/embedding";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { logError } from "@/lib/logger";
+
+/**
+ * Store brain-dump content. Tries full embedding pipeline first;
+ * falls back to plain text insert (no embedding) so the dump is never lost.
+ */
+async function storeSection(
+  content: string,
+  opts: {
+    userId: string;
+    category: "work" | "general";
+    importance: number;
+    tags: string[];
+  },
+): Promise<{ memoryIds: string[]; embeddingFailed?: boolean }> {
+  try {
+    const res = await embedAndStore(content, {
+      userId: opts.userId,
+      source: "manual",
+      category: opts.category,
+      importance: opts.importance,
+      tags: opts.tags,
+    });
+    return { memoryIds: res.memoryIds };
+  } catch (err) {
+    logError("brain.dump.embed_fallback", err, { userId: opts.userId });
+
+    // Fallback: store without embedding so the brain dump is never lost
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("memories")
+      .insert({
+        user_id: opts.userId,
+        content,
+        summary: content.length > 200 ? content.slice(0, 200) + "…" : content,
+        source: "manual",
+        category: opts.category,
+        importance: opts.importance,
+        tags: opts.tags,
+      })
+      .select("id");
+
+    if (error) {
+      logError("brain.dump.fallback_insert", error, { userId: opts.userId });
+      throw new Error(`Failed to save brain dump: ${error.message}`);
+    }
+
+    return {
+      memoryIds: (data ?? []).map((r: { id: string }) => r.id),
+      embeddingFailed: true,
+    };
+  }
+}
 
 /**
  * POST /api/brain/dump
@@ -31,6 +84,7 @@ export async function POST(request: NextRequest) {
 
     const today = new Date().toISOString().slice(0, 10);
     const results: { section: string; memoryIds: string[] }[] = [];
+    let anyEmbeddingFailed = false;
 
     // 1. Ingest top goals as high-importance memories
     if (topGoals?.length) {
@@ -39,20 +93,19 @@ export async function POST(request: NextRequest) {
         .join("\n");
 
       const content = `[Brain Dump — ${today}] Top Goals:\n${goalsText}`;
-      const res = await embedAndStore(content, {
+      const res = await storeSection(content, {
         userId: user.id,
-        source: "manual",
         category: "work",
         importance: 9,
         tags: ["brain-dump", "goals", "priorities", today],
       });
       results.push({ section: "topGoals", memoryIds: res.memoryIds });
+      if (res.embeddingFailed) anyEmbeddingFailed = true;
 
       // Update goal priorities if goal IDs were provided
       const supabase = await createClient();
       const goalIds = topGoals.filter((g) => g.goalId).map((g) => g.goalId!);
       if (goalIds.length > 0) {
-        // Mark these goals as the user's current focus
         await supabase
           .from("goals")
           .update({ priority: "critical", updated_at: new Date().toISOString() })
@@ -64,33 +117,34 @@ export async function POST(request: NextRequest) {
     // 2. Ingest "this week" context
     if (thisWeek?.trim()) {
       const content = `[Brain Dump — ${today}] This week's context and plans:\n${thisWeek.trim()}`;
-      const res = await embedAndStore(content, {
+      const res = await storeSection(content, {
         userId: user.id,
-        source: "manual",
         category: "work",
         importance: 8,
         tags: ["brain-dump", "weekly-context", today],
       });
       results.push({ section: "thisWeek", memoryIds: res.memoryIds });
+      if (res.embeddingFailed) anyEmbeddingFailed = true;
     }
 
     // 3. Ingest "top of mind" thoughts
     if (topOfMind?.trim()) {
       const content = `[Brain Dump — ${today}] Top of mind:\n${topOfMind.trim()}`;
-      const res = await embedAndStore(content, {
+      const res = await storeSection(content, {
         userId: user.id,
-        source: "manual",
         category: "general",
         importance: 8,
         tags: ["brain-dump", "top-of-mind", today],
       });
       results.push({ section: "topOfMind", memoryIds: res.memoryIds });
+      if (res.embeddingFailed) anyEmbeddingFailed = true;
     }
 
     return NextResponse.json({
       success: true,
       results,
       date: today,
+      ...(anyEmbeddingFailed && { warning: "Saved without embeddings — search may be limited until re-indexed" }),
     });
   } catch (error) {
     logError("brain.dump", error);
