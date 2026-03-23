@@ -81,6 +81,7 @@ export async function POST(request: NextRequest) {
     for (const def of tableDefs) {
       let processed = 0;
       let errors = 0;
+      let lastStepError = "";
 
       // Fetch rows with null embeddings in batches
       while (true) {
@@ -98,6 +99,7 @@ export async function POST(request: NextRequest) {
 
         if (fetchError) {
           logError(`reembed.fetch.${def.table}`, fetchError);
+          lastStepError = `fetch: ${fetchError.message}`;
           errors++;
           break;
         }
@@ -135,6 +137,7 @@ export async function POST(request: NextRequest) {
 
           if (rawError || !rawRows) {
             logError(`reembed.text.${def.table}`, rawError);
+            lastStepError = `textFetch: ${rawError?.message ?? "no rows returned"}`;
             errors += ids.length;
             break;
           }
@@ -177,19 +180,20 @@ export async function POST(request: NextRequest) {
           }
         } catch (embedError) {
           logError(`reembed.embed.${def.table}`, embedError);
+          lastStepError = `embed: ${embedError instanceof Error ? embedError.message : String(embedError)}`;
           errors += validRows.length;
           break;
         }
       }
 
-      results[def.table] = { processed, errors };
+      results[def.table] = { processed, errors, lastError: lastStepError };
     }
 
     const totalProcessed = Object.values(results).reduce((sum, r) => sum + r.processed, 0);
     const totalErrors = Object.values(results).reduce((sum, r) => sum + r.errors, 0);
 
     return NextResponse.json({
-      success: true,
+      success: totalErrors === 0,
       totalProcessed,
       totalErrors,
       tables: results,
