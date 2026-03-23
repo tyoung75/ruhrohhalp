@@ -147,13 +147,22 @@ export function TodaysFocus() {
         }
       }
 
-      // --- Build high-leverage focus items, preferring goal-linked tasks ---
+      // --- Rank tasks by impact toward pinned goals ---
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rawItems: any[] = tasksRes?.items ?? [];
 
-      // Get goal IDs we care about (from DB matches of pinned goals)
+      // Build goal-matching context: IDs + keyword fragments for text matching
       const pinnedGoalIds = new Set<string>();
+      const goalKeywords: string[] = [];
       for (const pinned of pinnedGoals) {
+        // Extract key terms from the goal text for fuzzy matching
+        const terms = pinned.text.toLowerCase()
+          .split(/[\s,.:;]+/)
+          .filter((w) => w.length > 4)
+          .slice(0, 6);
+        goalKeywords.push(...terms);
+
+        // Also match by DB goal_id
         const matched = dbGoals.find((g) => {
           const pillarMatch = g.pillars?.name && pinned.pillar
             .toLowerCase().includes(g.pillars.name.toLowerCase().slice(0, 8));
@@ -163,7 +172,8 @@ export function TodaysFocus() {
         if (matched) pinnedGoalIds.add(matched.id);
       }
 
-      // Sort: tasks linked to pinned goals first, then by priority
+      const priorityScore: Record<string, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
+
       const items: FocusItem[] = rawItems.map((task) => ({
         id: task.id,
         title: task.title,
@@ -176,14 +186,28 @@ export function TodaysFocus() {
         goalId: task.goalId || undefined,
       }));
 
-      // Boost goal-linked tasks to the top
-      items.sort((a, b) => {
-        const aLinked = a.goalId && pinnedGoalIds.has(a.goalId) ? 0 : 1;
-        const bLinked = b.goalId && pinnedGoalIds.has(b.goalId) ? 0 : 1;
-        return aLinked - bLinked;
+      // Score each task by goal impact: direct link (10) + keyword overlap (0-6) + priority (1-4)
+      const scored = items.map((item) => {
+        let score = 0;
+
+        // Direct goal linkage — highest signal
+        if (item.goalId && pinnedGoalIds.has(item.goalId)) score += 10;
+
+        // Text relevance — how many goal keywords appear in the task's title/description/leverage reason
+        if (goalKeywords.length > 0) {
+          const haystack = `${item.title} ${item.description} ${item.leverageReason ?? ""}`.toLowerCase();
+          const matches = goalKeywords.filter((kw) => haystack.includes(kw)).length;
+          score += Math.min(matches, 6);
+        }
+
+        // Priority bump
+        score += priorityScore[item.priority] ?? 1;
+
+        return { item, score };
       });
 
-      setFocusItems(items.slice(0, 5));
+      scored.sort((a, b) => b.score - a.score);
+      setFocusItems(scored.slice(0, 5).map((s) => s.item));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load today's focus");
       console.error("Error loading today's focus:", err);
