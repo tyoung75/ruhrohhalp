@@ -107,13 +107,9 @@ export async function POST(request: NextRequest) {
         // Fetch the text content for these IDs
         const ids = rows.map((r: { id: string }) => r.id);
 
-        // Use raw SQL via rpc to get the computed text column
-        const { data: textRows, error: textError } = await supabase
-          .rpc("get_text_for_embedding", {
-            p_table_name: def.table,
-            p_ids: ids,
-          })
-          .catch(() => ({ data: null, error: { message: "RPC not found" } as { message: string } }));
+        // Skip RPC (get_text_for_embedding doesn't exist) — go straight to fallback
+        const textRows = null;
+        const textError = { message: "Using direct fetch fallback" };
 
         // Fallback: fetch raw columns and compute text in JS
         let textsToEmbed: { id: string; text: string }[] = [];
