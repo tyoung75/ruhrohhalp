@@ -45,6 +45,14 @@ const ALL_TABLES: TableDef[] = [
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
+  // Parse body once up front
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    // empty body is fine
+  }
+
   // Auth: webhook secret OR logged-in user
   let userId: string | null = null;
 
@@ -56,18 +64,12 @@ export async function POST(request: NextRequest) {
     userId = user.id;
   } else {
     // Valid webhook — userId must be in body
-    try {
-      const body = await request.json();
-      userId = body.userId ?? null;
-    } catch {
-      // no body is fine for webhook — will process all users
-    }
+    userId = (body.userId as string) ?? null;
   }
 
   try {
-    const body = await request.json().catch(() => ({}));
-    const requestedTables: string[] | undefined = body.tables;
-    const batchSize = Math.min(body.batchSize ?? 50, 200);
+    const requestedTables = body.tables as string[] | undefined;
+    const batchSize = Math.min((body.batchSize as number) ?? 50, 200);
 
     const tableDefs = requestedTables
       ? ALL_TABLES.filter((t) => requestedTables.includes(t.table))
@@ -199,7 +201,8 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     logError("reembed.handler", error);
     console.error("[reembed]", error);
-    return NextResponse.json({ error: "Re-embedding failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: "Re-embedding failed", detail: message }, { status: 500 });
   }
 }
 
