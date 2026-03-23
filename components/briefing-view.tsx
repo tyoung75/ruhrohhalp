@@ -187,7 +187,7 @@ export function BriefingView() {
       // 1. Store the context as a high-importance memory
       await api("/api/brain/dump", {
         method: "POST",
-        body: JSON.stringify({ topOfMind: input }),
+        body: JSON.stringify({ goals: [], weeklyContext: "", topOfMind: input }),
       });
 
       // 2. Re-generate the briefing so it incorporates the new context
