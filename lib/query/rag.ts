@@ -153,48 +153,8 @@ export async function queryBrain(
 
   const hasFilters = !!(projectId || category || source);
 
-  // 1. Embed the question
-  const [embedding] = await generateEmbeddings([question]);
-
-  // 2. Call search_by_embedding RPC
   const supabase = createAdminClient();
-  const fetchCount = hasFilters ? topK * FILTER_OVERFETCH : topK;
 
-  const { data: matches, error: rpcError } = await supabase.rpc("search_by_embedding", {
-    p_user_id: userId,
-    p_table_name: table,
-    p_embedding: JSON.stringify(embedding),
-    p_match_count: fetchCount,
-    p_match_threshold: threshold,
-  });
-
-  if (rpcError) {
-    logError("rag.search_rpc", rpcError, { userId, table });
-    throw new Error(`Vector search failed: ${rpcError.message}`);
-  }
-
-  const matchedIds = (matches ?? []) as { id: string; similarity: number }[];
-  if (matchedIds.length === 0) {
-    // No matches — still call Claude but without context.
-    const answer = await callClaude(buildContextMessage([], question));
-    return { answer, sources: [], chunks: [] };
-  }
-
-  // 3. Hydrate memory rows
-  const ids = matchedIds.map((m) => m.id);
-  const similarityMap = new Map(matchedIds.map((m) => [m.id, m.similarity]));
-
-  const { data: rows, error: fetchError } = await supabase
-    .from("memories")
-    .select("id, content, summary, source, source_id, category, created_at")
-    .in("id", ids);
-
-  if (fetchError) {
-    logError("rag.hydrate", fetchError, { userId });
-    throw new Error(`Failed to hydrate memories: ${fetchError.message}`);
-  }
-
-  // 4. Build chunks with similarity scores, apply client-side filters
   type MemoryRow = {
     id: string;
     content: string;
@@ -205,26 +165,100 @@ export async function queryBrain(
     created_at: string;
   };
 
-  let chunks: RetrievedChunk[] = ((rows ?? []) as MemoryRow[]).map((r) => ({
-    id: r.id,
-    content: r.content,
-    summary: r.summary,
-    source: r.source as MemorySource,
-    sourceId: r.source_id,
-    category: r.category as MemoryCategory,
-    similarity: similarityMap.get(r.id) ?? 0,
-    createdAt: r.created_at,
-  }));
+  let chunks: RetrievedChunk[];
 
+  // 1. Try semantic search via embeddings; fall back to recency if unavailable
+  const canEmbed = !!process.env.HF_API_TOKEN;
+
+  if (canEmbed) {
+    // --- Semantic path: embed question → vector search → hydrate ---
+    const [embedding] = await generateEmbeddings([question]);
+
+    const fetchCount = hasFilters ? topK * FILTER_OVERFETCH : topK;
+
+    const { data: matches, error: rpcError } = await supabase.rpc("search_by_embedding", {
+      p_user_id: userId,
+      p_table_name: table,
+      p_embedding: JSON.stringify(embedding),
+      p_match_count: fetchCount,
+      p_match_threshold: threshold,
+    });
+
+    if (rpcError) {
+      logError("rag.search_rpc", rpcError, { userId, table });
+      throw new Error(`Vector search failed: ${rpcError.message}`);
+    }
+
+    const matchedIds = (matches ?? []) as { id: string; similarity: number }[];
+    if (matchedIds.length === 0) {
+      const answer = await callClaude(buildContextMessage([], question));
+      return { answer, sources: [], chunks: [] };
+    }
+
+    const ids = matchedIds.map((m) => m.id);
+    const similarityMap = new Map(matchedIds.map((m) => [m.id, m.similarity]));
+
+    const { data: rows, error: fetchError } = await supabase
+      .from("memories")
+      .select("id, content, summary, source, source_id, category, created_at")
+      .in("id", ids);
+
+    if (fetchError) {
+      logError("rag.hydrate", fetchError, { userId });
+      throw new Error(`Failed to hydrate memories: ${fetchError.message}`);
+    }
+
+    chunks = ((rows ?? []) as MemoryRow[]).map((r) => ({
+      id: r.id,
+      content: r.content,
+      summary: r.summary,
+      source: r.source as MemorySource,
+      sourceId: r.source_id,
+      category: r.category as MemoryCategory,
+      similarity: similarityMap.get(r.id) ?? 0,
+      createdAt: r.created_at,
+    }));
+  } else {
+    // --- Recency fallback: no embeddings available, fetch recent high-importance memories ---
+    let query = supabase
+      .from("memories")
+      .select("id, content, summary, source, source_id, category, created_at")
+      .eq("user_id", userId)
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(hasFilters ? topK * FILTER_OVERFETCH : topK);
+
+    if (category) query = query.eq("category", category);
+    if (source) query = query.eq("source", source);
+
+    const { data: rows, error: fetchError } = await query;
+
+    if (fetchError) {
+      logError("rag.recency_fallback", fetchError, { userId });
+      throw new Error(`Recency fallback failed: ${fetchError.message}`);
+    }
+
+    chunks = ((rows ?? []) as MemoryRow[]).map((r) => ({
+      id: r.id,
+      content: r.content,
+      summary: r.summary,
+      source: r.source as MemorySource,
+      sourceId: r.source_id,
+      category: r.category as MemoryCategory,
+      similarity: 1, // no similarity score in recency mode
+      createdAt: r.created_at,
+    }));
+  }
+
+  // Apply client-side filters
   if (projectId) {
-    // We need to check project_id which isn't on memories — fetch from source_id linkage.
-    // For now, filter by source_id matching the projectId (memories store source_id).
     chunks = chunks.filter((c) => c.sourceId === projectId);
   }
-  if (category) {
+  if (category && canEmbed) {
+    // Only filter here if we didn't already filter in the query (semantic path)
     chunks = chunks.filter((c) => c.category === category);
   }
-  if (source) {
+  if (source && canEmbed) {
     chunks = chunks.filter((c) => c.source === source);
   }
 
