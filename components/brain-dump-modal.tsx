@@ -1,20 +1,44 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 
-interface BrainDumpGoal {
-  title: string;
-  milestone: string;
-}
+const LIFE_PILLARS = [
+  "Ventures & BDHE",
+  "Fitness & Athletics",
+  "Content & Brand",
+  "Financial",
+  "Career & Instacart",
+  "Relationship & Family",
+  "Health & Recovery",
+  "Travel & Experiences",
+  "Personal Growth",
+  "Community & Impact",
+] as const;
 
-interface ExistingGoal {
-  id: string;
-  title: string;
-  progress_metric: string | null;
-  progress_current: string | null;
-  progress_target: string | null;
+const DEFAULT_GOALS: BrainDumpGoal[] = [
+  {
+    pillar: "Ventures & BDHE",
+    text: "Get Motus live on the App Store and reach first paying traction. Milestone: 50 active paying subscribers within 30 days of approval.",
+  },
+  {
+    pillar: "Fitness & Athletics",
+    text: "Run sub-40min 10k by May 28th. Milestone: 41:30 or faster 10k time trial by April 30th.",
+  },
+  {
+    pillar: "Content & Brand",
+    text: "Reach 10k total followers by June 30th. Milestone: 5,000 followers + 1 brand deal in pipeline by May 1st.",
+  },
+  {
+    pillar: "Financial",
+    text: "Generate $3k/month supplemental income by June 30th. Milestone: Motus MRR \u2265 $500 + 1 paid brand deal closed by April 30th.",
+  },
+];
+
+interface BrainDumpGoal {
+  pillar: string;
+  text: string;
 }
 
 interface BrainDumpModalProps {
@@ -23,18 +47,16 @@ interface BrainDumpModalProps {
   onSaved?: () => void;
 }
 
-const MAX_GOALS = 8;
+const MAX_GOALS = 10;
 
 export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) {
-  const [goals, setGoals] = useState<BrainDumpGoal[]>([
-    { title: "", milestone: "" },
-  ]);
+  const [goals, setGoals] = useState<BrainDumpGoal[]>(DEFAULT_GOALS);
   const [weeklyContext, setWeeklyContext] = useState("");
   const [topOfMind, setTopOfMind] = useState("");
-  const [existingGoals, setExistingGoals] = useState<ExistingGoal[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const goalsLoadedFromDb = useRef(false);
 
   const loadExisting = useCallback(async () => {
     try {
@@ -44,39 +66,20 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
           weekly_context: string;
           top_of_mind: string;
         } | null;
-        goals: ExistingGoal[];
+        pinnedGoals: BrainDumpGoal[] | null;
       }>("/api/brain/dump");
 
-      setExistingGoals(res.goals ?? []);
+      // Load pinned goals (separate from weekly dump)
+      if (res.pinnedGoals && res.pinnedGoals.length > 0) {
+        setGoals(res.pinnedGoals);
+        goalsLoadedFromDb.current = true;
+      }
+      // else keep DEFAULT_GOALS
 
+      // Load weekly context from latest dump
       if (res.dump) {
-        let parsedGoals: BrainDumpGoal[] = [];
-        try {
-          const raw = typeof res.dump.goals === "string"
-            ? JSON.parse(res.dump.goals)
-            : res.dump.goals;
-          if (Array.isArray(raw)) parsedGoals = raw;
-        } catch { /* ignore parse error */ }
-
-        if (parsedGoals.length > 0) {
-          setGoals(parsedGoals);
-        } else if (res.goals.length > 0) {
-          setGoals(
-            res.goals.slice(0, 4).map((g) => ({
-              title: g.title,
-              milestone: g.progress_target ?? "",
-            }))
-          );
-        }
         setWeeklyContext(res.dump.weekly_context ?? "");
         setTopOfMind(res.dump.top_of_mind ?? "");
-      } else if (res.goals.length > 0) {
-        setGoals(
-          res.goals.slice(0, 4).map((g) => ({
-            title: g.title,
-            milestone: g.progress_target ?? "",
-          }))
-        );
       }
     } catch (err) {
       console.error("Failed to load brain dump:", err);
@@ -101,21 +104,19 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
 
   const addGoal = () => {
     if (goals.length < MAX_GOALS) {
-      setGoals((prev) => [...prev, { title: "", milestone: "" }]);
+      setGoals((prev) => [...prev, { pillar: "", text: "" }]);
     }
   };
 
   const removeGoal = (index: number) => {
-    if (goals.length > 1) {
-      setGoals((prev) => prev.filter((_, i) => i !== index));
-    }
+    setGoals((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSave = async () => {
     setError(null);
     setSaving(true);
     try {
-      const nonEmptyGoals = goals.filter((g) => g.title.trim());
+      const nonEmptyGoals = goals.filter((g) => g.text.trim());
       await api("/api/brain/dump", {
         method: "POST",
         body: JSON.stringify({
@@ -125,7 +126,6 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
         }),
       });
 
-      // Trigger refreshes across the app
       window.dispatchEvent(new CustomEvent("briefing:refresh"));
       window.dispatchEvent(new CustomEvent("tasks:refresh"));
 
@@ -140,7 +140,7 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
 
   if (!open) return null;
 
-  const priorityColors = [C.cl, C.cl, "#f4c842", "#41c998", C.gem, C.textDim, C.textDim, C.textDim];
+  const priorityColors = [C.cl, C.cl, "#f4c842", "#41c998", C.gem, C.textDim, C.textDim, C.textDim, C.textDim, C.textDim];
 
   return (
     <div
@@ -164,7 +164,7 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
           border: `1px solid ${C.border}`,
           borderRadius: 14,
           width: "100%",
-          maxWidth: 620,
+          maxWidth: 720,
           maxHeight: "90vh",
           overflow: "hidden",
           display: "flex",
@@ -209,11 +209,27 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
         <div style={{ flex: 1, overflowY: "auto", padding: "0 28px 24px" }}>
           {/* Top Goals */}
           <section style={{ marginBottom: 24 }}>
-            <div style={{ fontFamily: C.sans, fontSize: 15, fontWeight: 600, color: C.cream, marginBottom: 4 }}>
-              Top Goals Right Now
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              <div style={{ fontFamily: C.sans, fontSize: 15, fontWeight: 600, color: C.cream }}>
+                Top Goals Right Now
+              </div>
+              <span
+                style={{
+                  fontFamily: C.mono,
+                  fontSize: 10,
+                  color: C.gold,
+                  background: `${C.gold}18`,
+                  border: `1px solid ${C.gold}30`,
+                  borderRadius: 4,
+                  padding: "2px 7px",
+                  letterSpacing: 0.5,
+                }}
+              >
+                Q2 2026
+              </span>
             </div>
             <div style={{ fontFamily: C.sans, fontSize: 11, color: C.textDim, marginBottom: 14 }}>
-              What are you trying to achieve? These become your north stars.
+              Pinned quarterly goals. Edit manually — these don&apos;t reset on weekly saves.
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -225,18 +241,24 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
                       fontSize: 12,
                       color: priorityColors[i] ?? C.textDim,
                       fontWeight: 600,
-                      width: 24,
+                      width: 20,
                       textAlign: "right",
                       flexShrink: 0,
                     }}
                   >
                     {i + 1}.
                   </span>
+                  {/* Pillar pill selector */}
+                  <PillarSelector
+                    value={goal.pillar}
+                    onChange={(v) => updateGoal(i, "pillar", v)}
+                  />
+                  {/* Goal + milestone text */}
                   <input
                     type="text"
-                    value={goal.title}
-                    onChange={(e) => updateGoal(i, "title", e.target.value)}
-                    placeholder="Goal title..."
+                    value={goal.text}
+                    onChange={(e) => updateGoal(i, "text", e.target.value)}
+                    placeholder="Goal + milestone..."
                     style={{
                       flex: 1,
                       background: C.card,
@@ -247,6 +269,7 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
                       fontFamily: C.sans,
                       fontSize: 13,
                       outline: "none",
+                      minWidth: 0,
                     }}
                     onFocus={(e) => {
                       e.currentTarget.style.borderColor = `${C.cl}60`;
@@ -255,67 +278,20 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
                       e.currentTarget.style.borderColor = C.border;
                     }}
                   />
-                  <div style={{ position: "relative", flexShrink: 0 }}>
-                    <select
-                      value={goal.milestone}
-                      onChange={(e) => updateGoal(i, "milestone", e.target.value)}
-                      style={{
-                        background: C.card,
-                        border: `1px solid ${C.border}`,
-                        borderRadius: 8,
-                        padding: "10px 12px",
-                        color: C.textDim,
-                        fontFamily: C.sans,
-                        fontSize: 11,
-                        outline: "none",
-                        cursor: "pointer",
-                        appearance: "none",
-                        paddingRight: 28,
-                        width: 160,
-                      }}
-                    >
-                      <option value="">Milestone...</option>
-                      {existingGoals.map((eg) => (
-                        <option key={eg.id} value={eg.progress_target ?? eg.title}>
-                          {(eg.progress_target ?? eg.title).slice(0, 30)}
-                        </option>
-                      ))}
-                      {goal.milestone && !existingGoals.some((eg) =>
-                        (eg.progress_target ?? eg.title) === goal.milestone
-                      ) && (
-                        <option value={goal.milestone}>{goal.milestone.slice(0, 30)}</option>
-                      )}
-                    </select>
-                    <span
-                      style={{
-                        position: "absolute",
-                        right: 10,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        color: C.textFaint,
-                        fontSize: 10,
-                        pointerEvents: "none",
-                      }}
-                    >
-                      ▾
-                    </span>
-                  </div>
-                  {goals.length > 1 && (
-                    <button
-                      onClick={() => removeGoal(i)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: C.textFaint,
-                        fontSize: 14,
-                        cursor: "pointer",
-                        padding: "4px",
-                        flexShrink: 0,
-                      }}
-                    >
-                      ✕
-                    </button>
-                  )}
+                  <button
+                    onClick={() => removeGoal(i)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: C.textFaint,
+                      fontSize: 14,
+                      cursor: "pointer",
+                      padding: "4px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    ✕
+                  </button>
                 </div>
               ))}
             </div>
@@ -330,7 +306,7 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
                   fontFamily: C.sans,
                   fontSize: 12,
                   cursor: "pointer",
-                  padding: "8px 0 0 32px",
+                  padding: "8px 0 0 28px",
                 }}
               >
                 + add another
@@ -475,6 +451,119 @@ export function BrainDumpModal({ open, onClose, onSaved }: BrainDumpModalProps) 
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── Pillar Pill Selector ───────────────────────────────────────────── */
+
+function PillarSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [dropdownOpen]);
+
+  const display = value || "Pillar...";
+  const hasValue = !!value;
+
+  return (
+    <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => setDropdownOpen((o) => !o)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          background: hasValue ? `${C.cl}14` : C.card,
+          border: `1px solid ${hasValue ? `${C.cl}40` : C.border}`,
+          borderRadius: 20,
+          padding: "7px 14px 7px 12px",
+          color: hasValue ? C.cl : C.textDim,
+          fontFamily: C.sans,
+          fontSize: 11,
+          fontWeight: hasValue ? 600 : 400,
+          cursor: "pointer",
+          whiteSpace: "nowrap",
+          maxWidth: 180,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          outline: "none",
+          transition: "border-color 0.15s, background 0.15s",
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{display}</span>
+        <span style={{ fontSize: 8, opacity: 0.6, flexShrink: 0 }}>▾</span>
+      </button>
+
+      {dropdownOpen && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            zIndex: 1010,
+            background: C.surface,
+            border: `1px solid ${C.borderMid}`,
+            borderRadius: 10,
+            padding: "6px 0",
+            minWidth: 210,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+          }}
+        >
+          {LIFE_PILLARS.map((pillar) => {
+            const selected = pillar === value;
+            return (
+              <button
+                key={pillar}
+                type="button"
+                onClick={() => {
+                  onChange(pillar);
+                  setDropdownOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  background: selected ? `${C.cl}18` : "transparent",
+                  border: "none",
+                  padding: "8px 16px",
+                  color: selected ? C.cl : C.text,
+                  fontFamily: C.sans,
+                  fontSize: 12,
+                  fontWeight: selected ? 600 : 400,
+                  cursor: "pointer",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={(e) => {
+                  if (!selected) e.currentTarget.style.background = C.cardHov;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = selected ? `${C.cl}18` : "transparent";
+                }}
+              >
+                {pillar}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
