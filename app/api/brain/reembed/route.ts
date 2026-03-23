@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
             p_table_name: def.table,
             p_ids: ids,
           })
-          .catch(() => ({ data: null, error: { message: "RPC not found" } as any }));
+          .catch(() => ({ data: null, error: { message: "RPC not found" } as { message: string } }));
 
         // Fallback: fetch raw columns and compute text in JS
         let textsToEmbed: { id: string; text: string }[] = [];
@@ -141,15 +141,15 @@ export async function POST(request: NextRequest) {
             break;
           }
 
-          textsToEmbed = rawRows.map((row: Record<string, any>) => {
+          textsToEmbed = rawRows.map((row: Record<string, unknown>) => {
             const textParts = cols
               .filter((c) => c !== "id")
-              .map((c) => (row[c] ?? "").toString().trim())
+              .map((c) => (String(row[c] ?? "")).trim())
               .filter((s) => s.length > 0);
-            return { id: row.id, text: textParts.join(" ") };
+            return { id: String(row.id), text: textParts.join(" ") };
           });
         } else {
-          textsToEmbed = (textRows as any[]).map((r) => ({
+          textsToEmbed = (textRows as { id: string; text_content: string }[]).map((r) => ({
             id: r.id,
             text: r.text_content,
           }));
