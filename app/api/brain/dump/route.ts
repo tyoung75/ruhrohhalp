@@ -3,8 +3,8 @@ import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 interface BrainDumpGoal {
-  title: string;
-  milestone: string;
+  pillar: string;
+  text: string;
 }
 
 interface BrainDumpPayload {
@@ -15,7 +15,7 @@ interface BrainDumpPayload {
 
 /**
  * GET /api/brain/dump
- * Returns the most recent brain dump for the user, plus their existing goals.
+ * Returns the most recent brain dump (weekly context) and pinned goals separately.
  */
 export async function GET() {
   const { user, response } = await requireUser();
@@ -23,7 +23,7 @@ export async function GET() {
 
   const supabase = await createClient();
 
-  // Fetch latest brain dump
+  // Fetch latest brain dump (weekly context + top of mind)
   const { data: dump } = await supabase
     .from("brain_dumps")
     .select("*")
@@ -32,24 +32,27 @@ export async function GET() {
     .limit(1)
     .maybeSingle();
 
-  // Fetch existing goals for dropdown population
-  const { data: goals } = await supabase
-    .from("goals")
-    .select("id, title, progress_metric, progress_current, progress_target, pillar_id")
-    .eq("user_id", user.id)
-    .neq("status", "abandoned")
-    .order("sort_order", { ascending: true });
+  // Fetch pinned goals from the most recent dump that has non-empty goals
+  let pinnedGoals: BrainDumpGoal[] | null = null;
+  if (dump) {
+    try {
+      const raw = typeof dump.goals === "string" ? JSON.parse(dump.goals) : dump.goals;
+      if (Array.isArray(raw) && raw.length > 0 && raw[0].pillar !== undefined) {
+        pinnedGoals = raw;
+      }
+    } catch { /* ignore parse error */ }
+  }
 
   return NextResponse.json({
     dump: dump ?? null,
-    goals: goals ?? [],
+    pinnedGoals,
   });
 }
 
 /**
  * POST /api/brain/dump
- * Saves a brain dump — goals snapshot, weekly context, and top-of-mind.
- * Updates goal titles/milestones in the goals table as well.
+ * Saves goals (quarterly-pinned) and weekly context independently.
+ * Goals persist across weekly saves — only updated when explicitly changed.
  */
 export async function POST(request: NextRequest) {
   const { user, response } = await requireUser();
@@ -73,37 +76,8 @@ export async function POST(request: NextRequest) {
 
   const supabase = await createClient();
 
-  // Upsert goals in the goals table — update titles and progress targets
-  for (const goal of goals) {
-    if (!goal.title?.trim()) continue;
-
-    // Try to find existing goal by fuzzy title match
-    const { data: existing } = await supabase
-      .from("goals")
-      .select("id")
-      .eq("user_id", user.id)
-      .ilike("title", `%${goal.title.trim().slice(0, 30)}%`)
-      .neq("status", "abandoned")
-      .limit(1)
-      .maybeSingle();
-
-    if (existing) {
-      // Update existing goal's progress target (milestone)
-      if (goal.milestone?.trim()) {
-        await supabase
-          .from("goals")
-          .update({
-            progress_target: goal.milestone.trim(),
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", existing.id)
-          .eq("user_id", user.id);
-      }
-    }
-    // If no existing goal found, we still store it in the brain dump JSON
-  }
-
-  // Save the brain dump record
+  // Save the brain dump record — goals are always persisted alongside weekly data
+  // so the latest record always has the current pinned goals
   const { data: dump, error } = await supabase
     .from("brain_dumps")
     .insert({
