@@ -5,6 +5,7 @@ import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 // Spinner available if needed for future loading states
 import { CeoMode } from "@/components/brain/CeoMode";
+import { BrainDumpModal } from "@/components/brain-dump-modal";
 
 interface SearchSource {
   id: string;
@@ -127,17 +128,44 @@ export default function BrainPage() {
   }
 
   const isEmpty = messages.length === 0;
+  const [showBrainDump, setShowBrainDump] = useState(false);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {showBrainDump && (
+        <BrainDumpModal
+          open={showBrainDump}
+          onClose={() => setShowBrainDump(false)}
+        />
+      )}
+
       {/* Header */}
-      <div style={{ padding: "16px 22px", borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-        <div style={{ fontFamily: C.serif, fontSize: 22, fontStyle: "italic", color: C.cream }}>
-          Brain Search
+      <div style={{ padding: "16px 22px", borderBottom: `1px solid ${C.border}`, flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div>
+          <div style={{ fontFamily: C.serif, fontSize: 22, fontStyle: "italic", color: C.cream }}>
+            Brain Search
+          </div>
+          <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
+            Ask anything — answers grounded in your memories, decisions, and context
+          </div>
         </div>
-        <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
-          Ask anything — answers grounded in your memories, decisions, and context
-        </div>
+        <button
+          onClick={() => setShowBrainDump(true)}
+          style={{
+            background: `${C.cl}14`,
+            border: `1px solid ${C.cl}30`,
+            borderRadius: 8,
+            padding: "7px 14px",
+            color: C.cl,
+            fontFamily: C.sans,
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Brain Dump
+        </button>
       </div>
 
       {/* Messages */}
