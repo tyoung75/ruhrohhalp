@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { queryBrain } from "@/lib/query";
 import { logError } from "@/lib/logger";
 import { publishQueuedPosts, syncExternalPosts, collectAnalytics, refreshExpiringTokens, expireStaleDrafts } from "@/lib/creator/jobs";
+import { syncStravaActivities } from "@/lib/strava/sync";
 
 /** Tyler's Supabase user ID — hardcoded for cron (no session context). */
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
@@ -205,7 +206,16 @@ export async function GET(request: NextRequest) {
     results.creator_analytics = { error: "Analytics failed" };
   }
 
-  // 3e. Refresh any platform tokens expiring within 7 days
+  // 3e. Sync Strava activities into brain (goal signals)
+  try {
+    const stravaResult = await syncStravaActivities();
+    results.strava_sync = stravaResult;
+  } catch (error) {
+    logError("cron.strava-sync", error);
+    results.strava_sync = { error: "Strava sync failed" };
+  }
+
+  // 3f. Refresh any platform tokens expiring within 7 days
   try {
     const tokenResult = await refreshExpiringTokens();
     results.token_refresh = tokenResult;

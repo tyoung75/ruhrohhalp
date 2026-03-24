@@ -16,6 +16,7 @@ import { AI_MODELS } from "@/lib/ai-config";
 import { CONTENT_AGENT_SYSTEM, SAFETY_AUDIT_SYSTEM } from "@/lib/creator/prompts";
 import { limitByKey } from "@/lib/security/rate-limit";
 import { generateEmbeddings } from "@/lib/embedding/openai";
+import { buildTrainingSummary } from "@/lib/strava/client";
 
 interface GeneratedPost {
   body: string | string[]; // string for single posts, string[] for threads
@@ -236,6 +237,49 @@ async function gatherDailyContext(
     }
   }
 
+  // --- Strava: recent training data ---
+  let stravaData: { recentActivities: string[]; weeklyStats: string } | null = null;
+  try {
+    if (process.env.STRAVA_CLIENT_ID) {
+      const summary = await buildTrainingSummary();
+      stravaData = {
+        recentActivities: summary.recentActivities,
+        weeklyStats: summary.weeklyStats,
+      };
+    }
+  } catch (err) {
+    console.error("[creator-generate] Strava fetch failed (non-fatal):", err);
+  }
+
+  // --- Motus: today's scheduled workouts and recent workout signals ---
+  let motusData: { appStats: unknown; recentWorkoutSignals: unknown[] } | null = null;
+  try {
+    const { data: motusStats } = await supabase
+      .from("app_stats")
+      .select("stats, updated_at")
+      .eq("app", "motus")
+      .limit(1)
+      .single();
+
+    const { data: workoutSignals } = await supabase
+      .from("goal_signals")
+      .select("content, sentiment, impact_score, raw_data, created_at")
+      .eq("user_id", userId)
+      .eq("signal_type", "workout")
+      .gte("created_at", new Date(Date.now() - 14 * 86400000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (motusStats || workoutSignals?.length) {
+      motusData = {
+        appStats: motusStats?.stats ?? null,
+        recentWorkoutSignals: workoutSignals ?? [],
+      };
+    }
+  } catch (err) {
+    console.error("[creator-generate] Motus fetch failed (non-fatal):", err);
+  }
+
   return {
     date: today,
     dayOfWeek: new Date().toLocaleDateString("en-US", { weekday: "long" }),
@@ -244,6 +288,8 @@ async function gatherDailyContext(
     currentTasks: tasks ?? [],
     briefingSummary: briefing?.content_md?.slice(0, 500) ?? "",
     topPerformingPosts: topPostBodies,
+    strava: stravaData,
+    motus: motusData,
   };
 }
 
