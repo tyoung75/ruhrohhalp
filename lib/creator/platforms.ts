@@ -19,6 +19,15 @@ export interface PostMetrics {
   followsGained: number;
 }
 
+export interface PlatformPost {
+  postId: string;
+  body: string;
+  mediaUrls?: string[];
+  contentType: "text" | "image" | "carousel" | "reel";
+  permalink?: string;
+  timestamp: string; // ISO date
+}
+
 export interface PlatformAdapter {
   platform: string;
   publish(params: {
@@ -26,13 +35,21 @@ export interface PlatformAdapter {
     userId: string; // platform user ID
     body: string;
     mediaUrls?: string[];
-    contentType: "text" | "image" | "carousel" | "reel";
+    contentType: "text" | "image" | "carousel" | "reel" | "thread";
   }): Promise<PublishResult>;
 
   getPostMetrics(params: {
     accessToken: string;
     postId: string;
   }): Promise<PostMetrics>;
+
+  /** List recent posts from the platform (for syncing external/manual posts). */
+  listUserPosts(params: {
+    accessToken: string;
+    userId: string;
+    since?: string; // ISO date — only fetch posts after this date
+    limit?: number;
+  }): Promise<PlatformPost[]>;
 
   exchangeCodeForToken(code: string, redirectUri: string): Promise<{
     accessToken: string;

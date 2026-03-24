@@ -90,6 +90,20 @@ const STATUS_COLORS: Record<string, string> = {
   rejected: "#ef5555",
 };
 
+/** Try to parse a thread body (JSON array of strings). Returns null if not a thread. */
+function parseThreadBody(body: string): string[] | null {
+  if (!body.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed) && parsed.length > 1 && parsed.every((p: unknown) => typeof p === "string")) {
+      return parsed;
+    }
+  } catch {
+    // Not JSON — regular post
+  }
+  return null;
+}
+
 function statusBadge(status: string) {
   const color = STATUS_COLORS[status] ?? C.textDim;
   return {
@@ -198,6 +212,7 @@ function QueueTab() {
   const [editBody, setEditBody] = useState("");
   const [editSchedule, setEditSchedule] = useState("");
   const [saving, setSaving] = useState(false);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const fetchQueue = useCallback(async () => {
@@ -277,6 +292,46 @@ function QueueTab() {
     }
   }
 
+  async function handlePublishSingle(postId: string) {
+    setPublishingId(postId);
+    try {
+      await api("/api/creator/publish-single", {
+        method: "POST",
+        body: JSON.stringify({ postId }),
+      });
+      fetchQueue();
+    } catch (e) {
+      console.error("Single publish failed:", e);
+    } finally {
+      setPublishingId(null);
+    }
+  }
+
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await api<{ imported: number; errors: number }>("/api/creator/sync", {
+        method: "POST",
+      });
+      setSyncResult(
+        result.imported > 0
+          ? `Synced ${result.imported} external post${result.imported !== 1 ? "s" : ""}`
+          : "All posts already synced"
+      );
+      if (result.imported > 0) fetchQueue();
+    } catch (e) {
+      console.error("Sync failed:", e);
+      setSyncResult("Sync failed");
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncResult(null), 4000);
+    }
+  }
+
   const filters = [
     { id: "upcoming", label: "Upcoming" },
     { id: "draft", label: "Drafts" },
@@ -309,7 +364,30 @@ function QueueTab() {
           ))}
         </div>
 
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {syncResult && (
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, animation: "fadeUp 0.2s ease both" }}>
+              {syncResult}
+            </span>
+          )}
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            style={{
+              background: "transparent",
+              border: `1px solid ${C.gem}50`,
+              color: C.gem,
+              padding: "6px 16px",
+              borderRadius: 6,
+              fontFamily: C.sans,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: syncing ? "wait" : "pointer",
+              opacity: syncing ? 0.6 : 1,
+            }}
+          >
+            {syncing ? "Syncing..." : "Sync Posts"}
+          </button>
           <button
             onClick={handlePublishNow}
             disabled={saving}
@@ -393,39 +471,130 @@ function QueueTab() {
                   onClick={() => setExpandedId(isExpanded ? null : item.id)}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {isEditing ? (
-                      <textarea
-                        value={editBody}
-                        onChange={(e) => setEditBody(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                          width: "100%",
-                          minHeight: 80,
-                          background: C.surface,
-                          border: `1px solid ${C.borderMid}`,
-                          borderRadius: 6,
-                          color: C.text,
-                          fontFamily: C.sans,
-                          fontSize: 13,
-                          padding: "8px 10px",
-                          resize: "vertical",
-                        }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          fontFamily: C.sans,
-                          fontSize: 13,
-                          color: C.text,
-                          lineHeight: 1.5,
-                          whiteSpace: isExpanded ? "pre-wrap" : "nowrap",
-                          overflow: isExpanded ? "visible" : "hidden",
-                          textOverflow: isExpanded ? "unset" : "ellipsis",
-                        }}
-                      >
-                        {item.body}
-                      </div>
-                    )}
+                    {(() => {
+                      const threadParts = parseThreadBody(item.body);
+                      const isThread = threadParts !== null;
+
+                      if (isEditing) {
+                        if (isThread) {
+                          // Edit each thread part individually
+                          const editParts: string[] = (() => {
+                            try { return JSON.parse(editBody); } catch { return [editBody]; }
+                          })();
+                          return (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                              {editParts.map((part, idx) => (
+                                <div key={idx} style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                                  <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, paddingTop: 10, flexShrink: 0 }}>
+                                    {idx + 1}/{editParts.length}
+                                  </span>
+                                  <textarea
+                                    value={part}
+                                    onChange={(e) => {
+                                      const updated = [...editParts];
+                                      updated[idx] = e.target.value;
+                                      setEditBody(JSON.stringify(updated));
+                                    }}
+                                    style={{
+                                      flex: 1,
+                                      minHeight: 60,
+                                      background: C.surface,
+                                      border: `1px solid ${C.borderMid}`,
+                                      borderRadius: 6,
+                                      color: C.text,
+                                      fontFamily: C.sans,
+                                      fontSize: 13,
+                                      padding: "8px 10px",
+                                      resize: "vertical",
+                                    }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+                        return (
+                          <textarea
+                            value={editBody}
+                            onChange={(e) => setEditBody(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              width: "100%",
+                              minHeight: 80,
+                              background: C.surface,
+                              border: `1px solid ${C.borderMid}`,
+                              borderRadius: 6,
+                              color: C.text,
+                              fontFamily: C.sans,
+                              fontSize: 13,
+                              padding: "8px 10px",
+                              resize: "vertical",
+                            }}
+                          />
+                        );
+                      }
+
+                      // Display mode
+                      if (isThread && isExpanded) {
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {threadParts.map((part, idx) => (
+                              <div key={idx} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                                <span style={{
+                                  fontFamily: C.mono,
+                                  fontSize: 9,
+                                  color: C.cl,
+                                  background: `${C.cl}15`,
+                                  borderRadius: 4,
+                                  padding: "2px 5px",
+                                  flexShrink: 0,
+                                  marginTop: 1,
+                                }}>
+                                  {idx + 1}/{threadParts.length}
+                                </span>
+                                <span style={{ fontFamily: C.sans, fontSize: 13, color: C.text, lineHeight: 1.5 }}>
+                                  {part}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }
+
+                      // Collapsed: show first part preview for threads, or full body for single posts
+                      const previewText = isThread ? threadParts[0] : item.body;
+                      return (
+                        <div
+                          style={{
+                            fontFamily: C.sans,
+                            fontSize: 13,
+                            color: C.text,
+                            lineHeight: 1.5,
+                            whiteSpace: isExpanded ? "pre-wrap" : "nowrap",
+                            overflow: isExpanded ? "visible" : "hidden",
+                            textOverflow: isExpanded ? "unset" : "ellipsis",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          {isThread && (
+                            <span style={{
+                              fontFamily: C.mono,
+                              fontSize: 9,
+                              color: C.cl,
+                              background: `${C.cl}15`,
+                              borderRadius: 4,
+                              padding: "2px 5px",
+                              flexShrink: 0,
+                            }}>
+                              {threadParts.length}-part thread
+                            </span>
+                          )}
+                          {previewText}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -524,6 +693,17 @@ function QueueTab() {
                             onClick={(e) => {
                               e.stopPropagation();
                               updateItem(item.id, { status: "queued" });
+                            }}
+                          />
+                        )}
+                        {(item.status === "draft" || item.status === "queued") && (
+                          <ActionBtn
+                            label={publishingId === item.id ? "Publishing..." : "Publish"}
+                            color="#6fcf9a"
+                            disabled={publishingId === item.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePublishSingle(item.id);
                             }}
                           />
                         )}

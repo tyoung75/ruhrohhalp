@@ -9,7 +9,7 @@
  * Docs: https://developers.facebook.com/docs/threads
  */
 
-import type { PlatformAdapter, PublishResult, PostMetrics } from "./platforms";
+import type { PlatformAdapter, PublishResult, PostMetrics, PlatformPost } from "./platforms";
 
 const THREADS_API = "https://graph.threads.net/v1.0";
 const THREADS_OAUTH = "https://graph.threads.net/oauth";
@@ -22,32 +22,131 @@ export class ThreadsAdapter implements PlatformAdapter {
     userId: string;
     body: string;
     mediaUrls?: string[];
-    contentType: "text" | "image" | "carousel" | "reel";
+    contentType: "text" | "image" | "carousel" | "reel" | "thread";
   }): Promise<PublishResult> {
     const { accessToken, userId, body, mediaUrls, contentType } = params;
 
     try {
-      // Step 1: Create media container
-      const containerParams: Record<string, string> = {
-        access_token: accessToken,
-        text: body,
-      };
-
-      if (contentType === "text") {
-        containerParams.media_type = "TEXT";
-      } else if (contentType === "image" && mediaUrls?.[0]) {
-        containerParams.media_type = "IMAGE";
-        containerParams.image_url = mediaUrls[0];
-      } else if (contentType === "carousel" && mediaUrls?.length) {
-        // Carousel requires creating child containers first
-        const childIds = await this.createCarouselChildren(accessToken, userId, mediaUrls, body);
-        containerParams.media_type = "CAROUSEL";
-        containerParams.children = childIds.join(",");
-      } else if (contentType === "reel" && mediaUrls?.[0]) {
-        containerParams.media_type = "VIDEO";
-        containerParams.video_url = mediaUrls[0];
+      // Multi-post thread: body is a JSON array of strings, each becomes a chained reply
+      if (contentType === "thread") {
+        return await this.publishThread(accessToken, userId, body);
       }
 
+      // Single post flow
+      return await this.publishSinglePost(accessToken, userId, body, mediaUrls, contentType);
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown publish error",
+      };
+    }
+  }
+
+  /**
+   * Publish a single post (text, image, carousel, or reel).
+   */
+  private async publishSinglePost(
+    accessToken: string,
+    userId: string,
+    body: string,
+    mediaUrls?: string[],
+    contentType?: string
+  ): Promise<PublishResult> {
+    const containerParams: Record<string, string> = {
+      access_token: accessToken,
+      text: body,
+    };
+
+    if (contentType === "text" || !contentType) {
+      containerParams.media_type = "TEXT";
+    } else if (contentType === "image" && mediaUrls?.[0]) {
+      containerParams.media_type = "IMAGE";
+      containerParams.image_url = mediaUrls[0];
+    } else if (contentType === "carousel" && mediaUrls?.length) {
+      const childIds = await this.createCarouselChildren(accessToken, userId, mediaUrls, body);
+      containerParams.media_type = "CAROUSEL";
+      containerParams.children = childIds.join(",");
+    } else if (contentType === "reel" && mediaUrls?.[0]) {
+      containerParams.media_type = "VIDEO";
+      containerParams.video_url = mediaUrls[0];
+    }
+
+    const containerRes = await fetch(`${THREADS_API}/${userId}/threads`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(containerParams),
+    });
+    const containerData = await containerRes.json();
+
+    if (!containerRes.ok || containerData.error) {
+      return {
+        success: false,
+        error: containerData.error?.message ?? `Container creation failed (${containerRes.status})`,
+      };
+    }
+
+    const publishRes = await fetch(`${THREADS_API}/${userId}/threads_publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        access_token: accessToken,
+        creation_id: containerData.id,
+      }),
+    });
+    const publishData = await publishRes.json();
+
+    if (!publishRes.ok || publishData.error) {
+      return {
+        success: false,
+        error: publishData.error?.message ?? `Publish failed (${publishRes.status})`,
+      };
+    }
+
+    return {
+      success: true,
+      postId: publishData.id,
+      postUrl: `https://www.threads.net/@${userId}/post/${publishData.id}`,
+    };
+  }
+
+  /**
+   * Publish a multi-post thread (reply chain).
+   *
+   * Body is a JSON array of strings: ["Post 1/3 text", "Post 2/3 text", "Post 3/3 text"]
+   * Each post is published as a reply to the previous one, creating the
+   * "Add to thread" chain visible in the Threads app.
+   */
+  private async publishThread(
+    accessToken: string,
+    userId: string,
+    body: string
+  ): Promise<PublishResult> {
+    let parts: string[];
+    try {
+      parts = JSON.parse(body);
+      if (!Array.isArray(parts) || parts.length === 0) {
+        return { success: false, error: "Thread body must be a non-empty JSON array of strings" };
+      }
+    } catch {
+      // Fallback: if body isn't JSON, treat as a single post
+      return await this.publishSinglePost(accessToken, userId, body, undefined, "text");
+    }
+
+    const publishedIds: string[] = [];
+
+    for (let i = 0; i < parts.length; i++) {
+      const containerParams: Record<string, string> = {
+        access_token: accessToken,
+        media_type: "TEXT",
+        text: parts[i],
+      };
+
+      // Chain as reply to the previous post
+      if (i > 0 && publishedIds.length > 0) {
+        containerParams.reply_to_id = publishedIds[i - 1];
+      }
+
+      // Create container
       const containerRes = await fetch(`${THREADS_API}/${userId}/threads`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -58,19 +157,19 @@ export class ThreadsAdapter implements PlatformAdapter {
       if (!containerRes.ok || containerData.error) {
         return {
           success: false,
-          error: containerData.error?.message ?? `Container creation failed (${containerRes.status})`,
+          error: `Thread part ${i + 1}/${parts.length} container failed: ${containerData.error?.message ?? containerRes.status}`,
+          // Return the first post ID if we got at least one out
+          ...(publishedIds.length > 0 ? { postId: publishedIds[0] } : {}),
         };
       }
 
-      const containerId = containerData.id;
-
-      // Step 2: Publish the container
+      // Publish container
       const publishRes = await fetch(`${THREADS_API}/${userId}/threads_publish`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           access_token: accessToken,
-          creation_id: containerId,
+          creation_id: containerData.id,
         }),
       });
       const publishData = await publishRes.json();
@@ -78,21 +177,20 @@ export class ThreadsAdapter implements PlatformAdapter {
       if (!publishRes.ok || publishData.error) {
         return {
           success: false,
-          error: publishData.error?.message ?? `Publish failed (${publishRes.status})`,
+          error: `Thread part ${i + 1}/${parts.length} publish failed: ${publishData.error?.message ?? publishRes.status}`,
+          ...(publishedIds.length > 0 ? { postId: publishedIds[0] } : {}),
         };
       }
 
-      return {
-        success: true,
-        postId: publishData.id,
-        postUrl: `https://www.threads.net/@${params.userId}/post/${publishData.id}`,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown publish error",
-      };
+      publishedIds.push(publishData.id);
     }
+
+    // Return the first post's ID — that's the thread root
+    return {
+      success: true,
+      postId: publishedIds[0],
+      postUrl: `https://www.threads.net/@${userId}/post/${publishedIds[0]}`,
+    };
   }
 
   private async createCarouselChildren(
@@ -186,6 +284,61 @@ export class ThreadsAdapter implements PlatformAdapter {
     }
 
     return metrics;
+  }
+
+  async listUserPosts(params: {
+    accessToken: string;
+    userId: string;
+    since?: string;
+    limit?: number;
+  }): Promise<PlatformPost[]> {
+    const { accessToken, userId, since, limit = 50 } = params;
+
+    const fields = "id,text,media_type,media_url,permalink,timestamp";
+    const url = new URL(`${THREADS_API}/${userId}/threads`);
+    url.searchParams.set("fields", fields);
+    url.searchParams.set("access_token", accessToken);
+    url.searchParams.set("limit", String(Math.min(limit, 100)));
+    if (since) {
+      url.searchParams.set("since", since);
+    }
+
+    const posts: PlatformPost[] = [];
+    let nextUrl: string | null = url.toString();
+
+    while (nextUrl && posts.length < limit) {
+      const res: Response = await fetch(nextUrl);
+      const data: Record<string, unknown> = await res.json();
+
+      const error = data.error as Record<string, unknown> | undefined;
+      if (!res.ok || error) {
+        throw new Error((error?.message as string) ?? "Failed to list user posts");
+      }
+
+      const items = (data.data ?? []) as Array<Record<string, unknown>>;
+      for (const item of items) {
+        // Map Threads media_type to our content_type
+        let contentType: PlatformPost["contentType"] = "text";
+        if (item.media_type === "IMAGE") contentType = "image";
+        else if (item.media_type === "CAROUSEL_ALBUM") contentType = "carousel";
+        else if (item.media_type === "VIDEO") contentType = "reel";
+
+        posts.push({
+          postId: item.id as string,
+          body: (item.text as string) ?? "",
+          mediaUrls: item.media_url ? [item.media_url as string] : undefined,
+          contentType,
+          permalink: item.permalink as string | undefined,
+          timestamp: item.timestamp as string,
+        });
+      }
+
+      // Pagination
+      const paging = data.paging as Record<string, unknown> | undefined;
+      nextUrl = (paging?.next as string) ?? null;
+    }
+
+    return posts.slice(0, limit);
   }
 
   async exchangeCodeForToken(code: string, redirectUri: string) {

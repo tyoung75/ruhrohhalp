@@ -13,31 +13,142 @@ import { logError } from "@/lib/logger";
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 // ---------------------------------------------------------------------------
-// Publish queued posts
+// Publish queued posts (smart-ranked, 3/day limit for automated runs)
 // ---------------------------------------------------------------------------
+
+/** Default daily cap for automated publishing. Manual "Publish Now" can override. */
+const DAILY_PUBLISH_LIMIT = 2;
+
+/**
+ * Score a post for predicted performance.
+ *
+ * Factors:
+ * 1. Agent confidence score (0-1)  — weighted 40%
+ * 2. Content type diversity bonus  — weighted 20%
+ * 3. Time-of-day fit               — weighted 20%
+ * 4. Post length sweet spot         — weighted 20%
+ */
+function scorePost(
+  post: Record<string, unknown>,
+  alreadySelectedTypes: Set<string>
+): number {
+  // 1. Agent confidence (default 0.5 if not scored)
+  const confidence = (post.confidence_score as number) ?? 0.5;
+
+  // 2. Type diversity: bonus if we haven't picked this type yet
+  const postType = (post.content_type as string) ?? "text";
+  const diversityBonus = alreadySelectedTypes.has(postType) ? 0 : 1;
+
+  // 3. Time-of-day fit: posts scheduled closer to peak hours score higher
+  // Peak Threads hours (ET): 7-9, 12-13, 17-19, 21-22
+  const scheduledHour = post.scheduled_for
+    ? new Date(post.scheduled_for as string).getHours()
+    : 12;
+  const peakHours = [7, 8, 12, 13, 17, 18, 19, 21, 22];
+  const timeFit = peakHours.includes(scheduledHour) ? 1 : 0.5;
+
+  // 4. Post length: short punchy posts (50-200 chars) tend to perform best on Threads
+  const bodyLen = ((post.body as string) ?? "").length;
+  const lengthScore =
+    bodyLen >= 50 && bodyLen <= 200 ? 1 :
+    bodyLen >= 30 && bodyLen <= 280 ? 0.7 :
+    0.4;
+
+  return (confidence * 0.4) + (diversityBonus * 0.2) + (timeFit * 0.2) + (lengthScore * 0.2);
+}
+
+/**
+ * Select the top N posts from a candidate pool using performance scoring.
+ * Greedy selection: pick highest-scored, add its type to the diversity set, re-score, repeat.
+ */
+function selectTopPosts(
+  candidates: Array<Record<string, unknown>>,
+  limit: number
+): Array<Record<string, unknown>> {
+  const selected: Array<Record<string, unknown>> = [];
+  const selectedTypes = new Set<string>();
+  const remaining = [...candidates];
+
+  while (selected.length < limit && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestScore = -1;
+    for (let i = 0; i < remaining.length; i++) {
+      const score = scorePost(remaining[i], selectedTypes);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+
+    const picked = remaining.splice(bestIdx, 1)[0];
+    selectedTypes.add((picked.content_type as string) ?? "text");
+    selected.push(picked);
+  }
+
+  return selected;
+}
 
 export async function publishQueuedPosts(
   userId: string,
-  maxPosts = 10
-): Promise<{ published: number; failed: number; results: Array<{ id: string; success: boolean; error?: string }> }> {
+  options: { manual?: boolean } = {}
+): Promise<{
+  published: number;
+  failed: number;
+  skipped: number;
+  results: Array<{ id: string; success: boolean; error?: string }>;
+}> {
   const supabase = createAdminClient();
   const now = new Date().toISOString();
 
-  const { data: posts, error: fetchError } = await supabase
+  // Check how many we've already published today
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const { count: publishedToday } = await supabase
     .from("content_queue")
-    .select("*")
-    .eq("status", "queued")
-    .lte("scheduled_for", now)
-    .order("scheduled_for", { ascending: true })
-    .limit(maxPosts);
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("status", "posted")
+    .gte("updated_at", todayStart.toISOString());
 
-  if (fetchError || !posts?.length) {
-    return { published: 0, failed: 0, results: [] };
+  const alreadyPublished = publishedToday ?? 0;
+  const remainingSlots = options.manual
+    ? 100 // Manual override: no practical limit
+    : Math.max(0, DAILY_PUBLISH_LIMIT - alreadyPublished);
+
+  if (remainingSlots === 0 && !options.manual) {
+    return { published: 0, failed: 0, skipped: 0, results: [] };
   }
 
+  // Pull publish candidates
+  // Manual trigger: publish all queued posts regardless of schedule
+  // Automated cron: only posts whose scheduled time has arrived
+  let query = supabase
+    .from("content_queue")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "queued")
+    .order("scheduled_for", { ascending: true })
+    .limit(50);
+
+  if (!options.manual) {
+    query = query.lte("scheduled_for", now);
+  }
+
+  const { data: candidates, error: fetchError } = await query;
+
+  if (fetchError || !candidates?.length) {
+    return { published: 0, failed: 0, skipped: 0, results: [] };
+  }
+
+  // Smart-rank and select the best posts for this run
+  const postsToPublish = options.manual
+    ? candidates
+    : selectTopPosts(candidates, remainingSlots);
+
+  const skipped = candidates.length - postsToPublish.length;
   const results: Array<{ id: string; success: boolean; error?: string }> = [];
 
-  for (const post of posts) {
+  for (const post of postsToPublish) {
     await supabase
       .from("content_queue")
       .update({ status: "posting", updated_at: new Date().toISOString() })
@@ -121,8 +232,219 @@ export async function publishQueuedPosts(
   return {
     published: results.filter((r) => r.success).length,
     failed: results.filter((r) => !r.success).length,
+    skipped,
     results,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Publish a single specific post on demand
+// ---------------------------------------------------------------------------
+
+export async function publishSinglePost(
+  userId: string,
+  postId: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = createAdminClient();
+
+  // Fetch the post and verify ownership
+  const { data: post, error: fetchError } = await supabase
+    .from("content_queue")
+    .select("*")
+    .eq("id", postId)
+    .eq("user_id", userId)
+    .single();
+
+  if (fetchError || !post) {
+    return { success: false, error: "Post not found or access denied" };
+  }
+
+  if (post.status === "posted") {
+    return { success: false, error: "Post already published" };
+  }
+
+  if (post.status === "rejected") {
+    return { success: false, error: "Post was rejected" };
+  }
+
+  // Mark as posting
+  await supabase
+    .from("content_queue")
+    .update({ status: "posting", updated_at: new Date().toISOString() })
+    .eq("id", postId);
+
+  // Get platform token
+  const { data: token } = await supabase
+    .from("platform_tokens")
+    .select("access_token, platform_user_id, expires_at")
+    .eq("user_id", userId)
+    .eq("platform", post.platform)
+    .single();
+
+  if (!token || (token.expires_at && new Date(token.expires_at) < new Date())) {
+    await supabase
+      .from("content_queue")
+      .update({
+        status: post.status === "posting" ? "queued" : post.status,
+        last_error: token ? "Token expired" : "No token found",
+        attempts: (post.attempts ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", postId);
+    return { success: false, error: token ? "Token expired" : "No platform token found" };
+  }
+
+  try {
+    const adapter = getPlatformAdapter(post.platform);
+    const result = await adapter.publish({
+      accessToken: token.access_token,
+      userId: token.platform_user_id,
+      body: post.body,
+      mediaUrls: post.media_urls,
+      contentType: post.content_type,
+    });
+
+    if (result.success) {
+      await supabase
+        .from("content_queue")
+        .update({
+          status: "posted",
+          post_id: result.postId,
+          post_url: result.postUrl,
+          attempts: (post.attempts ?? 0) + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", postId);
+      return { success: true };
+    } else {
+      const newAttempts = (post.attempts ?? 0) + 1;
+      const maxedOut = newAttempts >= (post.max_attempts ?? 3);
+      await supabase
+        .from("content_queue")
+        .update({
+          status: maxedOut ? "failed" : "queued",
+          last_error: result.error,
+          attempts: newAttempts,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", postId);
+      return { success: false, error: result.error ?? "Publish failed" };
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    await supabase
+      .from("content_queue")
+      .update({
+        status: "queued",
+        last_error: errorMsg,
+        attempts: (post.attempts ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", postId);
+    return { success: false, error: errorMsg };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sync external posts (manual posts made in-app, not through Creator OS)
+// ---------------------------------------------------------------------------
+
+export async function syncExternalPosts(
+  userId: string
+): Promise<{ imported: number; errors: number }> {
+  const supabase = createAdminClient();
+
+  // Get all connected platforms
+  const { data: tokens } = await supabase
+    .from("platform_tokens")
+    .select("platform, access_token, platform_user_id, expires_at")
+    .eq("user_id", userId);
+
+  if (!tokens?.length) return { imported: 0, errors: 0 };
+
+  let imported = 0;
+  let errors = 0;
+
+  for (const token of tokens) {
+    if (token.expires_at && new Date(token.expires_at as string) < new Date()) {
+      continue; // skip expired tokens
+    }
+
+    try {
+      const adapter = getPlatformAdapter(token.platform as string);
+
+      // Get the most recent post we already know about to avoid re-importing
+      const { data: latestKnown } = await supabase
+        .from("content_queue")
+        .select("created_at")
+        .eq("user_id", userId)
+        .eq("platform", token.platform)
+        .eq("status", "posted")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      // Fetch posts from the platform, going back 30 days if no known posts
+      const since = latestKnown?.created_at
+        ? new Date(new Date(latestKnown.created_at as string).getTime() - 86400000).toISOString()
+        : new Date(Date.now() - 30 * 86400000).toISOString();
+
+      const platformPosts = await adapter.listUserPosts({
+        accessToken: token.access_token as string,
+        userId: token.platform_user_id as string,
+        since,
+        limit: 100,
+      });
+
+      if (!platformPosts.length) continue;
+
+      // Get all post_ids we already track for this platform
+      const { data: existing } = await supabase
+        .from("content_queue")
+        .select("post_id")
+        .eq("user_id", userId)
+        .eq("platform", token.platform)
+        .not("post_id", "is", null);
+
+      const knownPostIds = new Set(
+        (existing ?? []).map((e: Record<string, unknown>) => e.post_id as string)
+      );
+
+      // Import posts we don't already have
+      for (const post of platformPosts) {
+        if (knownPostIds.has(post.postId)) continue;
+
+        const { error: insertError } = await supabase
+          .from("content_queue")
+          .insert({
+            user_id: userId,
+            platform: token.platform,
+            content_type: post.contentType,
+            body: post.body,
+            status: "posted",
+            post_id: post.postId,
+            post_url: post.permalink ?? null,
+            source: "external",
+            scheduled_for: post.timestamp,
+            created_at: post.timestamp,
+            updated_at: new Date().toISOString(),
+            attempts: 0,
+          });
+
+        if (insertError) {
+          errors++;
+          logError("jobs.sync-external.insert", insertError, { postId: post.postId });
+        } else {
+          imported++;
+        }
+      }
+    } catch (err) {
+      errors++;
+      logError("jobs.sync-external", err, { platform: token.platform });
+    }
+  }
+
+  return { imported, errors };
 }
 
 // ---------------------------------------------------------------------------

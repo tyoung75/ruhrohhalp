@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryBrain } from "@/lib/query";
 import { logError } from "@/lib/logger";
-import { publishQueuedPosts, collectAnalytics, refreshExpiringTokens } from "@/lib/creator/jobs";
+import { publishQueuedPosts, syncExternalPosts, collectAnalytics, refreshExpiringTokens } from "@/lib/creator/jobs";
 
 /** Tyler's Supabase user ID — hardcoded for cron (no session context). */
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
@@ -169,16 +169,25 @@ export async function GET(request: NextRequest) {
 
   // --- Creator OS jobs (run every day) ---
 
-  // 3a. Publish any queued posts whose schedule has arrived
+  // 3a. Sync external posts (manual posts made in Threads app)
   try {
-    const publishResult = await publishQueuedPosts(TYLER_USER_ID, 10);
+    const syncResult = await syncExternalPosts(TYLER_USER_ID);
+    results.creator_sync = syncResult;
+  } catch (error) {
+    logError("cron.creator-sync", error);
+    results.creator_sync = { error: "Sync failed" };
+  }
+
+  // 3b. Publish any queued posts whose schedule has arrived
+  try {
+    const publishResult = await publishQueuedPosts(TYLER_USER_ID);
     results.creator_publish = publishResult;
   } catch (error) {
     logError("cron.creator-publish", error);
     results.creator_publish = { error: "Publish failed" };
   }
 
-  // 3b. Collect analytics on posted content
+  // 3c. Collect analytics on ALL posted content (including synced external posts)
   try {
     const analyticsResult = await collectAnalytics(TYLER_USER_ID);
     results.creator_analytics = analyticsResult;
@@ -187,7 +196,7 @@ export async function GET(request: NextRequest) {
     results.creator_analytics = { error: "Analytics failed" };
   }
 
-  // 3c. Refresh any platform tokens expiring within 7 days
+  // 3d. Refresh any platform tokens expiring within 7 days
   try {
     const tokenResult = await refreshExpiringTokens();
     results.token_refresh = tokenResult;

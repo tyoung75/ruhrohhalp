@@ -18,7 +18,7 @@ import { limitByKey } from "@/lib/security/rate-limit";
 import { generateEmbeddings } from "@/lib/embedding/openai";
 
 interface GeneratedPost {
-  body: string;
+  body: string | string[]; // string for single posts, string[] for threads
   type: string;
   confidence: number;
   reasoning: string;
@@ -98,8 +98,23 @@ export async function POST(request: NextRequest) {
       const audit = auditResults.find((a) => a.index === i);
       const status = audit?.status ?? "approved";
 
+      // Determine content type and normalize body
+      const isThread = post.type === "thread" || Array.isArray(post.body);
+      let bodyStr: string;
+      let contentType: string;
+
+      if (isThread) {
+        // Thread: body is an array of strings — store as JSON
+        const parts = Array.isArray(post.body) ? post.body : [post.body];
+        bodyStr = JSON.stringify(parts);
+        contentType = "thread";
+      } else {
+        bodyStr = post.body as string;
+        contentType = post.needs_media ? "image" : "text";
+      }
+
       if (status === "rejected") {
-        rejected.push(post.body.slice(0, 50));
+        rejected.push(bodyStr.slice(0, 50));
         continue;
       }
 
@@ -114,13 +129,13 @@ export async function POST(request: NextRequest) {
       }
 
       const queueStatus = status === "flagged" ? "draft" : "queued";
-      if (status === "flagged") flagged.push(post.body.slice(0, 50));
+      if (status === "flagged") flagged.push(bodyStr.slice(0, 50));
 
       const { data, error } = await supabase.from("content_queue").insert({
         user_id: userId,
         platform: "threads",
-        content_type: post.needs_media ? "image" : "text",
-        body: post.body,
+        content_type: contentType,
+        body: bodyStr,
         scheduled_for: scheduledFor.toISOString(),
         status: queueStatus,
         confidence_score: post.confidence,
@@ -239,7 +254,12 @@ async function auditPosts(posts: GeneratedPost[]): Promise<AuditResult[]> {
   }
 
   try {
-    const postList = posts.map((p, i) => `[${i}] ${p.body}`).join("\n");
+    const postList = posts.map((p, i) => {
+      const bodyText = Array.isArray(p.body)
+        ? p.body.map((part, j) => `  Part ${j + 1}: ${part}`).join("\n")
+        : p.body;
+      return `[${i}] ${bodyText}`;
+    }).join("\n");
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {

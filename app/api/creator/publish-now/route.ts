@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await publishQueuedPosts(userId, 10);
+    const result = await publishQueuedPosts(userId, { manual: true });
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
