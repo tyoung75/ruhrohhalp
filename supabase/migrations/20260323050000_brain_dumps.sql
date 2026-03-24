@@ -16,15 +16,20 @@ create index if not exists idx_brain_dumps_user_created
 
 alter table public.brain_dumps enable row level security;
 
+drop policy if exists "brain_dumps_select_own" on public.brain_dumps;
 create policy "brain_dumps_select_own" on public.brain_dumps
   for select using (auth.uid() = user_id);
+drop policy if exists "brain_dumps_insert_own" on public.brain_dumps;
 create policy "brain_dumps_insert_own" on public.brain_dumps
   for insert with check (auth.uid() = user_id);
+drop policy if exists "brain_dumps_update_own" on public.brain_dumps;
 create policy "brain_dumps_update_own" on public.brain_dumps
   for update using (auth.uid() = user_id);
+drop policy if exists "brain_dumps_delete_own" on public.brain_dumps;
 create policy "brain_dumps_delete_own" on public.brain_dumps
   for delete using (auth.uid() = user_id);
 
+drop trigger if exists trg_brain_dumps_updated_at on public.brain_dumps;
 create trigger trg_brain_dumps_updated_at
   before update on public.brain_dumps
   for each row execute function public.set_updated_at();

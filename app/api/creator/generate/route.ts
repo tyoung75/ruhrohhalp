@@ -1,0 +1,263 @@
+/**
+ * Content Generation Agent — POST /api/creator/generate
+ *
+ * Takes daily context (calendar, strava, recent posts, goals) and generates
+ * a batch of Threads posts using Claude. Each post passes through the
+ * Groq audit layer for safety before being queued.
+ *
+ * Auth: Requires authenticated user OR cron secret.
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { callClaude } from "@/lib/processors/claude";
+import { AI_MODELS } from "@/lib/ai-config";
+import { CONTENT_AGENT_SYSTEM, SAFETY_AUDIT_SYSTEM } from "@/lib/creator/prompts";
+import { limitByKey } from "@/lib/security/rate-limit";
+
+interface GeneratedPost {
+  body: string;
+  type: string;
+  confidence: number;
+  reasoning: string;
+  suggested_time: string;
+  needs_media: boolean;
+}
+
+interface AuditResult {
+  index: number;
+  status: "approved" | "flagged" | "rejected";
+  reason: string;
+}
+
+export async function POST(request: NextRequest) {
+  // Auth: user session or cron secret
+  const cronSecret = request.headers.get("x-cron-secret");
+  let userId: string;
+
+  if (cronSecret && cronSecret === process.env.CRON_SECRET) {
+    // Cron invocation — use hardcoded user ID (Tyler)
+    const body = await request.json().catch(() => ({}));
+    userId = body.userId ?? process.env.CREATOR_USER_ID ?? "";
+    if (!userId) {
+      return NextResponse.json({ error: "Missing userId for cron" }, { status: 400 });
+    }
+  } else {
+    const { user, response } = await requireUser();
+    if (!user) return response!;
+    userId = user.id;
+  }
+
+  // Rate limit: 5 generations per hour
+  const { ok } = limitByKey(`creator-generate:${userId}`, 5, 60 * 60 * 1000);
+  if (!ok) {
+    return NextResponse.json({ error: "Rate limited. Max 5 generations per hour." }, { status: 429 });
+  }
+
+  try {
+    const supabase = createAdminClient();
+
+    // 1. Gather daily context
+    const context = await gatherDailyContext(supabase, userId);
+
+    // 2. Generate posts with Claude
+    const userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}\n\nGenerate 5 Threads posts based on this context. Return ONLY a JSON array.`;
+    const rawResponse = await callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048);
+
+    // Parse JSON from response (handle markdown code blocks)
+    const jsonStr = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    let posts: GeneratedPost[];
+    try {
+      posts = JSON.parse(jsonStr);
+    } catch {
+      console.error("[creator-generate] Failed to parse AI response:", rawResponse.slice(0, 500));
+      return NextResponse.json({ error: "Failed to parse generated content" }, { status: 500 });
+    }
+
+    if (!Array.isArray(posts) || posts.length === 0) {
+      return NextResponse.json({ error: "No posts generated" }, { status: 500 });
+    }
+
+    // 3. Safety audit via Groq (Llama)
+    const auditResults = await auditPosts(posts);
+
+    // 4. Queue approved posts
+    const today = new Date();
+    const queued: string[] = [];
+    const flagged: string[] = [];
+    const rejected: string[] = [];
+
+    for (let i = 0; i < posts.length; i++) {
+      const post = posts[i];
+      const audit = auditResults.find((a) => a.index === i);
+      const status = audit?.status ?? "approved";
+
+      if (status === "rejected") {
+        rejected.push(post.body.slice(0, 50));
+        continue;
+      }
+
+      // Calculate scheduled_for from suggested_time
+      const [hours, minutes] = (post.suggested_time ?? "12:00").split(":").map(Number);
+      const scheduledFor = new Date(today);
+      scheduledFor.setHours(hours, minutes, 0, 0);
+
+      // If the time has already passed today, schedule for tomorrow
+      if (scheduledFor < new Date()) {
+        scheduledFor.setDate(scheduledFor.getDate() + 1);
+      }
+
+      const queueStatus = status === "flagged" ? "draft" : "queued";
+      if (status === "flagged") flagged.push(post.body.slice(0, 50));
+
+      const { data, error } = await supabase.from("content_queue").insert({
+        user_id: userId,
+        platform: "threads",
+        content_type: post.needs_media ? "image" : "text",
+        body: post.body,
+        scheduled_for: scheduledFor.toISOString(),
+        status: queueStatus,
+        confidence_score: post.confidence,
+        agent_reasoning: post.reasoning,
+        context_snapshot: context,
+      }).select("id").single();
+
+      if (error) {
+        console.error("[creator-generate] Queue insert error:", error);
+      } else if (data) {
+        queued.push(data.id);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      generated: posts.length,
+      queued: queued.length,
+      flagged: flagged.length,
+      rejected: rejected.length,
+      queueIds: queued,
+    });
+  } catch (error) {
+    console.error("[creator-generate] Error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Generation failed" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Gather today's context for the content agent.
+ */
+async function gatherDailyContext(
+  supabase: ReturnType<typeof createAdminClient>,
+  userId: string
+) {
+  const today = new Date().toISOString().split("T")[0];
+
+  // Recent posts (last 7 days) to avoid repetition
+  const { data: recentPosts } = await supabase
+    .from("content_queue")
+    .select("body, platform, status, created_at")
+    .eq("user_id", userId)
+    .in("status", ["posted", "queued", "approved"])
+    .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  // Active goals and pillars
+  const { data: goals } = await supabase
+    .from("goals")
+    .select("title, pillar_id, status, progress")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .limit(10);
+
+  // Today's tasks
+  const { data: tasks } = await supabase
+    .from("tasks")
+    .select("title, status, priority")
+    .eq("user_id", userId)
+    .in("status", ["started", "in_review"])
+    .limit(10);
+
+  // Latest briefing
+  const { data: briefing } = await supabase
+    .from("briefings")
+    .select("content_md")
+    .eq("user_id", userId)
+    .eq("period", "daily")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  // Top performing past posts (for learning)
+  const { data: topPosts } = await supabase
+    .from("post_analytics")
+    .select("content_queue_id, engagement_rate, likes, replies")
+    .eq("user_id", userId)
+    .order("engagement_rate", { ascending: false })
+    .limit(5);
+
+  let topPostBodies: string[] = [];
+  if (topPosts?.length) {
+    const ids = topPosts.map((p: Record<string, unknown>) => p.content_queue_id).filter(Boolean);
+    if (ids.length) {
+      const { data: bodies } = await supabase
+        .from("content_queue")
+        .select("body")
+        .in("id", ids);
+      topPostBodies = bodies?.map((b: Record<string, unknown>) => b.body as string) ?? [];
+    }
+  }
+
+  return {
+    date: today,
+    dayOfWeek: new Date().toLocaleDateString("en-US", { weekday: "long" }),
+    recentPosts: recentPosts?.map((p: Record<string, unknown>) => p.body as string).slice(0, 10) ?? [],
+    activeGoals: goals ?? [],
+    currentTasks: tasks ?? [],
+    briefingSummary: briefing?.content_md?.slice(0, 500) ?? "",
+    topPerformingPosts: topPostBodies,
+  };
+}
+
+/**
+ * Run safety audit on generated posts via Groq (Llama).
+ */
+async function auditPosts(posts: GeneratedPost[]): Promise<AuditResult[]> {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) {
+    // No audit layer configured — approve all
+    return posts.map((_, i) => ({ index: i, status: "approved" as const, reason: "No audit configured" }));
+  }
+
+  try {
+    const postList = posts.map((p, i) => `[${i}] ${p.body}`).join("\n");
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqKey}`,
+      },
+      body: JSON.stringify({
+        model: AI_MODELS.AUDIT,
+        max_tokens: 1024,
+        messages: [
+          { role: "system", content: SAFETY_AUDIT_SYSTEM },
+          { role: "user", content: `Audit these posts:\n\n${postList}` },
+        ],
+      }),
+    });
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content ?? "";
+    const jsonStr = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(jsonStr);
+    return parsed.results ?? [];
+  } catch (error) {
+    console.error("[creator-audit] Audit failed, approving all:", error);
+    return posts.map((_, i) => ({ index: i, status: "approved" as const, reason: "Audit unavailable" }));
+  }
+}
