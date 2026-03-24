@@ -1759,11 +1759,7 @@ function StrategyTab() {
     setLoading(true);
     api<StrategyData>("/api/creator/strategy")
       .then(setData)
-      .catch((err) => {
-        console.error("[strategy] fetch error:", err);
-        const msg = err instanceof Error ? err.message : "Request failed";
-        setRegenMessage(msg === "Load failed" ? "Request timed out - please retry." : msg);
-      })
+      .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
@@ -1780,8 +1776,7 @@ function StrategyTab() {
       setRegenMessage(`Updated: ${result.insights} insights, ${result.recommendations} recommendations`);
       fetchStrategy();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to regenerate";
-      setRegenMessage(msg === "Load failed" ? "Request timed out. Strategy generation can take up to a minute - please try again." : msg);
+      setRegenMessage(err instanceof Error ? err.message : "Failed to regenerate");
     } finally {
       setRegenerating(false);
     }
