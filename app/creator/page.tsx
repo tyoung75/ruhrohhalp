@@ -1752,20 +1752,14 @@ interface StrategyData {
 function StrategyTab() {
   const [data, setData] = useState<StrategyData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
 
   const fetchStrategy = useCallback(() => {
     setLoading(true);
-    setError(null);
     api<StrategyData>("/api/creator/strategy")
-      .then((d) => { setData(d); setError(null); })
-      .catch((err) => {
-        console.error("[strategy] fetch error:", err);
-        const msg = err instanceof Error ? err.message : "Failed to load strategy";
-        setError(msg === "Load failed" ? "Request timed out — please retry." : msg);
-      })
+      .then(setData)
+      .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
@@ -1782,9 +1776,7 @@ function StrategyTab() {
       setRegenMessage(`Updated: ${result.insights} insights, ${result.recommendations} recommendations`);
       fetchStrategy();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to regenerate";
-      // "Load failed" is Safari's generic fetch error — give a more helpful message
-      setRegenMessage(msg === "Load failed" ? "Request timed out. Strategy generation can take up to a minute — please try again." : msg);
+      setRegenMessage(err instanceof Error ? err.message : "Failed to regenerate");
     } finally {
       setRegenerating(false);
     }
@@ -1822,12 +1814,6 @@ function StrategyTab() {
       {regenMessage && (
         <div style={{ fontFamily: C.mono, fontSize: 11, color: C.gpt, marginBottom: 16 }}>
           {regenMessage}
-        </div>
-      )}
-
-      {error && (
-        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.cl, marginBottom: 16 }}>
-          {error}
         </div>
       )}
 
