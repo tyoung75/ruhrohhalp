@@ -1752,14 +1752,19 @@ interface StrategyData {
 function StrategyTab() {
   const [data, setData] = useState<StrategyData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
 
   const fetchStrategy = useCallback(() => {
     setLoading(true);
+    setLoadError(null);
     api<StrategyData>("/api/creator/strategy")
       .then(setData)
-      .catch(console.error)
+      .catch((err) => {
+        console.error(err);
+        setLoadError(err instanceof Error ? err.message : "Failed to load strategy");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -1776,7 +1781,9 @@ function StrategyTab() {
       setRegenMessage(`Updated: ${result.insights} insights, ${result.recommendations} recommendations`);
       fetchStrategy();
     } catch (err) {
-      setRegenMessage(err instanceof Error ? err.message : "Failed to regenerate");
+      const msg = err instanceof Error ? err.message : "Failed to regenerate";
+      // "Load failed" is Safari's generic fetch error — give a more helpful message
+      setRegenMessage(msg === "Load failed" ? "Request timed out. Strategy generation can take up to a minute — please try again." : msg);
     } finally {
       setRegenerating(false);
     }
@@ -1799,7 +1806,7 @@ function StrategyTab() {
           )}
         </div>
         <button
-          onClick={handleRegenerate}
+          onClick={loadError && !regenerating ? fetchStrategy : handleRegenerate}
           disabled={regenerating}
           style={{
             background: C.cl, color: C.bg, border: "none", borderRadius: 6,
@@ -1807,7 +1814,7 @@ function StrategyTab() {
             opacity: regenerating ? 0.5 : 1,
           }}
         >
-          {regenerating ? "Analyzing..." : "Regenerate Strategy"}
+          {regenerating ? "Analyzing..." : loadError ? "Retry" : "Regenerate Strategy"}
         </button>
       </div>
 
@@ -1817,7 +1824,11 @@ function StrategyTab() {
         </div>
       )}
 
-      {empty ? (
+      {loadError ? (
+        <div style={{ padding: 40, textAlign: "center", color: C.cl, fontFamily: C.mono, fontSize: 12 }}>
+          Failed to load strategy. {loadError === "Load failed" ? "The request timed out — please retry." : loadError}
+        </div>
+      ) : empty ? (
         <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
           No strategy generated yet. Click &quot;Regenerate Strategy&quot; to analyze your content and generate recommendations.
         </div>
