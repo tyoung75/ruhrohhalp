@@ -7,7 +7,7 @@
  * POST /api/creator/strategy — Regenerate strategy (triggers full analysis)
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { getCurrentStrategy, generateStrategy, detectTrends } from "@/lib/creator/strategy";
 import { limitByKey } from "@/lib/security/rate-limit";
@@ -28,7 +28,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   const { user, response } = await requireUser();
   if (!user) return response!;
 
