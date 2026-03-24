@@ -1752,18 +1752,19 @@ interface StrategyData {
 function StrategyTab() {
   const [data, setData] = useState<StrategyData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
 
   const fetchStrategy = useCallback(() => {
     setLoading(true);
-    setLoadError(null);
+    setError(null);
     api<StrategyData>("/api/creator/strategy")
-      .then(setData)
+      .then((d) => { setData(d); setError(null); })
       .catch((err) => {
-        console.error(err);
-        setLoadError(err instanceof Error ? err.message : "Failed to load strategy");
+        console.error("[strategy] fetch error:", err);
+        const msg = err instanceof Error ? err.message : "Failed to load strategy";
+        setError(msg === "Load failed" ? "Request timed out — please retry." : msg);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -1806,7 +1807,7 @@ function StrategyTab() {
           )}
         </div>
         <button
-          onClick={loadError && !regenerating ? fetchStrategy : handleRegenerate}
+          onClick={handleRegenerate}
           disabled={regenerating}
           style={{
             background: C.cl, color: C.bg, border: "none", borderRadius: 6,
@@ -1814,7 +1815,7 @@ function StrategyTab() {
             opacity: regenerating ? 0.5 : 1,
           }}
         >
-          {regenerating ? "Analyzing..." : loadError ? "Retry" : "Regenerate Strategy"}
+          {regenerating ? "Analyzing..." : "Regenerate Strategy"}
         </button>
       </div>
 
@@ -1824,11 +1825,13 @@ function StrategyTab() {
         </div>
       )}
 
-      {loadError ? (
-        <div style={{ padding: 40, textAlign: "center", color: C.cl, fontFamily: C.mono, fontSize: 12 }}>
-          Failed to load strategy. {loadError === "Load failed" ? "The request timed out — please retry." : loadError}
+      {error && (
+        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.cl, marginBottom: 16 }}>
+          {error}
         </div>
-      ) : empty ? (
+      )}
+
+      {empty ? (
         <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
           No strategy generated yet. Click &quot;Regenerate Strategy&quot; to analyze your content and generate recommendations.
         </div>
