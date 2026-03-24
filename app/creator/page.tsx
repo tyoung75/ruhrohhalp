@@ -214,6 +214,9 @@ function QueueTab() {
   const [saving, setSaving] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [dailyPublishLimit, setDailyPublishLimit] = useState(2);
+  const [savingLimit, setSavingLimit] = useState(false);
+  const [limitSaveMessage, setLimitSaveMessage] = useState<string | null>(null);
 
   const fetchQueue = useCallback(async () => {
     setLoading(true);
@@ -238,9 +241,22 @@ function QueueTab() {
     }
   }, [filter]);
 
+  const fetchSettings = useCallback(async () => {
+    try {
+      const data = await api<{
+        daily_publish_limit: number;
+        isDefault?: boolean;
+      }>("/api/creator/settings");
+      setDailyPublishLimit(data.daily_publish_limit);
+    } catch (e) {
+      console.error("Failed to fetch settings:", e);
+    }
+  }, []);
+
   useEffect(() => {
     fetchQueue();
-  }, [fetchQueue]);
+    fetchSettings();
+  }, [fetchQueue, fetchSettings]);
 
   async function updateItem(id: string, updates: Record<string, unknown>) {
     setSaving(true);
@@ -332,6 +348,27 @@ function QueueTab() {
     }
   }
 
+  async function handleUpdateDailyLimit(newLimit: number) {
+    if (newLimit < 1 || newLimit === dailyPublishLimit) return;
+
+    setSavingLimit(true);
+    try {
+      await api("/api/creator/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ daily_publish_limit: newLimit }),
+      });
+      setDailyPublishLimit(newLimit);
+      setLimitSaveMessage("Saved");
+      setTimeout(() => setLimitSaveMessage(null), 2000);
+    } catch (e) {
+      console.error("Failed to update limit:", e);
+      setLimitSaveMessage("Failed");
+      setTimeout(() => setLimitSaveMessage(null), 2000);
+    } finally {
+      setSavingLimit(false);
+    }
+  }
+
   const filters = [
     { id: "upcoming", label: "Upcoming" },
     { id: "draft", label: "Drafts" },
@@ -343,7 +380,7 @@ function QueueTab() {
     <div>
       {/* Toolbar */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           {filters.map((f) => (
             <button
               key={f.id}
@@ -362,6 +399,50 @@ function QueueTab() {
               {f.label}
             </button>
           ))}
+
+          {/* Daily publish limit control */}
+          <div style={{ marginLeft: 16, display: "flex", gap: 8, alignItems: "center", paddingLeft: 12, borderLeft: `1px solid ${C.borderMid}` }}>
+            <label style={{ fontFamily: C.sans, fontSize: 12, color: C.textDim }}>
+              Posts/day:
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={dailyPublishLimit}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val)) setDailyPublishLimit(val);
+              }}
+              onBlur={() => handleUpdateDailyLimit(dailyPublishLimit)}
+              disabled={savingLimit}
+              style={{
+                width: 40,
+                padding: "4px 8px",
+                fontFamily: C.mono,
+                fontSize: 12,
+                background: C.surface,
+                border: `1px solid ${C.borderMid}`,
+                color: C.text,
+                borderRadius: 4,
+                cursor: savingLimit ? "wait" : "text",
+                opacity: savingLimit ? 0.6 : 1,
+              }}
+            />
+            {limitSaveMessage && (
+              <span
+                style={{
+                  fontFamily: C.mono,
+                  fontSize: 10,
+                  color: limitSaveMessage === "Saved" ? C.gpt : C.reminder,
+                  animation: "fadeUp 0.2s ease both",
+                  minWidth: 45,
+                }}
+              >
+                {limitSaveMessage}
+              </span>
+            )}
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

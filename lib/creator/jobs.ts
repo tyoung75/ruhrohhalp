@@ -100,6 +100,18 @@ export async function publishQueuedPosts(
   const supabase = createAdminClient();
   const now = new Date().toISOString();
 
+  // Fetch user's daily publish limit from settings, default to constant
+  let dailyLimit = DAILY_PUBLISH_LIMIT;
+  const { data: settings } = await supabase
+    .from("creator_settings")
+    .select("daily_publish_limit")
+    .eq("user_id", userId)
+    .single();
+
+  if (settings?.daily_publish_limit) {
+    dailyLimit = settings.daily_publish_limit;
+  }
+
   // Check how many we've already published today
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -113,7 +125,7 @@ export async function publishQueuedPosts(
   const alreadyPublished = publishedToday ?? 0;
   const remainingSlots = options.manual
     ? 100 // Manual override: no practical limit
-    : Math.max(0, DAILY_PUBLISH_LIMIT - alreadyPublished);
+    : Math.max(0, dailyLimit - alreadyPublished);
 
   if (remainingSlots === 0 && !options.manual) {
     return { published: 0, failed: 0, skipped: 0, results: [] };
