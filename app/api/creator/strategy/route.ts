@@ -44,7 +44,6 @@ export async function POST(request: NextRequest) {
   try {
     // Detect trends first, then generate strategy
     const trendResult = await detectTrends();
-    const body = await request.json().catch(() => ({}));
     const strategy = await generateStrategy();
 
     return NextResponse.json({

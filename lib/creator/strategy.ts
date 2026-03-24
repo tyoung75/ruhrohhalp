@@ -119,7 +119,7 @@ async function gatherStrategyContext(userId: string) {
 
   // Get post bodies for the analytics
   const queueIds = [...new Set((analytics ?? []).map((a) => a.content_queue_id).filter(Boolean))];
-  let postBodies: Record<string, { body: string; content_type: string; created_at: string }> = {};
+  const postBodies: Record<string, { body: string; content_type: string; created_at: string }> = {};
   if (queueIds.length) {
     const { data: posts } = await supabase
       .from("content_queue")
