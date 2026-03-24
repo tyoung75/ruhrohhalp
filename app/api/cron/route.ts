@@ -16,6 +16,8 @@ import { queryBrain } from "@/lib/query";
 import { logError } from "@/lib/logger";
 import { publishQueuedPosts, syncExternalPosts, collectAnalytics, refreshExpiringTokens, expireStaleDrafts } from "@/lib/creator/jobs";
 import { syncStravaActivities } from "@/lib/strava/sync";
+import { snapshotFollowerCounts } from "@/lib/creator/followers";
+import { getCurrentStrategy, generateStrategy, detectTrends } from "@/lib/creator/strategy";
 
 /** Tyler's Supabase user ID — hardcoded for cron (no session context). */
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
@@ -45,9 +47,14 @@ Calendar events, deadlines, and time-sensitive items for today and the next 48 h
 Patterns, risks, or opportunities Tyler should be aware of. Surface anything that connects across ventures or that might be falling through the cracks.`;
 }
 
-const WEEKLY_PROMPT = `You are generating Tyler Young's weekly CEO synthesis. Review the past 7 days of stored memories, tasks, decisions, meetings, emails, and project context across every venture (Motus, RuhrohHalp, Iron Passport, Caliber, thestayed).
+function buildWeeklyPrompt(strategyContext: string): string {
+  const strategyBlock = strategyContext
+    ? `\n\n--- CURRENT CONTENT STRATEGY INSIGHTS ---\n${strategyContext}\n\nUse these insights to inform the Content Strategy section below.`
+    : "";
 
-Return a structured weekly synthesis with exactly these four sections. Be specific — reference real items, people, outcomes, and data from the memories. Think like a chief of staff summarizing the week for a CEO.
+  return `You are generating Tyler Young's weekly CEO synthesis. Review the past 7 days of stored memories, tasks, decisions, meetings, emails, and project context across every venture (Motus, RuhrohHalp, Iron Passport, Caliber, thestayed).${strategyBlock}
+
+Return a structured weekly synthesis with exactly these five sections. Be specific — reference real items, people, outcomes, and data from the memories. Think like a chief of staff summarizing the week for a CEO.
 
 ## Project Progress
 For each active venture, summarize what moved forward this week. Include key milestones hit, deliverables completed, and measurable progress. Flag any venture that had no meaningful progress.
@@ -55,11 +62,15 @@ For each active venture, summarize what moved forward this week. Include key mil
 ## Top Blockers
 The most critical blockers across all ventures. Include what's blocked, who or what is blocking it, how long it's been stuck, and suggested next steps to unblock.
 
+## Content Strategy
+Summarize Tyler's social media performance this week: what content patterns worked, what underperformed, any algorithm shifts or trend signals detected, and recommended adjustments for next week. Include follower growth trends, engagement rate changes, and specific content recommendations. If strategy insights are provided above, synthesize them into actionable guidance.
+
 ## Patterns Noticed
 Cross-venture patterns, recurring themes, or strategic observations from the week. Surface connections Tyler might miss — e.g., the same person blocking two ventures, a theme appearing in multiple meetings, resource conflicts, or momentum shifts.
 
 ## Suggested Focus
 Based on everything from this week, recommend Tyler's top 3 priorities for next week. Explain the reasoning — why these over other options, what's at stake, and what happens if they're delayed.`;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -101,6 +112,7 @@ function parseWeeklySections(answer: string) {
   return {
     project_progress: extractSection(answer, "Project Progress"),
     top_blockers: extractSection(answer, "Top Blockers"),
+    content_strategy: extractSection(answer, "Content Strategy"),
     patterns_noticed: extractSection(answer, "Patterns Noticed"),
     suggested_focus: extractSection(answer, "Suggested Focus"),
   };
@@ -149,8 +161,28 @@ export async function GET(request: NextRequest) {
 
   // --- On Monday morning, also run the weekly synthesis ---
   if (isMondayMorningRun()) {
+    // 2a. Regenerate strategy insights before the weekly synthesis
+    let strategyContext = "";
     try {
-      const weeklyResult = await queryBrain(WEEKLY_PROMPT, {
+      await detectTrends();
+      await generateStrategy();
+      const strategy = await getCurrentStrategy();
+      const insightLines = (strategy.insights ?? []).map(
+        (i: { type: string; content: string; confidence: number }) =>
+          `[${i.type}] (confidence: ${i.confidence}) ${i.content}`
+      );
+      if (insightLines.length) {
+        strategyContext = insightLines.join("\n");
+      }
+      results.strategy_refresh = { insights: insightLines.length, success: true };
+    } catch (error) {
+      logError("cron.strategy-refresh", error);
+      results.strategy_refresh = { error: "Strategy refresh failed" };
+    }
+
+    // 2b. Run the weekly CEO synthesis with strategy context
+    try {
+      const weeklyResult = await queryBrain(buildWeeklyPrompt(strategyContext), {
         userId: TYLER_USER_ID,
         topK: 20,
         threshold: 0.50,
@@ -215,7 +247,16 @@ export async function GET(request: NextRequest) {
     results.strava_sync = { error: "Strava sync failed" };
   }
 
-  // 3f. Refresh any platform tokens expiring within 7 days
+  // 3f. Snapshot follower counts + compute KPIs
+  try {
+    const followerResult = await snapshotFollowerCounts(TYLER_USER_ID);
+    results.follower_snapshot = followerResult;
+  } catch (error) {
+    logError("cron.follower-snapshot", error);
+    results.follower_snapshot = { error: "Follower snapshot failed" };
+  }
+
+  // 3g. Refresh any platform tokens expiring within 7 days
   try {
     const tokenResult = await refreshExpiringTokens();
     results.token_refresh = tokenResult;

@@ -28,8 +28,22 @@ export interface PlatformPost {
   timestamp: string; // ISO date
 }
 
+export interface PlatformProfile {
+  followers: number;
+  following: number;
+  postsCount: number;
+  extras?: Record<string, unknown>; // platform-specific: profile_views, reach, etc.
+}
+
 export interface PlatformAdapter {
   platform: string;
+
+  /** Fetch the user's profile stats (followers, following, posts count). */
+  getProfile(params: {
+    accessToken: string;
+    userId: string;
+  }): Promise<PlatformProfile>;
+
   publish(params: {
     accessToken: string;
     userId: string; // platform user ID

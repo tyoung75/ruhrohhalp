@@ -280,6 +280,24 @@ async function gatherDailyContext(
     console.error("[creator-generate] Motus fetch failed (non-fatal):", err);
   }
 
+  // --- Active strategy insights (adaptive learnings) ---
+  let strategyInsights: string[] = [];
+  try {
+    const { data: insights } = await supabase
+      .from("strategy_insights")
+      .select("insight_type, content")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .order("confidence", { ascending: false })
+      .limit(8);
+
+    strategyInsights = (insights ?? []).map(
+      (i: { insight_type: string; content: string }) => `[${i.insight_type}] ${i.content}`
+    );
+  } catch (err) {
+    console.error("[creator-generate] Strategy insights fetch failed (non-fatal):", err);
+  }
+
   return {
     date: today,
     dayOfWeek: new Date().toLocaleDateString("en-US", { weekday: "long" }),
@@ -290,6 +308,7 @@ async function gatherDailyContext(
     topPerformingPosts: topPostBodies,
     strava: stravaData,
     motus: motusData,
+    strategyInsights,
   };
 }
 

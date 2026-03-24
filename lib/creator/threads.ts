@@ -9,7 +9,7 @@
  * Docs: https://developers.facebook.com/docs/threads
  */
 
-import type { PlatformAdapter, PublishResult, PostMetrics, PlatformPost } from "./platforms";
+import type { PlatformAdapter, PublishResult, PostMetrics, PlatformPost, PlatformProfile } from "./platforms";
 
 const THREADS_API = "https://graph.threads.net/v1.0";
 const THREADS_OAUTH = "https://graph.threads.net/oauth";
@@ -46,6 +46,50 @@ async function waitForContainer(
 
 export class ThreadsAdapter implements PlatformAdapter {
   platform = "threads";
+
+  async getProfile(params: {
+    accessToken: string;
+    userId: string;
+  }): Promise<PlatformProfile> {
+    const { accessToken, userId } = params;
+
+    // Fetch basic profile info
+    const profileRes = await fetch(
+      `${THREADS_API}/${userId}?fields=id,username,threads_biography,threads_profile_picture_url&access_token=${accessToken}`
+    );
+    const profile = await profileRes.json();
+
+    // Fetch follower/following counts via user insights
+    const insightsRes = await fetch(
+      `${THREADS_API}/${userId}/threads_insights?metric=followers_count&access_token=${accessToken}`
+    );
+    const insights = await insightsRes.json();
+
+    let followers = 0;
+    if (insights.data) {
+      for (const metric of insights.data) {
+        if (metric.name === "followers_count") {
+          followers = metric.total_value?.value ?? metric.values?.[0]?.value ?? 0;
+        }
+      }
+    }
+
+    // Count recent posts for posts_count
+    const postsRes = await fetch(
+      `${THREADS_API}/${userId}/threads?fields=id&limit=0&access_token=${accessToken}`
+    );
+    const postsData = await postsRes.json();
+
+    return {
+      followers,
+      following: 0, // Threads API doesn't expose following count
+      postsCount: postsData.data?.length ?? 0,
+      extras: {
+        username: profile.username,
+        biography: profile.threads_biography,
+      },
+    };
+  }
 
   async publish(params: {
     accessToken: string;

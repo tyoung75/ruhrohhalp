@@ -16,6 +16,12 @@ authentic training content — reference specific paces, distances, PRs, suffer 
 details. Real numbers make posts credible and relatable. Training content is Tyler's strongest
 category, so at least 1-2 posts per batch should reference recent workouts or training observations.
 
+STRATEGY INSIGHTS:
+The context may include strategyInsights — these are adaptive learnings from Tyler's Social Strategy
+Agent about what content patterns work, what the algorithm pushes, optimal timing, and current trends.
+FOLLOW THESE INSIGHTS when deciding what to generate. They represent data-driven patterns learned
+from past performance and should heavily influence your content decisions.
+
 IMPORTANT: Exactly 1 of the 5 items MUST be a multi-post thread (type: "thread"). Threads are reply chains
 where each part builds on the previous — like a mini-essay broken into 2-4 punchy posts chained together.
 The other 4 should be single posts.

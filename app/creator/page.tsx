@@ -9,7 +9,7 @@ import { Spinner } from "@/components/primitives";
 // Types
 // ---------------------------------------------------------------------------
 
-type Tab = "queue" | "analytics" | "history";
+type Tab = "queue" | "analytics" | "history" | "strategy";
 
 interface QueueItem {
   id: string;
@@ -80,6 +80,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "queue", label: "Queue", icon: "▤" },
   { id: "analytics", label: "Analytics", icon: "◈" },
   { id: "history", label: "History", icon: "◷" },
+  { id: "strategy", label: "Strategy", icon: "◉" },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -209,6 +210,7 @@ export default function CreatorPage() {
         {tab === "queue" && <QueueTab />}
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "history" && <HistoryTab />}
+        {tab === "strategy" && <StrategyTab />}
       </div>
     </div>
   );
@@ -1084,8 +1086,11 @@ function AnalyticsTab() {
 
   return (
     <div>
+      {/* Follower Tracking Cards */}
+      <FollowerCards />
+
       {/* Period selector */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, marginTop: 20 }}>
         {[7, 14, 30, 60].map((d) => (
           <button
             key={d}
@@ -1593,6 +1598,346 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Follower Cards (shown atop Analytics tab)
+// ---------------------------------------------------------------------------
+
+interface FollowerSummaryData {
+  total: number;
+  byPlatform: Record<string, {
+    current: number;
+    delta7d: number;
+    delta30d: number;
+    growthRate7d: number;
+    growthRate30d: number;
+    engagementRate: number | null;
+    reachRate: number | null;
+    viralityRate: number | null;
+    nonFollowerPct: number | null;
+    avgImpressionsPerPost: number | null;
+  }>;
+  sparklines: Record<string, Array<{ date: string; followers: number }>>;
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      fontFamily: C.mono, fontSize: 11, color: C.textDim,
+      textTransform: "uppercase", letterSpacing: "0.05em",
+      marginBottom: 10, marginTop: 16,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function FollowerCards() {
+  const [data, setData] = useState<FollowerSummaryData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api<FollowerSummaryData>("/api/creator/followers")
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return null; // Don't block analytics render
+  if (!data || data.total === 0) return null;
+
+  const platforms = Object.entries(data.byPlatform);
+  const pctFmt = (n: number | null) => n != null ? `${(n * 100).toFixed(1)}%` : "--";
+  const deltaColor = (n: number) => n > 0 ? "#6fcf9a" : n < 0 ? C.reminder : C.textDim;
+  const deltaArrow = (n: number) => n > 0 ? "+" : "";
+
+  return (
+    <div>
+      <SectionLabel>Audience Growth</SectionLabel>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+        {/* Total card */}
+        <div style={{
+          background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
+          padding: "14px 18px", minWidth: 160, flex: 1,
+        }}>
+          <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, textTransform: "uppercase", marginBottom: 4 }}>
+            Total Followers
+          </div>
+          <div style={{ fontFamily: C.serif, fontSize: 28, color: C.cream, fontStyle: "italic" }}>
+            {data.total.toLocaleString()}
+          </div>
+        </div>
+
+        {/* Per-platform cards */}
+        {platforms.map(([platform, stats]) => {
+          const sparkline = data.sparklines[platform] ?? [];
+          const sparkMax = Math.max(...sparkline.map((s) => s.followers), 1);
+          const sparkMin = Math.min(...sparkline.map((s) => s.followers), 0);
+          const sparkRange = sparkMax - sparkMin || 1;
+
+          return (
+            <div key={platform} style={{
+              background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
+              padding: "14px 18px", minWidth: 200, flex: 1,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, textTransform: "uppercase" }}>
+                  {platform}
+                </span>
+                {/* Mini sparkline */}
+                {sparkline.length > 2 && (
+                  <svg width={60} height={20} viewBox={`0 0 ${sparkline.length - 1} 20`}>
+                    <polyline
+                      fill="none"
+                      stroke={C.cl}
+                      strokeWidth={1.5}
+                      points={sparkline.map((s, i) => `${i},${20 - ((s.followers - sparkMin) / sparkRange) * 18}`).join(" ")}
+                    />
+                  </svg>
+                )}
+              </div>
+              <div style={{ fontFamily: C.serif, fontSize: 22, color: C.cream, fontStyle: "italic" }}>
+                {stats.current.toLocaleString()}
+              </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 6, fontFamily: C.mono, fontSize: 10 }}>
+                <span style={{ color: deltaColor(stats.delta7d) }}>
+                  7d: {deltaArrow(stats.delta7d)}{stats.delta7d} ({deltaArrow(stats.growthRate7d)}{stats.growthRate7d}%)
+                </span>
+                <span style={{ color: deltaColor(stats.delta30d) }}>
+                  30d: {deltaArrow(stats.delta30d)}{stats.delta30d} ({deltaArrow(stats.growthRate30d)}{stats.growthRate30d}%)
+                </span>
+              </div>
+              {/* KPI row */}
+              <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+                {stats.engagementRate != null && <KPIChip label="Eng" value={pctFmt(stats.engagementRate)} />}
+                {stats.reachRate != null && <KPIChip label="Reach" value={pctFmt(stats.reachRate)} />}
+                {stats.viralityRate != null && <KPIChip label="Viral" value={pctFmt(stats.viralityRate)} />}
+                {stats.nonFollowerPct != null && <KPIChip label="Non-fol" value={pctFmt(stats.nonFollowerPct)} />}
+                {stats.avgImpressionsPerPost != null && <KPIChip label="Avg imp" value={Math.round(stats.avgImpressionsPerPost).toLocaleString()} />}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function KPIChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={{
+      fontFamily: C.mono, fontSize: 9, color: C.textDim,
+      background: `${C.border}40`, padding: "2px 6px", borderRadius: 4,
+    }}>
+      {label}: <span style={{ color: C.cream }}>{value}</span>
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Strategy Tab
+// ---------------------------------------------------------------------------
+
+interface StrategyData {
+  insights: Array<{ type: string; content: string; confidence: number; data: Record<string, unknown>; created_at: string }>;
+  recommendations: Array<{ topic: string; platform: string; format: string; suggestedTiming: string; rationale: string; trendRelevance: number }>;
+  velocity: { postsPerWeek: number; platformBreakdown: Record<string, number>; bestTimes: string[] } | null;
+  trends: Array<{ topic: string; platform: string | null; relevance_score: number; context: string | null }>;
+  lastUpdated: string | null;
+}
+
+function StrategyTab() {
+  const [data, setData] = useState<StrategyData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenMessage, setRegenMessage] = useState<string | null>(null);
+
+  const fetchStrategy = useCallback(() => {
+    setLoading(true);
+    api<StrategyData>("/api/creator/strategy")
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { fetchStrategy(); }, [fetchStrategy]);
+
+  const handleRegenerate = async () => {
+    setRegenerating(true);
+    setRegenMessage(null);
+    try {
+      const result = await api<{ success: boolean; recommendations: number; insights: number; shifts: string[] }>(
+        "/api/creator/strategy",
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      setRegenMessage(`Updated: ${result.insights} insights, ${result.recommendations} recommendations`);
+      fetchStrategy();
+    } catch (err) {
+      setRegenMessage(err instanceof Error ? err.message : "Failed to regenerate");
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>;
+
+  const empty = !data || (!data.insights.length && !data.trends.length);
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <SectionLabel>Social Media Strategy</SectionLabel>
+          {data?.lastUpdated && (
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
+              Last updated: {new Date(data.lastUpdated).toLocaleDateString()}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={handleRegenerate}
+          disabled={regenerating}
+          style={{
+            background: C.cl, color: C.bg, border: "none", borderRadius: 6,
+            padding: "6px 14px", fontFamily: C.sans, fontSize: 12, cursor: "pointer",
+            opacity: regenerating ? 0.5 : 1,
+          }}
+        >
+          {regenerating ? "Analyzing..." : "Regenerate Strategy"}
+        </button>
+      </div>
+
+      {regenMessage && (
+        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.gpt, marginBottom: 16 }}>
+          {regenMessage}
+        </div>
+      )}
+
+      {empty ? (
+        <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
+          No strategy generated yet. Click &quot;Regenerate Strategy&quot; to analyze your content and generate recommendations.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          {/* Velocity & Timing */}
+          {data?.velocity && (
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 18 }}>
+              <SectionLabel>Posting Velocity & Timing</SectionLabel>
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginTop: 8 }}>
+                <div>
+                  <span style={{ fontFamily: C.serif, fontSize: 24, color: C.cream, fontStyle: "italic" }}>
+                    {data.velocity.postsPerWeek}
+                  </span>
+                  <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginLeft: 6 }}>posts/week target</span>
+                </div>
+                {Object.entries(data.velocity.platformBreakdown).map(([p, count]) => (
+                  <span key={p} style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim }}>
+                    {p}: <span style={{ color: C.cream }}>{count}/wk</span>
+                  </span>
+                ))}
+              </div>
+              {data.velocity.bestTimes.length > 0 && (
+                <div style={{ marginTop: 10, fontFamily: C.mono, fontSize: 11, color: C.textDim }}>
+                  Best times: {data.velocity.bestTimes.map((t, i) => (
+                    <span key={i} style={{ color: C.cream, marginRight: 8 }}>{t}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Content Recommendations */}
+          {data && data.recommendations.length > 0 && (
+            <div>
+              <SectionLabel>Content Recommendations</SectionLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {data.recommendations.map((rec, i) => (
+                  <div key={i} style={{
+                    background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 16px",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontFamily: C.sans, fontSize: 13, color: C.cream }}>{rec.topic}</span>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <span style={statusBadge(rec.platform)}>{rec.platform}</span>
+                        <span style={{ ...statusBadge(rec.format), color: C.gold, borderColor: `${C.gold}30`, background: `${C.gold}10` }}>
+                          {rec.format.replace("_", " ")}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginTop: 6 }}>
+                      {rec.rationale}
+                    </div>
+                    {rec.suggestedTiming && (
+                      <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginTop: 4, display: "inline-block" }}>
+                        Timing: {rec.suggestedTiming}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Strategic Insights */}
+          {data && data.insights.length > 0 && (
+            <div>
+              <SectionLabel>Strategic Insights</SectionLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {data.insights.map((insight, i) => (
+                  <div key={i} style={{
+                    background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 16px",
+                    borderLeft: `3px solid ${insight.confidence > 0.7 ? C.gpt : insight.confidence > 0.4 ? C.gold : C.textDim}`,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={statusBadge(insight.type)}>{insight.type.replace("_", " ")}</span>
+                      <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint }}>
+                        {Math.round(insight.confidence * 100)}% confidence
+                      </span>
+                    </div>
+                    <div style={{ fontFamily: C.sans, fontSize: 12, color: C.text, lineHeight: 1.5 }}>
+                      {insight.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Trend Signals */}
+          {data && data.trends.length > 0 && (
+            <div>
+              <SectionLabel>Active Trends</SectionLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {data.trends.map((trend, i) => (
+                  <div key={i} style={{
+                    background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px",
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}>
+                    <div>
+                      <span style={{ fontFamily: C.sans, fontSize: 12, color: C.cream }}>{trend.topic}</span>
+                      {trend.context && (
+                        <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginTop: 2 }}>
+                          {trend.context}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {trend.platform && <span style={statusBadge(trend.platform)}>{trend.platform}</span>}
+                      <span style={{ fontFamily: C.mono, fontSize: 10, color: C.cl }}>
+                        {Math.round(trend.relevance_score * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
