@@ -1,9 +1,28 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Component, type ReactNode, type ErrorInfo } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
+
+// Temporary error boundary to surface crash details on mobile
+class CreatorErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error("[CreatorErrorBoundary]", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 20, color: "#ff6b6b", fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap" }}>
+          <div style={{ marginBottom: 8, fontWeight: "bold" }}>Creator page crashed:</div>
+          <div>{this.state.error.message}</div>
+          <div style={{ marginTop: 8, color: "#888", fontSize: 10 }}>{this.state.error.stack}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -140,6 +159,14 @@ function computeDisplayScore(item: QueueItem): number {
 // ---------------------------------------------------------------------------
 
 export default function CreatorPage() {
+  return (
+    <CreatorErrorBoundary>
+      <CreatorPageInner />
+    </CreatorErrorBoundary>
+  );
+}
+
+function CreatorPageInner() {
   const [tab, setTab] = useState<Tab>("queue");
 
   return (
@@ -1784,7 +1811,7 @@ function StrategyTab() {
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>;
 
-  const empty = !data || (!data.insights.length && !data.trends.length);
+  const empty = !data || (!data.insights?.length && !data.trends?.length);
 
   return (
     <div>
@@ -1834,13 +1861,13 @@ function StrategyTab() {
                   </span>
                   <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginLeft: 6 }}>posts/week target</span>
                 </div>
-                {Object.entries(data.velocity.platformBreakdown).map(([p, count]) => (
+                {Object.entries(data.velocity.platformBreakdown ?? {}).map(([p, count]) => (
                   <span key={p} style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim }}>
                     {p}: <span style={{ color: C.cream }}>{count}/wk</span>
                   </span>
                 ))}
               </div>
-              {data.velocity.bestTimes.length > 0 && (
+              {data.velocity.bestTimes?.length > 0 && (
                 <div style={{ marginTop: 10, fontFamily: C.mono, fontSize: 11, color: C.textDim }}>
                   Best times: {data.velocity.bestTimes.map((t, i) => (
                     <span key={i} style={{ color: C.cream, marginRight: 8 }}>{t}</span>
@@ -1851,7 +1878,7 @@ function StrategyTab() {
           )}
 
           {/* Content Recommendations */}
-          {data && data.recommendations.length > 0 && (
+          {data?.recommendations?.length > 0 && (
             <div>
               <SectionLabel>Content Recommendations</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1883,7 +1910,7 @@ function StrategyTab() {
           )}
 
           {/* Strategic Insights */}
-          {data && data.insights.length > 0 && (
+          {data?.insights?.length > 0 && (
             <div>
               <SectionLabel>Strategic Insights</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1908,7 +1935,7 @@ function StrategyTab() {
           )}
 
           {/* Trend Signals */}
-          {data && data.trends.length > 0 && (
+          {data?.trends?.length > 0 && (
             <div>
               <SectionLabel>Active Trends</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
