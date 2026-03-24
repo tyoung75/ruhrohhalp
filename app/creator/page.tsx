@@ -1,9 +1,28 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Component, type ReactNode, type ErrorInfo } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
+
+// Temporary error boundary to surface crash details on mobile
+class CreatorErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error("[CreatorErrorBoundary]", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 20, color: "#ff6b6b", fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap" }}>
+          <div style={{ marginBottom: 8, fontWeight: "bold" }}>Creator page crashed:</div>
+          <div>{this.state.error.message}</div>
+          <div style={{ marginTop: 8, color: "#888", fontSize: 10 }}>{this.state.error.stack}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -140,6 +159,14 @@ function computeDisplayScore(item: QueueItem): number {
 // ---------------------------------------------------------------------------
 
 export default function CreatorPage() {
+  return (
+    <CreatorErrorBoundary>
+      <CreatorPageInner />
+    </CreatorErrorBoundary>
+  );
+}
+
+function CreatorPageInner() {
   const [tab, setTab] = useState<Tab>("queue");
 
   return (
