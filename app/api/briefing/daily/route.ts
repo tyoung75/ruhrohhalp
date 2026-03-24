@@ -177,12 +177,9 @@ function sectionsToContentJson(sections: ReturnType<typeof parseDailySections>) 
   }));
 }
 
-// ---------------------------------------------------------------------------
-// Persist briefing to DB
-// ---------------------------------------------------------------------------
-
-async function saveBriefing(userId: string, rawMd: string, contentJson: unknown) {
-  const supabase = await createClient();
+/** Persist briefing to the briefings table, upserting by date+period */
+async function saveBriefing(userId: string, rawMd: string, contentJson: unknown, useAdmin = false) {
+  const supabase = useAdmin ? createAdminClient() : await createClient();
   const today = new Date().toISOString().split("T")[0];
 
   // Upsert — if a briefing already exists for today, update it
@@ -305,7 +302,8 @@ export async function POST(request: NextRequest) {
     // 3. Parse + persist
     const sections = parseDailySections(result.answer);
     const contentJson = sectionsToContentJson(sections);
-    const saved = await saveBriefing(userId, result.answer, contentJson);
+    // Persist to DB (admin client — no user session in webhook context)
+    const saved = await saveBriefing(userId, result.answer, contentJson, true);
 
     return NextResponse.json({
       briefing: saved ?? {

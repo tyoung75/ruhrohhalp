@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { queryBrain } from "@/lib/query";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { logError } from "@/lib/logger";
 import { publishQueuedPosts, syncExternalPosts, collectAnalytics, refreshExpiringTokens, expireStaleDrafts } from "@/lib/creator/jobs";
 import { syncStravaActivities } from "@/lib/strava/sync";
@@ -95,8 +96,8 @@ function extractSection(text: string, heading: string): string[] {
 
   return match[1]
     .split("\n")
-    .map((line) => line.replace(/^[\s]*[-*]\s*/, "").trim())
-    .filter((line) => line.length > 0);
+    .map((line) => line.replace(/^[\s]*(?:[-*]|\d+[.)]\s*)\s*/, "").trim())
+    .filter((line) => line.length > 0 && !line.startsWith("##"));
 }
 
 function parseDailySections(answer: string) {
@@ -116,6 +117,92 @@ function parseWeeklySections(answer: string) {
     patterns_noticed: extractSection(answer, "Patterns Noticed"),
     suggested_focus: extractSection(answer, "Suggested Focus"),
   };
+}
+
+/** Convert parsed sections into the BriefingSection[] format the UI expects */
+function dailySectionsToContentJson(sections: ReturnType<typeof parseDailySections>) {
+  const sectionDefs = [
+    { key: "leverage_tasks", title: "Leverage Tasks", icon: "⚡", color: "#F59E0B" },
+    { key: "open_decisions", title: "Open Decisions", icon: "◈", color: "#8B5CF6" },
+    { key: "upcoming", title: "Upcoming", icon: "📅", color: "#3B82F6" },
+    { key: "insights", title: "Insights", icon: "💡", color: "#10B981" },
+  ] as const;
+
+  return sectionDefs.map((def) => ({
+    title: def.title,
+    icon: def.icon,
+    color: def.color,
+    items: (sections[def.key] ?? []).map((text: string, i: number) => ({
+      id: `${def.key}-${i}`,
+      text,
+    })),
+  }));
+}
+
+function weeklySectionsToContentJson(sections: ReturnType<typeof parseWeeklySections>) {
+  const sectionDefs = [
+    { key: "project_progress", title: "Project Progress", icon: "📊", color: "#3B82F6" },
+    { key: "top_blockers", title: "Top Blockers", icon: "🚧", color: "#EF4444" },
+    { key: "patterns_noticed", title: "Patterns Noticed", icon: "🔍", color: "#8B5CF6" },
+    { key: "suggested_focus", title: "Suggested Focus", icon: "🎯", color: "#10B981" },
+  ] as const;
+
+  return sectionDefs.map((def) => ({
+    title: def.title,
+    icon: def.icon,
+    color: def.color,
+    items: (sections[def.key] ?? []).map((text: string, i: number) => ({
+      id: `${def.key}-${i}`,
+      text,
+    })),
+  }));
+}
+
+/** Persist briefing to DB using admin client (no user session in cron) */
+async function saveBriefingFromCron(
+  userId: string,
+  rawMd: string,
+  contentJson: unknown,
+  period: "daily" | "weekly",
+) {
+  const supabase = createAdminClient();
+  const today = new Date().toISOString().split("T")[0];
+
+  // Upsert — if a briefing already exists for today+period, update it
+  const { data: existing } = await supabase
+    .from("briefings")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("date", today)
+    .eq("period", period)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from("briefings")
+      .update({
+        content_md: rawMd,
+        content_json: contentJson,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+
+    if (error) logError("cron.save.update", error, { userId, period });
+  } else {
+    const { error } = await supabase
+      .from("briefings")
+      .insert({
+        user_id: userId,
+        content_md: rawMd,
+        content_json: contentJson,
+        date: today,
+        period,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+    if (error) logError("cron.save.insert", error, { userId, period });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -148,9 +235,15 @@ export async function GET(request: NextRequest) {
       threshold: 0.55,
     });
 
+    const dailySections = parseDailySections(dailyResult.answer);
+    const dailyContentJson = dailySectionsToContentJson(dailySections);
+
+    // Persist to briefings table so the UI can load it
+    await saveBriefingFromCron(TYLER_USER_ID, dailyResult.answer, dailyContentJson, "daily");
+
     results.daily = {
       type: "daily_briefing",
-      ...parseDailySections(dailyResult.answer),
+      ...dailySections,
       sources: dailyResult.sources,
       raw: dailyResult.answer,
     };
@@ -188,9 +281,14 @@ export async function GET(request: NextRequest) {
         threshold: 0.50,
       });
 
+      const weeklySections = parseWeeklySections(weeklyResult.answer);
+      const weeklyContentJson = weeklySectionsToContentJson(weeklySections);
+
+      await saveBriefingFromCron(TYLER_USER_ID, weeklyResult.answer, weeklyContentJson, "weekly");
+
       results.weekly = {
         type: "weekly_synthesis",
-        ...parseWeeklySections(weeklyResult.answer),
+        ...weeklySections,
         sources: weeklyResult.sources,
         raw: weeklyResult.answer,
       };
