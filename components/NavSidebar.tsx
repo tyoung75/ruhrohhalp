@@ -9,7 +9,8 @@ const NAV_ITEMS = [
   { href: "/tasks", label: "Tasks", icon: "☐", shortcut: "2" },
   { href: "/brain", label: "Brain", icon: "◇", shortcut: "3" },
   { href: "/knowledge", label: "Knowledge", icon: "▣", shortcut: "4" },
-  { href: "/settings/ingestion", label: "Ingestion", icon: "⟳", shortcut: "5" },
+  { href: "/creator", label: "Creator", icon: "✧", shortcut: "5" },
+  { href: "/settings/ingestion", label: "Ingestion", icon: "⟳", shortcut: "6" },
 ] as const;
 
 interface NavSidebarProps {

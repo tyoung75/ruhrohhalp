@@ -15,6 +15,7 @@ import { callClaude } from "@/lib/processors/claude";
 import { AI_MODELS } from "@/lib/ai-config";
 import { CONTENT_AGENT_SYSTEM, SAFETY_AUDIT_SYSTEM } from "@/lib/creator/prompts";
 import { limitByKey } from "@/lib/security/rate-limit";
+import { generateEmbeddings } from "@/lib/embedding/openai";
 
 interface GeneratedPost {
   body: string;
@@ -58,11 +59,15 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = createAdminClient();
 
-    // 1. Gather daily context
+    // 1. Gather daily context + content performance memories
     const context = await gatherDailyContext(supabase, userId);
+    const contentMemories = await searchContentMemories(supabase, userId);
 
     // 2. Generate posts with Claude
-    const userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}\n\nGenerate 5 Threads posts based on this context. Return ONLY a JSON array.`;
+    const memoryBlock = contentMemories.length
+      ? `\n\n--- CONTENT PERFORMANCE LEARNINGS (from semantic memory) ---\n${contentMemories.join("\n\n")}`
+      : "";
+    const userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate 5 Threads posts based on this context. Learn from the performance data above — lean into patterns that worked and avoid patterns that didn't. Return ONLY a JSON array.`;
     const rawResponse = await callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048);
 
     // Parse JSON from response (handle markdown code blocks)
@@ -259,5 +264,54 @@ async function auditPosts(posts: GeneratedPost[]): Promise<AuditResult[]> {
   } catch (error) {
     console.error("[creator-audit] Audit failed, approving all:", error);
     return posts.map((_, i) => ({ index: i, status: "approved" as const, reason: "Audit unavailable" }));
+  }
+}
+
+/**
+ * Search semantic memory for content performance learnings.
+ * Returns embedded memories tagged with content:winner, content:underperformer,
+ * content:liked, or content:disliked.
+ */
+async function searchContentMemories(
+  supabase: ReturnType<typeof createAdminClient>,
+  userId: string
+): Promise<string[]> {
+  if (!process.env.HF_API_TOKEN) return [];
+
+  try {
+    const query = "What kind of social media posts perform well? What content patterns get high engagement?";
+    const [embedding] = await generateEmbeddings([query]);
+
+    const { data: matches } = await supabase.rpc("search_by_embedding", {
+      p_user_id: userId,
+      p_table_name: "memories",
+      p_embedding: JSON.stringify(embedding),
+      p_match_count: 10,
+      p_match_threshold: 0.55,
+    });
+
+    if (!matches?.length) return [];
+
+    const ids = (matches as Array<{ id: string }>).map((m) => m.id);
+    const { data: rows } = await supabase
+      .from("memories")
+      .select("content, tags")
+      .in("id", ids);
+
+    if (!rows?.length) return [];
+
+    // Filter to only content-related memories
+    return (rows as Array<{ content: string; tags: string[] | null }>)
+      .filter((r) => {
+        const tags = r.tags ?? [];
+        return tags.some((t) =>
+          t.startsWith("content:") || t === "creator-os"
+        );
+      })
+      .map((r) => r.content)
+      .slice(0, 8);
+  } catch (err) {
+    console.error("[creator-generate] Content memory search failed:", err);
+    return [];
   }
 }

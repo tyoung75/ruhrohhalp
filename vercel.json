@@ -7,6 +7,14 @@
     {
       "path": "/api/cron/creator-publish",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/creator-analytics",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-tokens",
+      "schedule": "0 3 * * *"
     }
   ]
 }
