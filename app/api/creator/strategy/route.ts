@@ -12,9 +12,6 @@ import { requireUser } from "@/lib/auth";
 import { getCurrentStrategy, generateStrategy, detectTrends } from "@/lib/creator/strategy";
 import { limitByKey } from "@/lib/security/rate-limit";
 
-// Strategy generation calls Claude API + multiple DB queries — needs extended timeout
-export const maxDuration = 60;
-
 export async function GET() {
   const { user, response } = await requireUser();
   if (!user) return response!;
