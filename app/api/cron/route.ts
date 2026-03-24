@@ -1,14 +1,12 @@
 /**
- * Vercel Cron — Unified Briefing Endpoint
+ * Vercel Cron — Unified Daily Endpoint
  *
- * Consolidates daily briefing + weekly CEO synthesis into a single cron route
- * so we stay within Vercel Hobby's 1-cron-job limit.
+ * Single cron job (Hobby plan limit) that handles ALL scheduled work:
+ *  1. Daily briefing (every run)
+ *  2. Weekly CEO synthesis (Monday morning only)
+ *  3. Creator OS: publish queued posts, collect analytics, refresh tokens
  *
- * Schedule: "0 1,11 * * *" → runs at 11:00 UTC (6 AM ET) and 01:00 UTC (8 PM ET)
- *
- * Behavior:
- *  - Every run: generates the daily briefing.
- *  - Monday 6 AM ET run (11:00 UTC on Monday): also generates the weekly CEO synthesis.
+ * Schedule: "0 11 * * *" → runs at 11:00 UTC (6 AM ET)
  *
  * Auth: Vercel sets the `authorization` header to `Bearer <CRON_SECRET>`.
  */
@@ -16,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryBrain } from "@/lib/query";
 import { logError } from "@/lib/logger";
+import { publishQueuedPosts, collectAnalytics, refreshExpiringTokens } from "@/lib/creator/jobs";
 
 /** Tyler's Supabase user ID — hardcoded for cron (no session context). */
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
@@ -166,6 +165,35 @@ export async function GET(request: NextRequest) {
       logError("cron.weekly", error);
       results.weekly = { error: "Weekly synthesis failed" };
     }
+  }
+
+  // --- Creator OS jobs (run every day) ---
+
+  // 3a. Publish any queued posts whose schedule has arrived
+  try {
+    const publishResult = await publishQueuedPosts(TYLER_USER_ID, 10);
+    results.creator_publish = publishResult;
+  } catch (error) {
+    logError("cron.creator-publish", error);
+    results.creator_publish = { error: "Publish failed" };
+  }
+
+  // 3b. Collect analytics on posted content
+  try {
+    const analyticsResult = await collectAnalytics(TYLER_USER_ID);
+    results.creator_analytics = analyticsResult;
+  } catch (error) {
+    logError("cron.creator-analytics", error);
+    results.creator_analytics = { error: "Analytics failed" };
+  }
+
+  // 3c. Refresh any platform tokens expiring within 7 days
+  try {
+    const tokenResult = await refreshExpiringTokens();
+    results.token_refresh = tokenResult;
+  } catch (error) {
+    logError("cron.token-refresh", error);
+    results.token_refresh = { error: "Token refresh failed" };
   }
 
   return NextResponse.json(results);

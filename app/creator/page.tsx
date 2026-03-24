@@ -265,6 +265,18 @@ function QueueTab() {
     }
   }
 
+  async function handlePublishNow() {
+    setSaving(true);
+    try {
+      await api("/api/creator/publish-now", { method: "POST" });
+      fetchQueue();
+    } catch (e) {
+      console.error("Publish failed:", e);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const filters = [
     { id: "upcoming", label: "Upcoming" },
     { id: "draft", label: "Drafts" },
@@ -297,24 +309,44 @@ function QueueTab() {
           ))}
         </div>
 
-        <button
-          onClick={handleGenerate}
-          disabled={saving}
-          style={{
-            background: C.cl,
-            border: "none",
-            color: "#fff",
-            padding: "6px 16px",
-            borderRadius: 6,
-            fontFamily: C.sans,
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: saving ? "wait" : "pointer",
-            opacity: saving ? 0.6 : 1,
-          }}
-        >
-          {saving ? "Generating..." : "Generate Posts"}
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={handlePublishNow}
+            disabled={saving}
+            style={{
+              background: "transparent",
+              border: `1px solid ${C.gpt}50`,
+              color: C.gpt,
+              padding: "6px 16px",
+              borderRadius: 6,
+              fontFamily: C.sans,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: saving ? "wait" : "pointer",
+              opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? "Publishing..." : "Publish Now"}
+          </button>
+          <button
+            onClick={handleGenerate}
+            disabled={saving}
+            style={{
+              background: C.cl,
+              border: "none",
+              color: "#fff",
+              padding: "6px 16px",
+              borderRadius: 6,
+              fontFamily: C.sans,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: saving ? "wait" : "pointer",
+              opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? "Generating..." : "Generate Posts"}
+          </button>
+        </div>
       </div>
 
       {/* Count */}
