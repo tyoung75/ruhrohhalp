@@ -23,9 +23,9 @@ create table if not exists follower_snapshots (
   fetched_at timestamptz not null default now()
 );
 
--- One row per platform per day
+-- One row per platform per UTC day
 create unique index if not exists idx_follower_snapshots_daily
-  on follower_snapshots (user_id, platform, (fetched_at::date));
+  on follower_snapshots (user_id, platform, (((fetched_at at time zone 'UTC')::date)));
 
 create index if not exists idx_follower_snapshots_user_platform
   on follower_snapshots (user_id, platform, fetched_at desc);
@@ -51,8 +51,7 @@ create table if not exists trend_signals (
 );
 
 create index if not exists idx_trend_signals_active
-  on trend_signals (user_id, expires_at desc)
-  where expires_at > now();
+  on trend_signals (user_id, expires_at desc);
 
 alter table trend_signals enable row level security;
 create policy "Users manage own trend signals"
