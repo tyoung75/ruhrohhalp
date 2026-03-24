@@ -10,7 +10,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getActivities, getAthleteStats, getAthlete, type StravaActivity } from "./client";
+import { getActivities, type StravaActivity } from "./client";
 
 /** Tyler's Supabase user ID. */
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
