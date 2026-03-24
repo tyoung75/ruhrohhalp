@@ -1811,7 +1811,7 @@ function StrategyTab() {
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>;
 
-  const empty = !data || (!data.insights.length && !data.trends.length);
+  const empty = !data || (!data.insights?.length && !data.trends?.length);
 
   return (
     <div>
@@ -1861,13 +1861,13 @@ function StrategyTab() {
                   </span>
                   <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginLeft: 6 }}>posts/week target</span>
                 </div>
-                {Object.entries(data.velocity.platformBreakdown).map(([p, count]) => (
+                {Object.entries(data.velocity.platformBreakdown ?? {}).map(([p, count]) => (
                   <span key={p} style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim }}>
                     {p}: <span style={{ color: C.cream }}>{count}/wk</span>
                   </span>
                 ))}
               </div>
-              {data.velocity.bestTimes.length > 0 && (
+              {data.velocity.bestTimes?.length > 0 && (
                 <div style={{ marginTop: 10, fontFamily: C.mono, fontSize: 11, color: C.textDim }}>
                   Best times: {data.velocity.bestTimes.map((t, i) => (
                     <span key={i} style={{ color: C.cream, marginRight: 8 }}>{t}</span>
@@ -1878,7 +1878,7 @@ function StrategyTab() {
           )}
 
           {/* Content Recommendations */}
-          {data && data.recommendations.length > 0 && (
+          {data?.recommendations?.length > 0 && (
             <div>
               <SectionLabel>Content Recommendations</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1910,7 +1910,7 @@ function StrategyTab() {
           )}
 
           {/* Strategic Insights */}
-          {data && data.insights.length > 0 && (
+          {data?.insights?.length > 0 && (
             <div>
               <SectionLabel>Strategic Insights</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1935,7 +1935,7 @@ function StrategyTab() {
           )}
 
           {/* Trend Signals */}
-          {data && data.trends.length > 0 && (
+          {data?.trends?.length > 0 && (
             <div>
               <SectionLabel>Active Trends</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
