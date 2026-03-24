@@ -14,6 +14,36 @@ import type { PlatformAdapter, PublishResult, PostMetrics, PlatformPost } from "
 const THREADS_API = "https://graph.threads.net/v1.0";
 const THREADS_OAUTH = "https://graph.threads.net/oauth";
 
+/** Pause for `ms` milliseconds — used between thread replies. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Poll a media container until its status is FINISHED (or error/timeout).
+ * Threads needs a moment after container creation before publish will work,
+ * especially for reply chains where the parent must be fully indexed.
+ */
+async function waitForContainer(
+  containerId: string,
+  accessToken: string,
+  maxAttempts = 10,
+  intervalMs = 2000
+): Promise<{ ready: boolean; error?: string }> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const res = await fetch(
+      `${THREADS_API}/${containerId}?fields=status,error_message&access_token=${accessToken}`
+    );
+    const data = await res.json();
+
+    if (data.status === "FINISHED") return { ready: true };
+    if (data.status === "ERROR") {
+      return { ready: false, error: data.error_message ?? "Container error" };
+    }
+    // IN_PROGRESS — keep waiting
+    await sleep(intervalMs);
+  }
+  return { ready: false, error: "Container timed out waiting for FINISHED status" };
+}
+
 export class ThreadsAdapter implements PlatformAdapter {
   platform = "threads";
 
@@ -85,6 +115,12 @@ export class ThreadsAdapter implements PlatformAdapter {
       };
     }
 
+    // Wait for container to be ready before publishing
+    const status = await waitForContainer(containerData.id, accessToken);
+    if (!status.ready) {
+      return { success: false, error: status.error ?? "Container not ready" };
+    }
+
     const publishRes = await fetch(`${THREADS_API}/${userId}/threads_publish`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -135,6 +171,12 @@ export class ThreadsAdapter implements PlatformAdapter {
     const publishedIds: string[] = [];
 
     for (let i = 0; i < parts.length; i++) {
+      // Wait between replies so the parent post is fully indexed by Threads.
+      // The first post needs no delay; subsequent posts wait 5s for propagation.
+      if (i > 0) {
+        await sleep(5000);
+      }
+
       const containerParams: Record<string, string> = {
         access_token: accessToken,
         media_type: "TEXT",
@@ -159,6 +201,16 @@ export class ThreadsAdapter implements PlatformAdapter {
           success: false,
           error: `Thread part ${i + 1}/${parts.length} container failed: ${containerData.error?.message ?? containerRes.status}`,
           // Return the first post ID if we got at least one out
+          ...(publishedIds.length > 0 ? { postId: publishedIds[0] } : {}),
+        };
+      }
+
+      // Wait for container to reach FINISHED status before publishing
+      const status = await waitForContainer(containerData.id, accessToken);
+      if (!status.ready) {
+        return {
+          success: false,
+          error: `Thread part ${i + 1}/${parts.length} container not ready: ${status.error}`,
           ...(publishedIds.length > 0 ? { postId: publishedIds[0] } : {}),
         };
       }
