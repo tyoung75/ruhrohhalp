@@ -1,0 +1,9 @@
+--- FIX: command-bar.tsx line 46
+--- Change: { command } → { input: command }
+--- The API route /api/command reads body.input but command-bar sends body.command
+
+Find this line (around line 46):
+  body: JSON.stringify({ command }),
+
+Replace with:
+  body: JSON.stringify({ input: command }),

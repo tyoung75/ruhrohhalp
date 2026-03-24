@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryBrain } from "@/lib/query";
 import { logError } from "@/lib/logger";
-import { publishQueuedPosts, syncExternalPosts, collectAnalytics, refreshExpiringTokens } from "@/lib/creator/jobs";
+import { publishQueuedPosts, syncExternalPosts, collectAnalytics, refreshExpiringTokens, expireStaleDrafts } from "@/lib/creator/jobs";
 
 /** Tyler's Supabase user ID — hardcoded for cron (no session context). */
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
@@ -178,16 +178,25 @@ export async function GET(request: NextRequest) {
     results.creator_sync = { error: "Sync failed" };
   }
 
-  // 3b. Publish any queued posts whose schedule has arrived
+  // 3b. Expire stale queued drafts (before publishing)
   try {
-    const publishResult = await publishQueuedPosts(TYLER_USER_ID);
+    const expireResult = await expireStaleDrafts(TYLER_USER_ID);
+    results.creator_expire = expireResult;
+  } catch (error) {
+    logError("cron.creator-expire", error);
+    results.creator_expire = { error: "Expire failed" };
+  }
+
+  // 3c. Publish any queued posts whose schedule has arrived
+  try {
+    const publishResult = await publishQueuedPosts(TYLER_USER_ID, { source: "cron" });
     results.creator_publish = publishResult;
   } catch (error) {
     logError("cron.creator-publish", error);
     results.creator_publish = { error: "Publish failed" };
   }
 
-  // 3c. Collect analytics on ALL posted content (including synced external posts)
+  // 3d. Collect analytics on ALL posted content (including synced external posts)
   try {
     const analyticsResult = await collectAnalytics(TYLER_USER_ID);
     results.creator_analytics = analyticsResult;
@@ -196,7 +205,7 @@ export async function GET(request: NextRequest) {
     results.creator_analytics = { error: "Analytics failed" };
   }
 
-  // 3d. Refresh any platform tokens expiring within 7 days
+  // 3e. Refresh any platform tokens expiring within 7 days
   try {
     const tokenResult = await refreshExpiringTokens();
     results.token_refresh = tokenResult;

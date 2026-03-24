@@ -16,21 +16,28 @@ type AdminClient = ReturnType<typeof createAdminClient>;
 // Publish queued posts (smart-ranked, 3/day limit for automated runs)
 // ---------------------------------------------------------------------------
 
-/** Default daily cap for automated publishing. Manual "Publish Now" can override. */
-const DAILY_PUBLISH_LIMIT = 2;
+/** Default posts per job for automated publishing. Manual "Publish Now" can override. */
+const DEFAULT_POSTS_PER_JOB = 2;
 
 /**
  * Score a post for predicted performance.
  *
- * Factors:
- * 1. Agent confidence score (0-1)  — weighted 40%
- * 2. Content type diversity bonus  — weighted 20%
- * 3. Time-of-day fit               — weighted 20%
- * 4. Post length sweet spot         — weighted 20%
+ * Factors (8 total):
+ * 1. Agent confidence score (0-1)    — weighted 15%
+ * 2. Content type diversity bonus    — weighted 10%
+ * 3. Time-of-day fit                 — weighted 10%
+ * 4. Post length sweet spot          — weighted 10%
+ * 5. Analytics boost (engagement)    — weighted 10%
+ * 6. Freshness (age decay)           — weighted 10%
+ * 7. Brand voice alignment           — weighted 20%
+ * 8. Timeliness (current events)     — weighted 15%
  */
 function scorePost(
   post: Record<string, unknown>,
-  alreadySelectedTypes: Set<string>
+  alreadySelectedTypes: Set<string>,
+  typeEngagement: Map<string, number>,
+  medianEngagement: number,
+  staleAfterDays: number
 ): number {
   // 1. Agent confidence (default 0.5 if not scored)
   const confidence = (post.confidence_score as number) ?? 0.5;
@@ -54,7 +61,44 @@ function scorePost(
     bodyLen >= 30 && bodyLen <= 280 ? 0.7 :
     0.4;
 
-  return (confidence * 0.4) + (diversityBonus * 0.2) + (timeFit * 0.2) + (lengthScore * 0.2);
+  // 5. Analytics boost: if we have historical engagement data for this content_type,
+  //    posts of types that average above-median engagement get 1.0, at median get 0.5, below get 0.2
+  const typeAvgEngagement = typeEngagement.get(postType) ?? -1;
+  const analyticsBoost =
+    typeAvgEngagement < 0
+      ? 0.5
+      : typeAvgEngagement > medianEngagement
+        ? 1.0
+        : typeAvgEngagement === medianEngagement
+          ? 0.5
+          : 0.2;
+
+  // 6. Freshness: score = max(0, 1 - (ageInDays / staleAfterDays))
+  //    A brand new post gets 1.0, a post at the stale threshold gets 0.0
+  const createdAt = post.created_at
+    ? new Date(post.created_at as string)
+    : new Date();
+  const ageInDays = (Date.now() - createdAt.getTime()) / 86400000;
+  const freshness = Math.max(0, 1 - ageInDays / staleAfterDays);
+
+  // 7. Brand voice alignment: how well this sounds like Tyler
+  //    Scored 0-1 by the generation agent. Default 0.5 if not scored (legacy posts).
+  const brandVoice = (post.brand_voice_score as number) ?? 0.5;
+
+  // 8. Timeliness: how relevant to current events / today's context
+  //    Scored 0-1 by the generation agent. Default 0.3 for legacy posts (assume evergreen).
+  const timeliness = (post.timeliness_score as number) ?? 0.3;
+
+  return (
+    confidence * 0.15 +
+    diversityBonus * 0.10 +
+    timeFit * 0.10 +
+    lengthScore * 0.10 +
+    analyticsBoost * 0.10 +
+    freshness * 0.10 +
+    brandVoice * 0.20 +
+    timeliness * 0.15
+  );
 }
 
 /**
@@ -63,7 +107,10 @@ function scorePost(
  */
 function selectTopPosts(
   candidates: Array<Record<string, unknown>>,
-  limit: number
+  limit: number,
+  typeEngagement: Map<string, number>,
+  medianEngagement: number,
+  staleAfterDays: number
 ): Array<Record<string, unknown>> {
   const selected: Array<Record<string, unknown>> = [];
   const selectedTypes = new Set<string>();
@@ -73,7 +120,13 @@ function selectTopPosts(
     let bestIdx = 0;
     let bestScore = -1;
     for (let i = 0; i < remaining.length; i++) {
-      const score = scorePost(remaining[i], selectedTypes);
+      const score = scorePost(
+        remaining[i],
+        selectedTypes,
+        typeEngagement,
+        medianEngagement,
+        staleAfterDays
+      );
       if (score > bestScore) {
         bestScore = score;
         bestIdx = i;
@@ -90,7 +143,7 @@ function selectTopPosts(
 
 export async function publishQueuedPosts(
   userId: string,
-  options: { manual?: boolean } = {}
+  options: { manual?: boolean; source?: "cron" | "cowork" | "manual" } = {}
 ): Promise<{
   published: number;
   failed: number;
@@ -100,32 +153,43 @@ export async function publishQueuedPosts(
   const supabase = createAdminClient();
   const now = new Date().toISOString();
 
-  // Fetch user's daily publish limit from settings, default to constant
-  let dailyLimit = DAILY_PUBLISH_LIMIT;
+  // Fetch user's posts per job and stale threshold from settings
   const { data: settings } = await supabase
     .from("creator_settings")
-    .select("daily_publish_limit")
+    .select("posts_per_job, stale_after_days, max_backfill")
     .eq("user_id", userId)
     .single();
 
-  if (settings?.daily_publish_limit) {
-    dailyLimit = settings.daily_publish_limit;
+  const postsPerJob = settings?.posts_per_job ?? DEFAULT_POSTS_PER_JOB;
+  const staleAfterDays = settings?.stale_after_days ?? 7;
+  const maxBackfill = settings?.max_backfill ?? 6;
+
+  // Determine remaining slots based on source
+  let remainingSlots: number;
+
+  if (options.manual) {
+    remainingSlots = 100; // Manual override: no practical limit
+  } else if (options.source === "cowork") {
+    // Count total posts published today
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const { count: totalPublishedToday } = await supabase
+      .from("content_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("status", "posted")
+      .gte("updated_at", todayStart.toISOString());
+
+    const alreadyPublished = totalPublishedToday ?? 0;
+    // Cron gets its own postsPerJob allocation; cowork gets up to maxBackfill total for the day
+    // Subtract the cron allocation from total to estimate cowork's contribution
+    const estimatedCoworkPublished = Math.max(0, alreadyPublished - postsPerJob);
+    const coworkRemaining = Math.max(0, maxBackfill - estimatedCoworkPublished);
+    remainingSlots = Math.min(postsPerJob, coworkRemaining);
+  } else {
+    // Cron source: just use postsPerJob directly
+    remainingSlots = postsPerJob;
   }
-
-  // Check how many we've already published today
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const { count: publishedToday } = await supabase
-    .from("content_queue")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .eq("status", "posted")
-    .gte("updated_at", todayStart.toISOString());
-
-  const alreadyPublished = publishedToday ?? 0;
-  const remainingSlots = options.manual
-    ? 100 // Manual override: no practical limit
-    : Math.max(0, dailyLimit - alreadyPublished);
 
   if (remainingSlots === 0 && !options.manual) {
     return { published: 0, failed: 0, skipped: 0, results: [] };
@@ -152,10 +216,49 @@ export async function publishQueuedPosts(
     return { published: 0, failed: 0, skipped: 0, results: [] };
   }
 
+  // Fetch analytics by content type for smart scoring
+  const typeEngagement = new Map<string, number>();
+  const { data: typeStats } = await supabase
+    .from("post_analytics")
+    .select("content_queue_id, engagement_rate")
+    .eq("user_id", userId);
+
+  // Join with content_queue to get content_type
+  if (typeStats?.length) {
+    // Get content types for these posts
+    const queueIds = typeStats.map((s: Record<string, unknown>) => s.content_queue_id as string);
+    const { data: queuePosts } = await supabase
+      .from("content_queue")
+      .select("id, content_type")
+      .in("id", queueIds);
+
+    if (queuePosts?.length) {
+      const typeRates: Record<string, number[]> = {};
+      const postTypeMap = new Map(
+        queuePosts.map((p: Record<string, unknown>) => [p.id as string, p.content_type as string])
+      );
+      for (const stat of typeStats) {
+        const ct = postTypeMap.get(stat.content_queue_id as string);
+        if (ct) {
+          if (!typeRates[ct]) typeRates[ct] = [];
+          typeRates[ct].push(stat.engagement_rate as number);
+        }
+      }
+      for (const [type, rates] of Object.entries(typeRates)) {
+        typeEngagement.set(type, rates.reduce((a, b) => a + b, 0) / rates.length);
+      }
+    }
+  }
+
+  const allEngagements = [...typeEngagement.values()].sort((a, b) => a - b);
+  const medianEngagement = allEngagements.length > 0
+    ? allEngagements[Math.floor(allEngagements.length / 2)]
+    : 0;
+
   // Smart-rank and select the best posts for this run
   const postsToPublish = options.manual
     ? candidates
-    : selectTopPosts(candidates, remainingSlots);
+    : selectTopPosts(candidates, remainingSlots, typeEngagement, medianEngagement, staleAfterDays);
 
   const skipped = candidates.length - postsToPublish.length;
   const results: Array<{ id: string; success: boolean; error?: string }> = [];
@@ -626,6 +729,45 @@ export async function collectAnalytics(
   }
 
   return { processed, errors };
+}
+
+// ---------------------------------------------------------------------------
+// Expire stale queued drafts
+// ---------------------------------------------------------------------------
+
+export async function expireStaleDrafts(
+  userId: string
+): Promise<{ expired: number }> {
+  const supabase = createAdminClient();
+
+  // Get staleness threshold from settings
+  const { data: settings } = await supabase
+    .from("creator_settings")
+    .select("stale_after_days")
+    .eq("user_id", userId)
+    .single();
+
+  const staleAfterDays = settings?.stale_after_days ?? 7;
+  const cutoff = new Date(Date.now() - staleAfterDays * 86400000).toISOString();
+
+  const { data: staleItems, error } = await supabase
+    .from("content_queue")
+    .update({
+      status: "expired",
+      last_error: `Auto-expired after ${staleAfterDays} days in queue`,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId)
+    .eq("status", "queued")
+    .lt("created_at", cutoff)
+    .select("id");
+
+  if (error) {
+    logError("jobs.expire-stale", error, { userId });
+    return { expired: 0 };
+  }
+
+  return { expired: staleItems?.length ?? 0 };
 }
 
 // ---------------------------------------------------------------------------

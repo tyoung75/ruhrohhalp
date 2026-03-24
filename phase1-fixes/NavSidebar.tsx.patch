@@ -1,0 +1,45 @@
+--- FIX: NavSidebar.tsx
+--- Remove Free tier button and pricing modal trigger
+--- Remove onOpenPricing prop entirely
+
+Find and REMOVE lines 127-144 (the entire onOpenPricing button block):
+
+        {onOpenPricing && (
+          <button
+            onClick={onOpenPricing}
+            style={{
+              background: C.clDim,
+              color: C.cl,
+              border: `1px solid ${C.cl}35`,
+              borderRadius: 6,
+              padding: "5px 10px",
+              fontFamily: C.mono,
+              fontSize: 9,
+              cursor: "pointer",
+              textAlign: "center",
+            }}
+          >
+            {tier.toUpperCase()}
+          </button>
+        )}
+
+Also remove from props interface:
+  onOpenPricing?: () => void;
+
+And from the destructured props:
+  Change: { userEmail, tier = "free", onSignOut, onOpenSettings, onOpenPricing }
+  To:     { userEmail, onSignOut, onOpenSettings }
+
+And remove the tier prop:
+  Change: interface NavSidebarProps {
+            userEmail?: string | null;
+            tier?: string;
+            onSignOut: () => void;
+            onOpenSettings?: () => void;
+            onOpenPricing?: () => void;
+          }
+  To:     interface NavSidebarProps {
+            userEmail?: string | null;
+            onSignOut: () => void;
+            onOpenSettings?: () => void;
+          }

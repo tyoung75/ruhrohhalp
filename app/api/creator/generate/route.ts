@@ -21,6 +21,8 @@ interface GeneratedPost {
   body: string | string[]; // string for single posts, string[] for threads
   type: string;
   confidence: number;
+  brand_voice_score?: number;
+  timeliness_score?: number;
   reasoning: string;
   suggested_time: string;
   needs_media: boolean;
@@ -139,6 +141,8 @@ export async function POST(request: NextRequest) {
         scheduled_for: scheduledFor.toISOString(),
         status: queueStatus,
         confidence_score: post.confidence,
+        brand_voice_score: post.brand_voice_score ?? null,
+        timeliness_score: post.timeliness_score ?? null,
         agent_reasoning: post.reasoning,
         context_snapshot: context,
       }).select("id").single();

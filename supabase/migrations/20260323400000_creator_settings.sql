@@ -3,6 +3,7 @@ create table if not exists creator_settings (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade unique,
   daily_publish_limit int not null default 2,
+  stale_after_days int not null default 7,
   updated_at timestamptz default now()
 );
 

@@ -23,6 +23,8 @@ interface QueueItem {
   attempts: number;
   last_error: string | null;
   confidence_score: number | null;
+  brand_voice_score: number | null;
+  timeliness_score: number | null;
   agent_reasoning: string | null;
   created_at: string;
   updated_at: string;
@@ -88,6 +90,7 @@ const STATUS_COLORS: Record<string, string> = {
   posted: "#6fcf9a",
   failed: C.reminder,
   rejected: "#ef5555",
+  expired: C.textDim,
 };
 
 /** Try to parse a thread body (JSON array of strings). Returns null if not a thread. */
@@ -117,6 +120,18 @@ function statusBadge(status: string) {
     border: `1px solid ${color}30`,
     textTransform: "uppercase" as const,
   };
+}
+
+/**
+ * Compute a simplified composite score from the three available fields.
+ * Weights: confidence 30%, brand_voice 40%, timeliness 30% (normalized to 1.0, with brand_voice being Tyler's priority).
+ * Returns a value between 0 and 1, defaulting to 0 for null scores.
+ */
+function computeDisplayScore(item: QueueItem): number {
+  const confidence = item.confidence_score ?? 0;
+  const brandVoice = item.brand_voice_score ?? 0;
+  const timeliness = item.timeliness_score ?? 0;
+  return confidence * 0.3 + brandVoice * 0.4 + timeliness * 0.3;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,9 +229,15 @@ function QueueTab() {
   const [saving, setSaving] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [dailyPublishLimit, setDailyPublishLimit] = useState(2);
-  const [savingLimit, setSavingLimit] = useState(false);
-  const [limitSaveMessage, setLimitSaveMessage] = useState<string | null>(null);
+  const [postsPerJob, setPostsPerJob] = useState(2);
+  const [savingPostsPerJob, setSavingPostsPerJob] = useState(false);
+  const [postsPerJobMessage, setPostsPerJobMessage] = useState<string | null>(null);
+  const [maxBackfill, setMaxBackfill] = useState(6);
+  const [savingBackfill, setSavingBackfill] = useState(false);
+  const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
+  const [staleAfterDays, setStaleAfterDays] = useState(7);
+  const [savingStale, setSavingStale] = useState(false);
+  const [staleSaveMessage, setStaleSaveMessage] = useState<string | null>(null);
 
   const fetchQueue = useCallback(async () => {
     setLoading(true);
@@ -244,10 +265,14 @@ function QueueTab() {
   const fetchSettings = useCallback(async () => {
     try {
       const data = await api<{
-        daily_publish_limit: number;
+        posts_per_job: number;
+        max_backfill: number;
+        stale_after_days: number;
         isDefault?: boolean;
       }>("/api/creator/settings");
-      setDailyPublishLimit(data.daily_publish_limit);
+      setPostsPerJob(data.posts_per_job);
+      setMaxBackfill(data.max_backfill);
+      setStaleAfterDays(data.stale_after_days);
     } catch (e) {
       console.error("Failed to fetch settings:", e);
     }
@@ -348,24 +373,66 @@ function QueueTab() {
     }
   }
 
-  async function handleUpdateDailyLimit(newLimit: number) {
-    if (newLimit < 1 || newLimit === dailyPublishLimit) return;
+  async function handleUpdatePostsPerJob(newValue: number) {
+    if (newValue < 1 || newValue === postsPerJob) return;
 
-    setSavingLimit(true);
+    setSavingPostsPerJob(true);
     try {
       await api("/api/creator/settings", {
         method: "PATCH",
-        body: JSON.stringify({ daily_publish_limit: newLimit }),
+        body: JSON.stringify({ posts_per_job: newValue }),
       });
-      setDailyPublishLimit(newLimit);
-      setLimitSaveMessage("Saved");
-      setTimeout(() => setLimitSaveMessage(null), 2000);
+      setPostsPerJob(newValue);
+      setPostsPerJobMessage("Saved");
+      setTimeout(() => setPostsPerJobMessage(null), 2000);
     } catch (e) {
-      console.error("Failed to update limit:", e);
-      setLimitSaveMessage("Failed");
-      setTimeout(() => setLimitSaveMessage(null), 2000);
+      console.error("Failed to update posts per job:", e);
+      setPostsPerJobMessage("Failed");
+      setTimeout(() => setPostsPerJobMessage(null), 2000);
     } finally {
-      setSavingLimit(false);
+      setSavingPostsPerJob(false);
+    }
+  }
+
+  async function handleUpdateMaxBackfill(newValue: number) {
+    if (newValue < 1 || newValue === maxBackfill) return;
+
+    setSavingBackfill(true);
+    try {
+      await api("/api/creator/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ max_backfill: newValue }),
+      });
+      setMaxBackfill(newValue);
+      setBackfillMessage("Saved");
+      setTimeout(() => setBackfillMessage(null), 2000);
+    } catch (e) {
+      console.error("Failed to update max backfill:", e);
+      setBackfillMessage("Failed");
+      setTimeout(() => setBackfillMessage(null), 2000);
+    } finally {
+      setSavingBackfill(false);
+    }
+  }
+
+  async function handleUpdateStaleAfterDays(newDays: number) {
+    if (newDays < 1 || newDays === staleAfterDays) return;
+
+    setSavingStale(true);
+    try {
+      await api("/api/creator/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ stale_after_days: newDays }),
+      });
+      setStaleAfterDays(newDays);
+      setStaleSaveMessage("Saved");
+      setTimeout(() => setStaleSaveMessage(null), 2000);
+    } catch (e) {
+      console.error("Failed to update stale threshold:", e);
+      setStaleSaveMessage("Failed");
+      setTimeout(() => setStaleSaveMessage(null), 2000);
+    } finally {
+      setSavingStale(false);
     }
   }
 
@@ -400,22 +467,22 @@ function QueueTab() {
             </button>
           ))}
 
-          {/* Daily publish limit control */}
+          {/* Posts per job control */}
           <div style={{ marginLeft: 16, display: "flex", gap: 8, alignItems: "center", paddingLeft: 12, borderLeft: `1px solid ${C.borderMid}` }}>
             <label style={{ fontFamily: C.sans, fontSize: 12, color: C.textDim }}>
-              Posts/day:
+              Posts/job:
             </label>
             <input
               type="number"
               min="1"
               max="100"
-              value={dailyPublishLimit}
+              value={postsPerJob}
               onChange={(e) => {
                 const val = parseInt(e.target.value, 10);
-                if (!isNaN(val)) setDailyPublishLimit(val);
+                if (!isNaN(val)) setPostsPerJob(val);
               }}
-              onBlur={() => handleUpdateDailyLimit(dailyPublishLimit)}
-              disabled={savingLimit}
+              onBlur={() => handleUpdatePostsPerJob(postsPerJob)}
+              disabled={savingPostsPerJob}
               style={{
                 width: 40,
                 padding: "4px 8px",
@@ -425,23 +492,111 @@ function QueueTab() {
                 border: `1px solid ${C.borderMid}`,
                 color: C.text,
                 borderRadius: 4,
-                cursor: savingLimit ? "wait" : "text",
-                opacity: savingLimit ? 0.6 : 1,
+                cursor: savingPostsPerJob ? "wait" : "text",
+                opacity: savingPostsPerJob ? 0.6 : 1,
               }}
             />
-            {limitSaveMessage && (
+            {postsPerJobMessage && (
               <span
                 style={{
                   fontFamily: C.mono,
                   fontSize: 10,
-                  color: limitSaveMessage === "Saved" ? C.gpt : C.reminder,
+                  color: postsPerJobMessage === "Saved" ? C.gpt : C.reminder,
                   animation: "fadeUp 0.2s ease both",
                   minWidth: 45,
                 }}
               >
-                {limitSaveMessage}
+                {postsPerJobMessage}
               </span>
             )}
+
+            {/* Max backfill control */}
+            <div style={{ marginLeft: 16, display: "flex", gap: 8, alignItems: "center", paddingLeft: 12, borderLeft: `1px solid ${C.borderMid}` }}>
+              <label style={{ fontFamily: C.sans, fontSize: 12, color: C.textDim }}>
+                Max backfill:
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="365"
+                value={maxBackfill}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val)) setMaxBackfill(val);
+                }}
+                onBlur={() => handleUpdateMaxBackfill(maxBackfill)}
+                disabled={savingBackfill}
+                style={{
+                  width: 40,
+                  padding: "4px 8px",
+                  fontFamily: C.mono,
+                  fontSize: 12,
+                  background: C.surface,
+                  border: `1px solid ${C.borderMid}`,
+                  color: C.text,
+                  borderRadius: 4,
+                  cursor: savingBackfill ? "wait" : "text",
+                  opacity: savingBackfill ? 0.6 : 1,
+                }}
+              />
+              {backfillMessage && (
+                <span
+                  style={{
+                    fontFamily: C.mono,
+                    fontSize: 10,
+                    color: backfillMessage === "Saved" ? C.gpt : C.reminder,
+                    animation: "fadeUp 0.2s ease both",
+                    minWidth: 45,
+                  }}
+                >
+                  {backfillMessage}
+                </span>
+              )}
+            </div>
+
+            {/* Stale after (days) control */}
+            <div style={{ marginLeft: 16, display: "flex", gap: 8, alignItems: "center", paddingLeft: 12, borderLeft: `1px solid ${C.borderMid}` }}>
+              <label style={{ fontFamily: C.sans, fontSize: 12, color: C.textDim }}>
+                Stale after (days):
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="365"
+                value={staleAfterDays}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val)) setStaleAfterDays(val);
+                }}
+                onBlur={() => handleUpdateStaleAfterDays(staleAfterDays)}
+                disabled={savingStale}
+                style={{
+                  width: 40,
+                  padding: "4px 8px",
+                  fontFamily: C.mono,
+                  fontSize: 12,
+                  background: C.surface,
+                  border: `1px solid ${C.borderMid}`,
+                  color: C.text,
+                  borderRadius: 4,
+                  cursor: savingStale ? "wait" : "text",
+                  opacity: savingStale ? 0.6 : 1,
+                }}
+              />
+              {staleSaveMessage && (
+                <span
+                  style={{
+                    fontFamily: C.mono,
+                    fontSize: 10,
+                    color: staleSaveMessage === "Saved" ? C.gpt : C.reminder,
+                    animation: "fadeUp 0.2s ease both",
+                    minWidth: 45,
+                  }}
+                >
+                  {staleSaveMessage}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -531,11 +686,16 @@ function QueueTab() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {items.map((item) => {
-            const isEditing = editingId === item.id;
-            const isExpanded = expandedId === item.id;
+          {(() => {
+            // Sort items by composite score (descending) only for "upcoming" filter
+            const displayItems = filter === "upcoming"
+              ? [...items].sort((a, b) => computeDisplayScore(b) - computeDisplayScore(a))
+              : items;
+            return displayItems.map((item) => {
+              const isEditing = editingId === item.id;
+              const isExpanded = expandedId === item.id;
 
-            return (
+              return (
               <div
                 key={item.id}
                 style={{
@@ -680,6 +840,21 @@ function QueueTab() {
 
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                     <span style={statusBadge(item.status)}>{item.status}</span>
+                    {(() => {
+                      const score = computeDisplayScore(item);
+                      return score > 0 ? (
+                        <span style={{
+                          fontFamily: C.mono,
+                          fontSize: 10,
+                          color: C.textFaint,
+                          padding: "2px 6px",
+                          borderRadius: 3,
+                          background: `${C.textFaint}08`,
+                        }}>
+                          {Math.round(score * 100)}% match
+                        </span>
+                      ) : null;
+                    })()}
                     <span
                       style={{
                         fontFamily: C.mono,
@@ -727,6 +902,16 @@ function QueueTab() {
                   {item.confidence_score != null && (
                     <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
                       {Math.round(item.confidence_score * 100)}% confidence
+                    </span>
+                  )}
+                  {item.brand_voice_score != null && (
+                    <span style={{ fontFamily: C.mono, fontSize: 10, color: item.brand_voice_score >= 0.7 ? C.gpt : C.textFaint }}>
+                      {Math.round(item.brand_voice_score * 100)}% on-brand
+                    </span>
+                  )}
+                  {item.timeliness_score != null && (
+                    <span style={{ fontFamily: C.mono, fontSize: 10, color: item.timeliness_score >= 0.7 ? C.cl : C.textFaint }}>
+                      {Math.round(item.timeliness_score * 100)}% timely
                     </span>
                   )}
 
@@ -851,7 +1036,8 @@ function QueueTab() {
                 )}
               </div>
             );
-          })}
+            });
+          })()}
         </div>
       )}
     </div>

@@ -38,12 +38,19 @@ THREAD RULES (for the 1 thread item per batch):
 - Each part should stand alone if someone only sees it, but together they tell a bigger story
 - Great for: running lessons, building in public updates, hot takes that need nuance, story arcs
 
+SCORING — you must self-rate each post on three scales (0.0-1.0):
+- confidence: overall quality and likelihood to perform well
+- brand_voice_score: how closely this matches Tyler's voice rules above. 1.0 = nails the voice (lowercase, direct, specific data, no clichés, authentic texture). 0.5 = decent but generic. 0.2 = sounds like someone else. Be HARSH — most posts should land 0.6-0.85.
+- timeliness_score: how tied this post is to current events, trending topics, or today's specific context. 1.0 = reacting to something happening right now (race results, news, current date event). 0.7 = referencing something this week. 0.3 = evergreen content that could post any day. 0.1 = totally generic.
+
 OUTPUT FORMAT — respond with ONLY a JSON array, no other text:
 [
   {
     "body": "the post text (string for single posts, JSON array of strings for threads)",
     "type": "observation|behind_the_scenes|win|reflection|engagement|thread",
     "confidence": 0.0-1.0,
+    "brand_voice_score": 0.0-1.0,
+    "timeliness_score": 0.0-1.0,
     "reasoning": "why this post, why now",
     "suggested_time": "HH:MM",
     "needs_media": false
