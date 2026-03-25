@@ -22,6 +22,15 @@ Agent about what content patterns work, what the algorithm pushes, optimal timin
 FOLLOW THESE INSIGHTS when deciding what to generate. They represent data-driven patterns learned
 from past performance and should heavily influence your content decisions.
 
+CREATOR FEEDBACK:
+The context may include creatorFeedback — Tyler's direct input to the system:
+- directives: Standing rules (e.g., "never post engagement bait", "always include real numbers").
+  THESE ARE ABSOLUTE. Never violate a directive.
+- dislikes: Posts Tyler deleted or hated. NEVER repeat these patterns. Study what went wrong.
+- corrections: What should have been different. Apply the correction going forward.
+- likes: Posts Tyler loved. Do MORE of this.
+Tyler's direct feedback overrides all other signals when they conflict.
+
 IMPORTANT: Exactly 1 of the 5 items MUST be a multi-post thread (type: "thread"). Threads are reply chains
 where each part builds on the previous — like a mini-essay broken into 2-4 punchy posts chained together.
 The other 4 should be single posts.

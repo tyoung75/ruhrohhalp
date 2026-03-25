@@ -298,6 +298,45 @@ async function gatherDailyContext(
     console.error("[creator-generate] Strategy insights fetch failed (non-fatal):", err);
   }
 
+  // --- Creator feedback (directives, dislikes, corrections, likes) ---
+  interface FeedbackRow { feedback_type: string; content: string; context: Record<string, unknown> | null }
+  let creatorFeedback: {
+    directives: string[];
+    dislikes: Array<{ feedback: string; postBody: string | null }>;
+    corrections: Array<{ feedback: string; postBody: string | null }>;
+    likes: Array<{ feedback: string; postBody: string | null }>;
+  } = { directives: [], dislikes: [], corrections: [], likes: [] };
+  try {
+    const { data: feedback } = await supabase
+      .from("content_feedback")
+      .select("feedback_type, content, context")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (feedback?.length) {
+      const fb = feedback as FeedbackRow[];
+      creatorFeedback = {
+        directives: fb.filter((f) => f.feedback_type === "directive").map((f) => f.content),
+        dislikes: fb.filter((f) => f.feedback_type === "dislike").map((f) => ({
+          feedback: f.content,
+          postBody: (f.context?.postBody as string) ?? null,
+        })),
+        corrections: fb.filter((f) => f.feedback_type === "correction").map((f) => ({
+          feedback: f.content,
+          postBody: (f.context?.postBody as string) ?? null,
+        })),
+        likes: fb.filter((f) => f.feedback_type === "like").map((f) => ({
+          feedback: f.content,
+          postBody: (f.context?.postBody as string) ?? null,
+        })),
+      };
+    }
+  } catch (err) {
+    console.error("[creator-generate] Feedback fetch failed (non-fatal):", err);
+  }
+
   return {
     date: today,
     dayOfWeek: new Date().toLocaleDateString("en-US", { weekday: "long" }),
@@ -309,6 +348,7 @@ async function gatherDailyContext(
     strava: stravaData,
     motus: motusData,
     strategyInsights,
+    creatorFeedback,
   };
 }
 

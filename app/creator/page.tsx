@@ -1738,29 +1738,69 @@ function KPIChip({ label, value }: { label: string; value: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Strategy Tab
+// Strategy Tab — Redesigned
 // ---------------------------------------------------------------------------
 
 interface StrategyData {
   insights: Array<{ type: string; content: string; confidence: number; data: Record<string, unknown>; created_at: string }>;
-  recommendations: Array<{ topic: string; platform: string; format: string; suggestedTiming: string; rationale: string; trendRelevance: number }>;
+  recommendations: Array<{ topic: string; platform: string; format: string; suggestedTiming: string; rationale: string; trendRelevance: number; pillar?: string }>;
   velocity: { postsPerWeek: number; platformBreakdown: Record<string, number>; bestTimes: string[] } | null;
   trends: Array<{ topic: string; platform: string | null; relevance_score: number; context: string | null }>;
   lastUpdated: string | null;
 }
 
+interface FeedbackItem {
+  id: string;
+  feedback_type: string;
+  content: string;
+  context: Record<string, unknown> | null;
+  created_at: string;
+}
+
+const PILLARS = [
+  { id: "running", label: "Running & Endurance", color: C.cl, icon: "🏃" },
+  { id: "building", label: "Building in Public", color: C.gem, icon: "⚡" },
+  { id: "nyc", label: "NYC Lifestyle", color: C.gold, icon: "🏙" },
+  { id: "fitness", label: "Fitness & Strength", color: C.gpt, icon: "💪" },
+  { id: "travel", label: "Travel & Adventure", color: C.note, icon: "✈" },
+];
+
+const PLATFORM_ICONS: Record<string, string> = {
+  threads: "◉",
+  instagram: "◧",
+  tiktok: "▶",
+  youtube: "▷",
+};
+
+const PLATFORM_COLORS: Record<string, string> = {
+  threads: C.text,
+  instagram: "#E1306C",
+  tiktok: "#69C9D0",
+  youtube: "#FF0000",
+};
+
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const TIME_SLOTS = ["Morning", "Midday", "Evening", "Late"];
+
 function StrategyTab() {
   const [data, setData] = useState<StrategyData | null>(null);
+  const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
   const [regenMessage, setRegenMessage] = useState<string | null>(null);
+  const [feedbackInput, setFeedbackInput] = useState("");
+  const [feedbackType, setFeedbackType] = useState<"directive" | "dislike" | "correction">("directive");
+  const [feedbackSending, setFeedbackSending] = useState(false);
 
   const fetchStrategy = useCallback(() => {
     setLoading(true);
-    api<StrategyData>("/api/creator/strategy")
-      .then(setData)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    Promise.all([
+      api<StrategyData>("/api/creator/strategy").catch(() => null),
+      api<{ feedback: FeedbackItem[] }>("/api/creator/feedback?limit=10").catch(() => ({ feedback: [] })),
+    ]).then(([strat, fb]) => {
+      setData(strat);
+      setFeedbackList(fb?.feedback ?? []);
+    }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { fetchStrategy(); }, [fetchStrategy]);
@@ -1773,7 +1813,7 @@ function StrategyTab() {
         "/api/creator/strategy",
         { method: "POST", body: JSON.stringify({}) }
       );
-      setRegenMessage(`Updated: ${result.insights} insights, ${result.recommendations} recommendations`);
+      setRegenMessage(`Strategy updated: ${result.insights} insights, ${result.recommendations} recommendations`);
       fetchStrategy();
     } catch (err) {
       setRegenMessage(err instanceof Error ? err.message : "Failed to regenerate");
@@ -1782,19 +1822,70 @@ function StrategyTab() {
     }
   };
 
+  const submitFeedback = async () => {
+    if (!feedbackInput.trim()) return;
+    setFeedbackSending(true);
+    try {
+      await api("/api/creator/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          feedbackType,
+          content: feedbackInput.trim(),
+        }),
+      });
+      setFeedbackInput("");
+      fetchStrategy(); // refresh feedback list
+    } catch (err) {
+      console.error("Feedback submit failed:", err);
+    } finally {
+      setFeedbackSending(false);
+    }
+  };
+
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>;
 
-  const empty = !data || (!data.insights.length && !data.trends.length);
+  const empty = !data || (!data.insights.length && !data.recommendations.length && !data.trends.length);
+
+  // Group recommendations by day for the game plan grid
+  const recs = data?.recommendations ?? [];
+  const recsByDay: Record<string, StrategyData["recommendations"]> = {};
+  for (const rec of data?.recommendations ?? []) {
+    const day = rec.suggestedTiming?.split(/\s+/)[0] ?? "Anytime";
+    if (!recsByDay[day]) recsByDay[day] = [];
+    recsByDay[day].push(rec);
+  }
+
+  // Pillar coverage: count recs per pillar
+  const pillarCounts: Record<string, number> = {};
+  for (const rec of data?.recommendations ?? []) {
+    const pillar = rec.pillar ?? guessPillar(rec.topic + " " + rec.rationale);
+    pillarCounts[pillar] = (pillarCounts[pillar] ?? 0) + 1;
+  }
+
+  // Split insights into what's working vs what needs adjustment
+  const working = (data?.insights ?? []).filter(
+    (i) => i.type === "content_pattern" || i.type === "algorithm" || (i.confidence > 0.7 && i.type !== "trend_shift")
+  );
+  const adjustments = (data?.insights ?? []).filter(
+    (i) => i.type === "trend_shift" || i.type === "platform_rec" || i.type === "velocity" || i.type === "audience" ||
+    (i.confidence <= 0.7 && i.type !== "content_pattern" && i.type !== "algorithm")
+  );
+
+  // Build timing heatmap from best times
+  const heatmap = buildTimingHeatmap(data?.velocity?.bestTimes ?? []);
 
   return (
-    <div>
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* ── Header ── */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <SectionLabel>Social Media Strategy</SectionLabel>
+          <div style={{ fontFamily: C.serif, fontSize: 20, color: C.cream, fontStyle: "italic" }}>
+            Your Strategy
+          </div>
           {data?.lastUpdated && (
             <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
-              Last updated: {new Date(data.lastUpdated).toLocaleDateString()}
+              Updated {new Date(data.lastUpdated).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
             </span>
           )}
         </div>
@@ -1802,142 +1893,393 @@ function StrategyTab() {
           onClick={handleRegenerate}
           disabled={regenerating}
           style={{
-            background: C.cl, color: C.bg, border: "none", borderRadius: 6,
-            padding: "6px 14px", fontFamily: C.sans, fontSize: 12, cursor: "pointer",
-            opacity: regenerating ? 0.5 : 1,
+            background: regenerating ? C.card : C.cl,
+            color: regenerating ? C.textDim : C.bg,
+            border: regenerating ? `1px solid ${C.border}` : "none",
+            borderRadius: 6, padding: "8px 16px",
+            fontFamily: C.sans, fontSize: 12, fontWeight: 600,
+            cursor: regenerating ? "wait" : "pointer",
           }}
         >
-          {regenerating ? "Analyzing..." : "Regenerate Strategy"}
+          {regenerating ? "Analyzing all sources..." : "Regenerate Strategy"}
         </button>
       </div>
-
       {regenMessage && (
-        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.gpt, marginBottom: 16 }}>
+        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.gpt, padding: "6px 10px", background: C.gptDim, borderRadius: 6 }}>
           {regenMessage}
         </div>
       )}
 
       {empty ? (
-        <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
-          No strategy generated yet. Click &quot;Regenerate Strategy&quot; to analyze your content and generate recommendations.
+        <div style={{ padding: 60, textAlign: "center", color: C.textDim, fontFamily: C.sans }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>◉</div>
+          <div style={{ fontSize: 14 }}>No strategy generated yet.</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Click &quot;Regenerate Strategy&quot; to analyze your content across all platforms and generate tailored recommendations.</div>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          {/* Velocity & Timing */}
-          {data?.velocity && (
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 18 }}>
-              <SectionLabel>Posting Velocity & Timing</SectionLabel>
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginTop: 8 }}>
-                <div>
-                  <span style={{ fontFamily: C.serif, fontSize: 24, color: C.cream, fontStyle: "italic" }}>
-                    {data.velocity.postsPerWeek}
-                  </span>
-                  <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginLeft: 6 }}>posts/week target</span>
-                </div>
+        <>
+          {/* ── 1. This Week's Game Plan ── */}
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+            <SectionLabel>This Week&apos;s Game Plan</SectionLabel>
+            {data?.velocity && (
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+                <StatBox label="Posts / Week" value={String(data.velocity.postsPerWeek)} color={C.cream} />
                 {Object.entries(data.velocity.platformBreakdown).map(([p, count]) => (
-                  <span key={p} style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim }}>
-                    {p}: <span style={{ color: C.cream }}>{count}/wk</span>
-                  </span>
+                  <StatBox key={p} label={p} value={`${count}/wk`} color={PLATFORM_COLORS[p] ?? C.textDim} />
                 ))}
               </div>
-              {data.velocity.bestTimes.length > 0 && (
-                <div style={{ marginTop: 10, fontFamily: C.mono, fontSize: 11, color: C.textDim }}>
-                  Best times: {data.velocity.bestTimes.map((t, i) => (
-                    <span key={i} style={{ color: C.cream, marginRight: 8 }}>{t}</span>
+            )}
+
+            {/* Recommendation cards grouped by platform */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(data?.recommendations ?? []).map((rec, i) => (
+                <div key={i} style={{
+                  background: C.surface, borderRadius: 8, padding: "12px 16px",
+                  borderLeft: `3px solid ${PLATFORM_COLORS[rec.platform] ?? C.textDim}`,
+                  display: "flex", gap: 12, alignItems: "flex-start",
+                }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontSize: 12 }}>{PLATFORM_ICONS[rec.platform] ?? "○"}</span>
+                      <span style={{ fontFamily: C.sans, fontSize: 13, color: C.cream, fontWeight: 500 }}>
+                        {rec.topic}
+                      </span>
+                    </div>
+                    <div style={{ fontFamily: C.sans, fontSize: 11, color: C.textDim, lineHeight: 1.5 }}>
+                      {rec.rationale}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                    <span style={{
+                      fontFamily: C.mono, fontSize: 9, color: PLATFORM_COLORS[rec.platform] ?? C.textDim,
+                      background: `${PLATFORM_COLORS[rec.platform] ?? C.textDim}15`,
+                      padding: "2px 8px", borderRadius: 4,
+                    }}>
+                      {rec.platform}
+                    </span>
+                    <span style={{
+                      fontFamily: C.mono, fontSize: 9, color: C.gold,
+                      background: `${C.gold}15`, padding: "2px 8px", borderRadius: 4,
+                    }}>
+                      {rec.format.replace(/_/g, " ")}
+                    </span>
+                    {rec.suggestedTiming && (
+                      <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint }}>
+                        {rec.suggestedTiming}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── 2. Brand Pillar Coverage ── */}
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+            <SectionLabel>Brand Pillar Coverage</SectionLabel>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {PILLARS.map((p) => {
+                const count = pillarCounts[p.id] ?? 0;
+                const isActive = count > 0;
+                return (
+                  <div key={p.id} style={{
+                    flex: "1 1 140px", minWidth: 140,
+                    background: isActive ? `${p.color}12` : C.surface,
+                    border: `1px solid ${isActive ? `${p.color}40` : C.border}`,
+                    borderRadius: 8, padding: "12px 14px",
+                    opacity: isActive ? 1 : 0.5,
+                  }}>
+                    <div style={{ fontSize: 16, marginBottom: 4 }}>{p.icon}</div>
+                    <div style={{ fontFamily: C.sans, fontSize: 11, color: isActive ? p.color : C.textDim, fontWeight: 500 }}>
+                      {p.label}
+                    </div>
+                    <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
+                      {count > 0 ? `${count} rec${count !== 1 ? "s" : ""} this week` : "No recs — consider adding"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── 3. What's Working / Adjustments ── */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            {/* What's Working */}
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+              <SectionLabel>What&apos;s Working</SectionLabel>
+              {working.length === 0 ? (
+                <div style={{ fontFamily: C.sans, fontSize: 12, color: C.textFaint, padding: 12 }}>
+                  Generate strategy to see patterns
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {working.slice(0, 4).map((insight, i) => (
+                    <div key={i} style={{
+                      borderLeft: `2px solid ${C.gpt}`,
+                      paddingLeft: 12,
+                    }}>
+                      <div style={{ fontFamily: C.sans, fontSize: 12, color: C.text, lineHeight: 1.5 }}>
+                        {insight.content}
+                      </div>
+                      <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginTop: 2 }}>
+                        {insight.type.replace(/_/g, " ")} · {Math.round(insight.confidence * 100)}%
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
             </div>
-          )}
 
-          {/* Content Recommendations */}
-          {data && data.recommendations.length > 0 && (
-            <div>
-              <SectionLabel>Content Recommendations</SectionLabel>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {data.recommendations.map((rec, i) => (
-                  <div key={i} style={{
-                    background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 16px",
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontFamily: C.sans, fontSize: 13, color: C.cream }}>{rec.topic}</span>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <span style={statusBadge(rec.platform)}>{rec.platform}</span>
-                        <span style={{ ...statusBadge(rec.format), color: C.gold, borderColor: `${C.gold}30`, background: `${C.gold}10` }}>
-                          {rec.format.replace("_", " ")}
+            {/* Adjustments Needed */}
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+              <SectionLabel>Adjust & Improve</SectionLabel>
+              {adjustments.length === 0 ? (
+                <div style={{ fontFamily: C.sans, fontSize: 12, color: C.textFaint, padding: 12 }}>
+                  No adjustments identified yet
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {adjustments.slice(0, 4).map((insight, i) => (
+                    <div key={i} style={{
+                      borderLeft: `2px solid ${C.gold}`,
+                      paddingLeft: 12,
+                    }}>
+                      <div style={{ fontFamily: C.sans, fontSize: 12, color: C.text, lineHeight: 1.5 }}>
+                        {insight.content}
+                      </div>
+                      <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginTop: 2 }}>
+                        {insight.type.replace(/_/g, " ")} · {Math.round(insight.confidence * 100)}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── 4. Timing Heatmap ── */}
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+            <SectionLabel>Best Posting Times</SectionLabel>
+            <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", gap: 4 }}>
+              {/* Header row */}
+              <div />
+              {DAY_LABELS.map((d) => (
+                <div key={d} style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, textAlign: "center", paddingBottom: 4 }}>
+                  {d}
+                </div>
+              ))}
+              {/* Slot rows */}
+              {TIME_SLOTS.map((slot, si) => (
+                <>
+                  <div key={`label-${si}`} style={{ fontFamily: C.mono, fontSize: 9, color: C.textDim, display: "flex", alignItems: "center" }}>
+                    {slot}
+                  </div>
+                  {DAY_LABELS.map((_, di) => {
+                    const heat = heatmap[si]?.[di] ?? 0;
+                    return (
+                      <div key={`${si}-${di}`} style={{
+                        background: heat > 0 ? `${C.cl}${Math.round(heat * 60 + 15).toString(16)}` : C.surface,
+                        borderRadius: 4, height: 28,
+                        border: `1px solid ${heat > 0.5 ? `${C.cl}40` : C.border}`,
+                      }} />
+                    );
+                  })}
+                </>
+              ))}
+            </div>
+            {data?.velocity?.bestTimes && data.velocity.bestTimes.length > 0 && (
+              <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginTop: 10 }}>
+                Peak times: {data.velocity.bestTimes.map((t, i) => (
+                  <span key={i} style={{ color: C.cl, marginRight: 10 }}>{t}</span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── 5. Trend Radar ── */}
+          {(data?.trends ?? []).length > 0 && (
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+              <SectionLabel>Trend Radar</SectionLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {(data?.trends ?? []).map((trend, i) => {
+                  const isHot = trend.relevance_score > 0.7;
+                  return (
+                    <div key={i} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      padding: "8px 12px", borderRadius: 6,
+                      background: isHot ? `${C.cl}10` : C.surface,
+                      border: `1px solid ${isHot ? `${C.cl}30` : C.border}`,
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontFamily: C.sans, fontSize: 12, color: C.cream }}>
+                          {isHot ? "🔥 " : ""}{trend.topic}
+                        </span>
+                        {trend.context && (
+                          <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginTop: 2 }}>
+                            {trend.context}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                        {trend.platform && (
+                          <span style={{ fontFamily: C.mono, fontSize: 9, color: PLATFORM_COLORS[trend.platform] ?? C.textDim }}>
+                            {PLATFORM_ICONS[trend.platform] ?? ""} {trend.platform}
+                          </span>
+                        )}
+                        <span style={{
+                          fontFamily: C.mono, fontSize: 10, fontWeight: 600,
+                          color: isHot ? C.cl : C.textDim,
+                        }}>
+                          {Math.round(trend.relevance_score * 100)}%
                         </span>
                       </div>
                     </div>
-                    <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginTop: 6 }}>
-                      {rec.rationale}
-                    </div>
-                    {rec.suggestedTiming && (
-                      <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginTop: 4, display: "inline-block" }}>
-                        Timing: {rec.suggestedTiming}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
-
-          {/* Strategic Insights */}
-          {data && data.insights.length > 0 && (
-            <div>
-              <SectionLabel>Strategic Insights</SectionLabel>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {data.insights.map((insight, i) => (
-                  <div key={i} style={{
-                    background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "12px 16px",
-                    borderLeft: `3px solid ${insight.confidence > 0.7 ? C.gpt : insight.confidence > 0.4 ? C.gold : C.textDim}`,
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <span style={statusBadge(insight.type)}>{insight.type.replace("_", " ")}</span>
-                      <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint }}>
-                        {Math.round(insight.confidence * 100)}% confidence
-                      </span>
-                    </div>
-                    <div style={{ fontFamily: C.sans, fontSize: 12, color: C.text, lineHeight: 1.5 }}>
-                      {insight.content}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Trend Signals */}
-          {data && data.trends.length > 0 && (
-            <div>
-              <SectionLabel>Active Trends</SectionLabel>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {data.trends.map((trend, i) => (
-                  <div key={i} style={{
-                    background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px",
-                    display: "flex", justifyContent: "space-between", alignItems: "center",
-                  }}>
-                    <div>
-                      <span style={{ fontFamily: C.sans, fontSize: 12, color: C.cream }}>{trend.topic}</span>
-                      {trend.context && (
-                        <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginTop: 2 }}>
-                          {trend.context}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      {trend.platform && <span style={statusBadge(trend.platform)}>{trend.platform}</span>}
-                      <span style={{ fontFamily: C.mono, fontSize: 10, color: C.cl }}>
-                        {Math.round(trend.relevance_score * 100)}%
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        </>
       )}
+
+      {/* ── 6. Feedback Panel (always visible) ── */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+        <SectionLabel>Talk to Your Strategy Agent</SectionLabel>
+        <div style={{ fontFamily: C.sans, fontSize: 11, color: C.textDim, marginBottom: 12 }}>
+          Give the AI direct instructions. Directives are permanent rules. Dislikes flag content patterns to avoid. Corrections explain what should change.
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          {(["directive", "dislike", "correction"] as const).map((t) => (
+            <button key={t} onClick={() => setFeedbackType(t)} style={{
+              background: feedbackType === t ? `${C.cl}20` : C.surface,
+              border: `1px solid ${feedbackType === t ? C.cl : C.border}`,
+              color: feedbackType === t ? C.cl : C.textDim,
+              borderRadius: 6, padding: "4px 12px",
+              fontFamily: C.mono, fontSize: 10, cursor: "pointer",
+              textTransform: "uppercase",
+            }}>
+              {t}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={feedbackInput}
+            onChange={(e) => setFeedbackInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitFeedback()}
+            placeholder={
+              feedbackType === "directive" ? "e.g., Never use engagement bait or clickbait tactics"
+              : feedbackType === "dislike" ? "e.g., That running puns post was cringe — too forced"
+              : "e.g., The Iron Passport post should have mentioned the June deadline"
+            }
+            style={{
+              flex: 1, background: C.surface, border: `1px solid ${C.border}`,
+              borderRadius: 6, padding: "8px 12px",
+              fontFamily: C.sans, fontSize: 12, color: C.text,
+              outline: "none",
+            }}
+          />
+          <button
+            onClick={submitFeedback}
+            disabled={feedbackSending || !feedbackInput.trim()}
+            style={{
+              background: C.cl, color: C.bg, border: "none", borderRadius: 6,
+              padding: "8px 16px", fontFamily: C.sans, fontSize: 12, fontWeight: 600,
+              cursor: feedbackSending ? "wait" : "pointer",
+              opacity: feedbackSending || !feedbackInput.trim() ? 0.5 : 1,
+            }}
+          >
+            Send
+          </button>
+        </div>
+
+        {/* Recent feedback */}
+        {feedbackList.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginBottom: 6, textTransform: "uppercase" }}>
+              Recent feedback
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {feedbackList.slice(0, 5).map((fb) => (
+                <div key={fb.id} style={{
+                  display: "flex", gap: 8, alignItems: "flex-start",
+                  padding: "6px 10px", borderRadius: 4, background: C.surface,
+                }}>
+                  <span style={{
+                    fontFamily: C.mono, fontSize: 9,
+                    color: fb.feedback_type === "directive" ? C.cl : fb.feedback_type === "dislike" ? C.reminder : C.gold,
+                    textTransform: "uppercase", flexShrink: 0, paddingTop: 1,
+                  }}>
+                    {fb.feedback_type}
+                  </span>
+                  <span style={{ fontFamily: C.sans, fontSize: 11, color: C.textDim, lineHeight: 1.4 }}>
+                    {fb.content}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+// Helpers
+
+function StatBox({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{
+      background: C.surface, borderRadius: 6, padding: "8px 14px",
+      border: `1px solid ${C.border}`,
+    }}>
+      <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, textTransform: "uppercase", marginBottom: 2 }}>
+        {label}
+      </div>
+      <div style={{ fontFamily: C.serif, fontSize: 18, color, fontStyle: "italic" }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function guessPillar(text: string): string {
+  const lower = text.toLowerCase();
+  if (/run|marathon|race|pace|mile|endurance|hyrox|vo2/i.test(lower)) return "running";
+  if (/build|ship|code|motus|iron passport|mrr|deploy|app|dev|indie/i.test(lower)) return "building";
+  if (/nyc|new york|city|manhattan|brooklyn/i.test(lower)) return "nyc";
+  if (/gym|lift|strength|muscle|deadlift|squat|functional|concurrent/i.test(lower)) return "fitness";
+  if (/travel|trip|adventure|destination|explore/i.test(lower)) return "travel";
+  return "running"; // default
+}
+
+function buildTimingHeatmap(bestTimes: string[]): number[][] {
+  // 4 rows (time slots) x 7 cols (days). Populate from best times.
+  const grid: number[][] = Array.from({ length: 4 }, () => Array(7).fill(0));
+
+  for (const t of bestTimes) {
+    // Parse times like "7:30 AM ET", "12:00 PM ET", "9:30 PM ET"
+    const match = t.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) continue;
+    let hour = parseInt(match[1], 10);
+    if (match[3].toUpperCase() === "PM" && hour < 12) hour += 12;
+    if (match[3].toUpperCase() === "AM" && hour === 12) hour = 0;
+
+    // Map hour to slot
+    let slot = 0;
+    if (hour >= 6 && hour < 11) slot = 0;      // Morning
+    else if (hour >= 11 && hour < 15) slot = 1; // Midday
+    else if (hour >= 15 && hour < 20) slot = 2; // Evening
+    else slot = 3;                                // Late
+
+    // Light up weekdays more than weekends
+    for (let d = 0; d < 7; d++) {
+      const weight = d < 5 ? 0.8 : 0.4; // weekday vs weekend
+      grid[slot][d] = Math.min(1, grid[slot][d] + weight);
+    }
+  }
+
+  return grid;
 }

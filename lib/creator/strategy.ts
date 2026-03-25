@@ -27,11 +27,12 @@ const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
 
 export interface StrategyRecommendation {
   topic: string;
-  platform: "threads" | "instagram" | "tiktok";
-  format: "single_post" | "thread" | "carousel" | "reel" | "story";
+  platform: "threads" | "instagram" | "tiktok" | "youtube";
+  format: "single_post" | "thread" | "carousel" | "reel" | "story" | "short" | "long_form";
   suggestedTiming: string;
   rationale: string;
   trendRelevance: number; // 0-1
+  pillar?: string; // which brand pillar this maps to
 }
 
 export interface StrategyOutput {
@@ -56,7 +57,17 @@ export interface StrategyOutput {
 
 const STRATEGY_AGENT_SYSTEM = `You are Tyler Young's Social Media Strategy Agent. You analyze ALL available context to produce data-driven, adaptive content strategy recommendations.
 
-Tyler is a NYC-based runner, software engineer, and entrepreneur (BearDuckHornEmpire LLC). His platforms: Threads (@t_young), Instagram, TikTok. His niches: running/endurance training, building in public (tech), NYC lifestyle, travel running, fitness tech (Motus app, Iron Passport).
+Tyler is a NYC-based runner, software engineer, and entrepreneur (BearDuckHornEmpire LLC). His platforms: Threads (@t_young), Instagram, TikTok, and YouTube (growing channel). His niches: running/endurance training, building in public (tech), NYC lifestyle, travel running, fitness tech (Motus app, Iron Passport).
+
+BRAND PILLARS (use these to organize recommendations):
+1. Running & Endurance — marathon training, race recaps, gear, VO2 data, HYROX
+2. Building in Public — software dev, Motus/Iron Passport updates, indie hacking, MRR milestones
+3. NYC Lifestyle — city running, daily life, spots, energy
+4. Fitness & Strength — functional fitness, concurrent training, lifting + running balance
+5. Travel & Adventure — travel running, destination races, exploring new cities on foot
+
+YOUTUBE STRATEGY:
+YouTube is a growth priority. Recommend YouTube-specific content: long-form running vlogs, build-in-public dev logs, race day films, training series, gear reviews. YouTube Shorts can repurpose TikTok content. Consider YouTube as the long-form storytelling platform complementing short-form on Threads/TikTok.
 
 Your job: Analyze the provided data and return a comprehensive strategy update.
 
@@ -73,8 +84,8 @@ OUTPUT FORMAT — respond with ONLY a JSON object:
   "recommendations": [
     {
       "topic": "specific content idea",
-      "platform": "threads|instagram|tiktok",
-      "format": "single_post|thread|carousel|reel|story",
+      "platform": "threads|instagram|tiktok|youtube",
+      "format": "single_post|thread|carousel|reel|story|short|long_form",
       "suggestedTiming": "day and time",
       "rationale": "why this, why now — reference specific data",
       "trendRelevance": 0.0-1.0
@@ -90,13 +101,20 @@ OUTPUT FORMAT — respond with ONLY a JSON object:
   ],
   "velocityRec": {
     "postsPerWeek": 14,
-    "platformBreakdown": { "threads": 10, "instagram": 3, "tiktok": 1 },
+    "platformBreakdown": { "threads": 10, "instagram": 3, "tiktok": 1, "youtube": 1 },
     "bestTimes": ["7:30 AM ET", "12:00 PM ET", "6:00 PM ET", "9:30 PM ET"]
   },
   "weeklyShifts": [
     "Trend shift or strategic change worth noting in the weekly briefing"
   ]
 }
+
+CREATOR FEEDBACK:
+The context may include Tyler's direct feedback — directives (standing rules like "never post X"),
+dislikes (posts he deleted or hated, with reasons), corrections (what should have been different),
+and likes (what he loved). STRICTLY FOLLOW ALL DIRECTIVES. Learn from dislikes — never repeat
+those patterns. Amplify patterns from likes. This feedback is Tyler's voice and takes priority
+over data patterns when they conflict.
 
 Generate 5-7 specific content recommendations and 4-8 strategic insights. Be specific — reference actual numbers from the data, not vague generalities.`;
 
@@ -183,6 +201,15 @@ async function gatherStrategyContext(userId: string) {
     .limit(1)
     .single();
 
+  // Tyler's direct feedback (directives, dislikes, corrections)
+  const { data: feedback } = await supabase
+    .from("content_feedback")
+    .select("feedback_type, content, context, created_at")
+    .eq("user_id", userId)
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
   // Compute top performers vs bottom performers
   const enrichedAnalytics = (analytics ?? []).map((a) => ({
     ...a,
@@ -241,6 +268,29 @@ async function gatherStrategyContext(userId: string) {
     recentWorkouts: (workouts ?? []).map((w) => w.content),
     briefingSummary: briefing?.content_md?.slice(0, 600) ?? "",
     latestFollowers,
+    creatorFeedback: {
+      directives: (feedback ?? [])
+        .filter((f) => f.feedback_type === "directive")
+        .map((f) => f.content),
+      dislikes: (feedback ?? [])
+        .filter((f) => f.feedback_type === "dislike")
+        .map((f) => ({
+          feedback: f.content,
+          postBody: (f.context as Record<string, unknown>)?.postBody ?? null,
+        })),
+      corrections: (feedback ?? [])
+        .filter((f) => f.feedback_type === "correction")
+        .map((f) => ({
+          feedback: f.content,
+          postBody: (f.context as Record<string, unknown>)?.postBody ?? null,
+        })),
+      likes: (feedback ?? [])
+        .filter((f) => f.feedback_type === "like")
+        .map((f) => ({
+          feedback: f.content,
+          postBody: (f.context as Record<string, unknown>)?.postBody ?? null,
+        })),
+    },
   };
 }
 

@@ -1,13 +1,12 @@
 /**
- * Content Feedback — POST /api/creator/feedback
+ * Content Feedback API — POST /api/creator/feedback (submit)
+ *                        GET  /api/creator/feedback (list recent)
  *
- * Allows manual feedback on generated/posted content.
- * Stores in content_feedback and embeds into semantic memory
- * so the generation agent can learn from it.
+ * Closed-loop feedback from Tyler to the content/strategy agents.
+ * Supports: like, dislike (deleted posts), correction, directive.
  *
- * Body: { contentQueueId, rating (1-5), feedback (optional text) }
- *
- * Auth: Authenticated user session.
+ * Feedback is stored in content_feedback AND embedded into semantic memory
+ * so both the strategy agent and content generation agent can learn.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -16,100 +15,171 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { embedAndStore } from "@/lib/embedding/pipeline";
 import { logError } from "@/lib/logger";
 
+// ---------------------------------------------------------------------------
+// POST — submit feedback
+// ---------------------------------------------------------------------------
+
 export async function POST(request: NextRequest) {
   const { user, response } = await requireUser();
   if (!user) return response!;
 
   const body = await request.json().catch(() => null);
-  if (!body?.contentQueueId) {
-    return NextResponse.json({ error: "Missing contentQueueId" }, { status: 400 });
+  if (!body) {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { contentQueueId, rating, feedback } = body as {
-    contentQueueId: string;
-    rating?: number;
-    feedback?: string;
+  const { contentQueueId, feedbackType, content, context, rating } = body as {
+    contentQueueId?: string;
+    feedbackType?: string;
+    content?: string;
+    context?: Record<string, unknown>;
+    rating?: number; // backward compat with old UI
   };
 
-  if (rating !== undefined && (rating < 1 || rating > 5)) {
-    return NextResponse.json({ error: "Rating must be 1-5" }, { status: 400 });
+  // Support legacy format (rating-based) and new format (type-based)
+  const resolvedType = feedbackType
+    ?? (rating && rating >= 4 ? "like" : rating && rating <= 2 ? "dislike" : "correction");
+  const resolvedContent = content
+    ?? (body.feedback as string)
+    ?? (rating ? `Rating: ${rating}/5` : "");
+
+  if (!resolvedContent) {
+    return NextResponse.json(
+      { error: "content (or feedback) is required" },
+      { status: 400 }
+    );
+  }
+
+  const validTypes = ["like", "dislike", "correction", "directive"];
+  if (!validTypes.includes(resolvedType)) {
+    return NextResponse.json(
+      { error: `feedbackType must be one of: ${validTypes.join(", ")}` },
+      { status: 400 }
+    );
   }
 
   const supabase = createAdminClient();
 
-  try {
-    // Verify the post belongs to this user
-    const { data: post, error: postError } = await supabase
+  // Auto-capture post context if linked to a specific content_queue item
+  let enrichedContext: Record<string, unknown> = context ?? {};
+  if (contentQueueId) {
+    const { data: post } = await supabase
       .from("content_queue")
-      .select("id, body, platform")
+      .select("body, content_type, platform, status, agent_reasoning")
       .eq("id", contentQueueId)
       .eq("user_id", user.id)
       .single();
 
-    if (postError || !post) {
-      return NextResponse.json({ error: "Post not found" }, { status: 404 });
+    if (post) {
+      enrichedContext = {
+        ...enrichedContext,
+        postBody: (post.body as string)?.slice(0, 500),
+        contentType: post.content_type,
+        platform: post.platform,
+        postStatus: post.status,
+        agentReasoning: post.agent_reasoning,
+      };
     }
+  }
 
-    // Store feedback
+  try {
     const { data: feedbackRow, error: insertError } = await supabase
       .from("content_feedback")
       .insert({
         user_id: user.id,
-        content_queue_id: contentQueueId,
-        feedback_type: "manual",
-        rating: rating ?? null,
-        feedback: feedback ?? null,
+        content_queue_id: contentQueueId ?? null,
+        feedback_type: resolvedType,
+        content: resolvedContent,
+        context: enrichedContext,
+        active: true,
       })
-      .select("id")
+      .select("id, feedback_type, content, created_at")
       .single();
 
     if (insertError) {
       throw new Error(`Failed to store feedback: ${insertError.message}`);
     }
 
-    // Embed feedback into memory for the content agent to learn from
-    if (rating || feedback) {
-      const ratingLabel = rating
-        ? rating >= 4 ? "LIKED" : rating <= 2 ? "DISLIKED" : "NEUTRAL"
-        : "REVIEWED";
+    // Embed feedback into semantic memory for the content agent
+    const tagMap: Record<string, string> = {
+      like: "content:liked",
+      dislike: "content:disliked",
+      correction: "content:correction",
+      directive: "content:directive",
+    };
 
-      const memoryContent = [
-        `[CONTENT FEEDBACK: ${ratingLabel}]`,
-        `Platform: ${post.platform}`,
-        rating ? `Rating: ${rating}/5` : null,
-        feedback ? `Feedback: ${feedback}` : null,
-        `\nPost content:\n${post.body}`,
-      ].filter(Boolean).join("\n");
+    const memoryLines = [
+      `[CONTENT FEEDBACK: ${resolvedType.toUpperCase()}]`,
+      resolvedContent,
+      enrichedContext.platform ? `Platform: ${enrichedContext.platform}` : null,
+      enrichedContext.postBody ? `\nOriginal post:\n${enrichedContext.postBody}` : null,
+    ].filter(Boolean).join("\n");
 
-      const tag = rating && rating >= 4
-        ? "content:liked"
-        : rating && rating <= 2
-          ? "content:disliked"
-          : "content:reviewed";
-
-      try {
-        await embedAndStore(memoryContent, {
-          userId: user.id,
-          source: "manual",
-          sourceId: `content-feedback:${feedbackRow.id}`,
-          category: "general",
-          importance: rating && rating >= 4 ? 8 : rating && rating <= 2 ? 7 : 5,
-          tags: [tag, `platform:${post.platform}`, "creator-os"],
-        });
-      } catch (embedErr) {
-        // Non-fatal — feedback is stored even if embedding fails
-        logError("creator.feedback.embed", embedErr, { feedbackId: feedbackRow.id });
-      }
+    try {
+      await embedAndStore(memoryLines, {
+        userId: user.id,
+        source: "manual",
+        sourceId: `content-feedback:${feedbackRow.id}`,
+        category: "general",
+        importance: resolvedType === "directive" ? 9 : resolvedType === "dislike" ? 8 : 6,
+        tags: [
+          tagMap[resolvedType] ?? "content:reviewed",
+          "creator-os",
+          ...(enrichedContext.platform ? [`platform:${enrichedContext.platform}`] : []),
+        ],
+      });
+    } catch (embedErr) {
+      logError("creator.feedback.embed", embedErr, { feedbackId: feedbackRow.id });
     }
 
-    return NextResponse.json({
-      success: true,
-      feedbackId: feedbackRow.id,
-    });
+    return NextResponse.json({ success: true, feedback: feedbackRow });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Feedback failed" },
       { status: 500 }
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// GET — list recent feedback
+// ---------------------------------------------------------------------------
+
+export async function GET(request: NextRequest) {
+  const { user, response } = await requireUser();
+  if (!user) return response!;
+
+  const supabase = createAdminClient();
+  const url = new URL(request.url);
+  const limit = parseInt(url.searchParams.get("limit") ?? "30", 10);
+  const activeOnly = url.searchParams.get("active") !== "false";
+  const typeFilter = url.searchParams.get("type"); // optional: "directive", "dislike", etc.
+
+  let query = supabase
+    .from("content_feedback")
+    .select("id, content_queue_id, feedback_type, content, context, active, created_at")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (activeOnly) query = query.eq("active", true);
+  if (typeFilter) query = query.eq("feedback_type", typeFilter);
+
+  const { data, error } = await query;
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const items = data ?? [];
+  return NextResponse.json({
+    feedback: items,
+    summary: {
+      total: items.length,
+      directives: items.filter((f) => f.feedback_type === "directive").length,
+      dislikes: items.filter((f) => f.feedback_type === "dislike").length,
+      corrections: items.filter((f) => f.feedback_type === "correction").length,
+      likes: items.filter((f) => f.feedback_type === "like").length,
+    },
+  });
 }
