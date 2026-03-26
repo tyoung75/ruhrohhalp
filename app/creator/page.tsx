@@ -1295,10 +1295,15 @@ function AnalyticsTab() {
 function HistoryTab() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [feedbackStates, setFeedbackStates] = useState<Record<string, number | null>>({});
+  // Track feedback per item: "like" | "dislike" | "deleted" | null
+  const [feedbackStates, setFeedbackStates] = useState<Record<string, string | null>>({});
   const [feedbackNotes, setFeedbackNotes] = useState<Record<string, string>>({});
   const [submittingFeedback, setSubmittingFeedback] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // "I deleted this" flow — shows reason prompt
+  const [deletedPromptId, setDeletedPromptId] = useState<string | null>(null);
+  // Track which items already have feedback saved (green check)
+  const [savedItems, setSavedItems] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setLoading(true);
@@ -1308,23 +1313,47 @@ function HistoryTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  async function submitFeedback(itemId: string) {
-    const rating = feedbackStates[itemId];
-    const feedback = feedbackNotes[itemId];
-    if (!rating && !feedback) return;
+  async function submitFeedback(itemId: string, overrideType?: string, overrideContent?: string) {
+    const state = overrideType ?? feedbackStates[itemId];
+    const note = overrideContent ?? feedbackNotes[itemId] ?? "";
+    if (!state) return;
+
+    // Map UI states to API feedback types
+    let feedbackType: string;
+    let content: string;
+    if (state === "deleted") {
+      feedbackType = "dislike";
+      content = `[DELETED POST] ${note || "Post was deleted — do not repeat this style/topic."}`;
+    } else if (state === "dislike") {
+      feedbackType = "dislike";
+      content = note || "Disliked this post.";
+    } else if (state === "like") {
+      feedbackType = "like";
+      content = note || "Liked this post — more like this.";
+    } else {
+      feedbackType = "correction";
+      content = note;
+    }
 
     setSubmittingFeedback(itemId);
     try {
+      const item = items.find((i) => i.id === itemId);
       await api("/api/creator/feedback", {
         method: "POST",
         body: JSON.stringify({
           contentQueueId: itemId,
-          rating,
-          feedback: feedback || undefined,
+          feedbackType,
+          content,
+          context: {
+            postBody: item?.body?.slice(0, 300),
+            platform: item?.platform,
+            action: state,
+          },
         }),
       });
-      // Visual confirmation — clear the note
+      setSavedItems((prev) => ({ ...prev, [itemId]: true }));
       setFeedbackNotes((prev) => ({ ...prev, [itemId]: "" }));
+      setDeletedPromptId(null);
     } catch (e) {
       console.error("Feedback failed:", e);
     } finally {
@@ -1352,18 +1381,21 @@ function HistoryTab() {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {items.map((item) => {
         const isExpanded = expandedId === item.id;
-        const currentRating = feedbackStates[item.id] ?? null;
+        const currentState = feedbackStates[item.id] ?? null;
         const isSaving = submittingFeedback === item.id;
+        const hasSaved = savedItems[item.id] ?? false;
+        const isDeletePrompt = deletedPromptId === item.id;
 
         return (
           <div
             key={item.id}
             style={{
               background: C.card,
-              border: `1px solid ${C.border}`,
+              border: `1px solid ${currentState === "deleted" ? "#ef444480" : C.border}`,
               borderRadius: 8,
               padding: "14px 16px",
               animation: "fadeUp 0.22s ease both",
+              opacity: currentState === "deleted" ? 0.6 : 1,
             }}
           >
             {/* Post content */}
@@ -1388,6 +1420,10 @@ function HistoryTab() {
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  {/* Saved indicator */}
+                  {hasSaved && (
+                    <span style={{ fontSize: 11, color: C.gpt }}>Saved</span>
+                  )}
                   <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
                     {item.platform}
                   </span>
@@ -1433,74 +1469,187 @@ function HistoryTab() {
                   animation: "fadeUp 0.15s ease both",
                 }}
               >
-                {/* Rating buttons */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>Rate:</span>
-                  {[1, 2, 3, 4, 5].map((r) => (
-                    <button
-                      key={r}
-                      onClick={() =>
-                        setFeedbackStates((prev) => ({
-                          ...prev,
-                          [item.id]: prev[item.id] === r ? null : r,
-                        }))
-                      }
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: 6,
-                        border: `1px solid ${currentRating === r ? C.cl : C.border}`,
-                        background: currentRating === r ? `${C.cl}20` : "transparent",
-                        color: currentRating !== null && r <= currentRating ? C.cl : C.textFaint,
-                        fontFamily: C.mono,
-                        fontSize: 12,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {r <= (currentRating ?? 0) ? "★" : "☆"}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Feedback note */}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    type="text"
-                    placeholder="Optional note..."
-                    value={feedbackNotes[item.id] ?? ""}
-                    onChange={(e) =>
-                      setFeedbackNotes((prev) => ({ ...prev, [item.id]: e.target.value }))
-                    }
-                    style={{
-                      flex: 1,
-                      background: C.surface,
-                      border: `1px solid ${C.borderMid}`,
-                      borderRadius: 6,
-                      color: C.text,
-                      fontFamily: C.sans,
-                      fontSize: 12,
-                      padding: "6px 10px",
-                    }}
-                  />
+                {/* Quick action row: thumbs up, thumbs down, I deleted this */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                  {/* Thumbs up */}
                   <button
-                    onClick={() => submitFeedback(item.id)}
-                    disabled={isSaving || (!currentRating && !feedbackNotes[item.id])}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFeedbackStates((prev) => ({
+                        ...prev,
+                        [item.id]: prev[item.id] === "like" ? null : "like",
+                      }));
+                      setDeletedPromptId(null);
+                    }}
                     style={{
-                      background: C.cl,
-                      border: "none",
-                      color: "#fff",
-                      padding: "6px 14px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "5px 12px",
                       borderRadius: 6,
+                      border: `1px solid ${currentState === "like" ? C.gpt : C.border}`,
+                      background: currentState === "like" ? `${C.gpt}18` : "transparent",
+                      color: currentState === "like" ? C.gpt : C.textDim,
                       fontFamily: C.sans,
                       fontSize: 11,
-                      fontWeight: 600,
-                      cursor: isSaving ? "wait" : "pointer",
-                      opacity: isSaving || (!currentRating && !feedbackNotes[item.id]) ? 0.4 : 1,
+                      cursor: "pointer",
                     }}
                   >
-                    {isSaving ? "..." : "Submit"}
+                    <span style={{ fontSize: 14 }}>&#x1F44D;</span> More like this
+                  </button>
+
+                  {/* Thumbs down */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFeedbackStates((prev) => ({
+                        ...prev,
+                        [item.id]: prev[item.id] === "dislike" ? null : "dislike",
+                      }));
+                      setDeletedPromptId(null);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "5px 12px",
+                      borderRadius: 6,
+                      border: `1px solid ${currentState === "dislike" ? "#ef4444" : C.border}`,
+                      background: currentState === "dislike" ? "#ef444418" : "transparent",
+                      color: currentState === "dislike" ? "#ef4444" : C.textDim,
+                      fontFamily: C.sans,
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>&#x1F44E;</span> Less like this
+                  </button>
+
+                  {/* I deleted this */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFeedbackStates((prev) => ({ ...prev, [item.id]: "deleted" }));
+                      setDeletedPromptId(item.id);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "5px 12px",
+                      borderRadius: 6,
+                      border: `1px solid ${currentState === "deleted" ? "#ef4444" : C.border}`,
+                      background: currentState === "deleted" ? "#ef444418" : "transparent",
+                      color: currentState === "deleted" ? "#ef4444" : C.textDim,
+                      fontFamily: C.sans,
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ fontSize: 13 }}>&#x1F5D1;</span> I deleted this
                   </button>
                 </div>
+
+                {/* Delete reason prompt */}
+                {isDeletePrompt && (
+                  <div style={{
+                    background: "#ef444410",
+                    border: "1px solid #ef444430",
+                    borderRadius: 6,
+                    padding: "10px 12px",
+                    marginBottom: 10,
+                  }}>
+                    <div style={{ fontFamily: C.sans, fontSize: 11, color: "#ef4444", marginBottom: 6, fontWeight: 600 }}>
+                      Why did you delete it? This helps the agent avoid repeating the mistake.
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input
+                        type="text"
+                        placeholder="e.g. Too salesy, wrong tone, not relevant..."
+                        value={feedbackNotes[item.id] ?? ""}
+                        onChange={(e) =>
+                          setFeedbackNotes((prev) => ({ ...prev, [item.id]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") submitFeedback(item.id);
+                        }}
+                        style={{
+                          flex: 1,
+                          background: C.surface,
+                          border: `1px solid ${C.borderMid}`,
+                          borderRadius: 6,
+                          color: C.text,
+                          fontFamily: C.sans,
+                          fontSize: 12,
+                          padding: "6px 10px",
+                        }}
+                      />
+                      <button
+                        onClick={() => submitFeedback(item.id)}
+                        disabled={isSaving}
+                        style={{
+                          background: "#ef4444",
+                          border: "none",
+                          color: "#fff",
+                          padding: "6px 14px",
+                          borderRadius: 6,
+                          fontFamily: C.sans,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: isSaving ? "wait" : "pointer",
+                          opacity: isSaving ? 0.5 : 1,
+                        }}
+                      >
+                        {isSaving ? "..." : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Optional note + submit for like/dislike */}
+                {(currentState === "like" || currentState === "dislike") && !isDeletePrompt && (
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <input
+                      type="text"
+                      placeholder={currentState === "like" ? "What did you like? (optional)" : "What was wrong? (optional)"}
+                      value={feedbackNotes[item.id] ?? ""}
+                      onChange={(e) =>
+                        setFeedbackNotes((prev) => ({ ...prev, [item.id]: e.target.value }))
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitFeedback(item.id);
+                      }}
+                      style={{
+                        flex: 1,
+                        background: C.surface,
+                        border: `1px solid ${C.borderMid}`,
+                        borderRadius: 6,
+                        color: C.text,
+                        fontFamily: C.sans,
+                        fontSize: 12,
+                        padding: "6px 10px",
+                      }}
+                    />
+                    <button
+                      onClick={() => submitFeedback(item.id)}
+                      disabled={isSaving}
+                      style={{
+                        background: currentState === "like" ? C.gpt : "#ef4444",
+                        border: "none",
+                        color: "#fff",
+                        padding: "6px 14px",
+                        borderRadius: 6,
+                        fontFamily: C.sans,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: isSaving ? "wait" : "pointer",
+                        opacity: isSaving ? 0.5 : 1,
+                      }}
+                    >
+                      {isSaving ? "..." : "Save"}
+                    </button>
+                  </div>
+                )}
 
                 {/* Agent reasoning */}
                 {item.agent_reasoning && (
@@ -1842,9 +1991,42 @@ function StrategyTab() {
     }
   };
 
+  const [generatingIdx, setGeneratingIdx] = useState<number | null>(null);
+
+  const generateFromRec = async (rec: StrategyData["recommendations"][0], idx: number) => {
+    setGeneratingIdx(idx);
+    try {
+      await api("/api/creator/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          seedTopic: rec.topic,
+          seedPlatform: rec.platform,
+          seedFormat: rec.format,
+          seedRationale: rec.rationale,
+        }),
+      });
+      setRegenMessage(`Content generated from: "${rec.topic.slice(0, 60)}..."`);
+    } catch (err) {
+      console.error("Generate from rec failed:", err);
+    } finally {
+      setGeneratingIdx(null);
+    }
+  };
+
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>;
 
   const empty = !data || (!data.insights.length && !data.recommendations.length && !data.trends.length);
+
+  // Build "Today" recommendations — filter to today's day name
+  const todayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  const todayShort = new Date().toLocaleDateString("en-US", { weekday: "short" });
+  const todayRecs = (data?.recommendations ?? []).filter((r) => {
+    if (!r.suggestedTiming) return false;
+    const timing = r.suggestedTiming.toLowerCase();
+    return timing.includes(todayName.toLowerCase()) || timing.includes(todayShort.toLowerCase()) || timing.includes("daily") || timing.includes("today");
+  });
+  // If no day-specific recs, show the top 3 by relevance
+  const heroRecs = todayRecs.length > 0 ? todayRecs.slice(0, 3) : (data?.recommendations ?? []).slice(0, 3);
 
   // Group recommendations by day for the game plan grid
   const recs = data?.recommendations ?? [];
@@ -1918,6 +2100,60 @@ function StrategyTab() {
         </div>
       ) : (
         <>
+          {/* ── 0. Today's Focus (hero) ── */}
+          {heroRecs.length > 0 && (
+            <div style={{
+              background: `linear-gradient(135deg, ${C.card}, ${C.surface})`,
+              border: `1px solid ${C.cl}30`,
+              borderRadius: 10, padding: 20,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontFamily: C.serif, fontSize: 18, color: C.cream, fontStyle: "italic" }}>
+                    Today&apos;s Focus
+                  </div>
+                  <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
+                    {todayName} — {heroRecs.length} content {heroRecs.length === 1 ? "idea" : "ideas"} ready
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {heroRecs.map((rec, i) => (
+                  <div key={`today-${i}`} style={{
+                    background: C.card, borderRadius: 8, padding: "14px 16px",
+                    borderLeft: `3px solid ${PLATFORM_COLORS[rec.platform] ?? C.cl}`,
+                    display: "flex", alignItems: "center", gap: 12,
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                        <span style={{ fontSize: 13 }}>{PLATFORM_ICONS[rec.platform] ?? "○"}</span>
+                        <span style={{ fontFamily: C.sans, fontSize: 13, color: C.cream, fontWeight: 500 }}>
+                          {rec.topic}
+                        </span>
+                      </div>
+                      <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
+                        {rec.suggestedTiming} · {rec.format.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => generateFromRec(rec, i)}
+                      disabled={generatingIdx === i}
+                      style={{
+                        background: generatingIdx === i ? C.surface : `${C.cl}20`,
+                        color: C.cl, border: `1px solid ${C.cl}40`,
+                        borderRadius: 6, padding: "6px 12px",
+                        fontFamily: C.mono, fontSize: 10, cursor: generatingIdx === i ? "wait" : "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {generatingIdx === i ? "Generating..." : "Generate This"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* ── 1. This Week's Game Plan ── */}
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
             <SectionLabel>This Week&apos;s Game Plan</SectionLabel>
@@ -1968,6 +2204,18 @@ function StrategyTab() {
                         {rec.suggestedTiming}
                       </span>
                     )}
+                    <button
+                      onClick={() => generateFromRec(rec, 100 + i)}
+                      disabled={generatingIdx === 100 + i}
+                      style={{
+                        background: generatingIdx === 100 + i ? C.surface : `${C.cl}15`,
+                        color: C.cl, border: `1px solid ${C.cl}30`,
+                        borderRadius: 4, padding: "3px 8px", marginTop: 2,
+                        fontFamily: C.mono, fontSize: 9, cursor: generatingIdx === 100 + i ? "wait" : "pointer",
+                      }}
+                    >
+                      {generatingIdx === 100 + i ? "..." : "Generate"}
+                    </button>
                   </div>
                 </div>
               ))}

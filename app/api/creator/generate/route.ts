@@ -40,10 +40,20 @@ export async function POST(request: NextRequest) {
   const cronSecret = request.headers.get("x-cron-secret");
   let userId: string;
 
+  // Seed params for single-post generation from Strategy "Generate This" buttons
+  let seedTopic: string | undefined;
+  let seedPlatform: string | undefined;
+  let seedFormat: string | undefined;
+  let seedRationale: string | undefined;
+
   if (cronSecret && cronSecret === process.env.CRON_SECRET) {
     // Cron invocation — use hardcoded user ID (Tyler)
     const body = await request.json().catch(() => ({}));
     userId = body.userId ?? process.env.CREATOR_USER_ID ?? "";
+    seedTopic = body.seedTopic;
+    seedPlatform = body.seedPlatform;
+    seedFormat = body.seedFormat;
+    seedRationale = body.seedRationale;
     if (!userId) {
       return NextResponse.json({ error: "Missing userId for cron" }, { status: 400 });
     }
@@ -51,6 +61,16 @@ export async function POST(request: NextRequest) {
     const { user, response } = await requireUser();
     if (!user) return response!;
     userId = user.id;
+    // Parse body for seed params (from Strategy tab)
+    try {
+      const body = await request.json().catch(() => ({}));
+      seedTopic = body.seedTopic;
+      seedPlatform = body.seedPlatform;
+      seedFormat = body.seedFormat;
+      seedRationale = body.seedRationale;
+    } catch {
+      // No body or invalid JSON — that's fine, default batch generation
+    }
   }
 
   // Rate limit: 5 generations per hour
@@ -67,10 +87,18 @@ export async function POST(request: NextRequest) {
     const contentMemories = await searchContentMemories(supabase, userId);
 
     // 2. Generate posts with Claude
+    const isSeedMode = !!(seedTopic || seedPlatform);
     const memoryBlock = contentMemories.length
       ? `\n\n--- CONTENT PERFORMANCE LEARNINGS (from semantic memory) ---\n${contentMemories.join("\n\n")}`
       : "";
-    const userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate 5 Threads posts based on this context. Learn from the performance data above — lean into patterns that worked and avoid patterns that didn't. Return ONLY a JSON array.`;
+
+    let userMessage: string;
+    if (isSeedMode) {
+      // Single-post generation seeded from Strategy recommendation
+      userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate exactly 1 post based on this specific strategy recommendation:\n- Topic: ${seedTopic ?? "your best judgment"}\n- Platform: ${seedPlatform ?? "threads"}\n- Format: ${seedFormat ?? "text"}\n- Rationale from strategy agent: ${seedRationale ?? "N/A"}\n\nCreate the BEST possible post for this specific recommendation. Match the platform's voice and format expectations. Return ONLY a JSON array with 1 item.`;
+    } else {
+      userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate 5 posts across platforms based on this context. Learn from the performance data above — lean into patterns that worked and avoid patterns that didn't. Return ONLY a JSON array.`;
+    }
     const rawResponse = await callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048);
 
     // Parse JSON from response (handle markdown code blocks)
@@ -134,9 +162,11 @@ export async function POST(request: NextRequest) {
       const queueStatus = status === "flagged" ? "draft" : "queued";
       if (status === "flagged") flagged.push(bodyStr.slice(0, 50));
 
+      // Use seed platform if provided, otherwise check post for platform field, default to threads
+      const postPlatform = seedPlatform ?? (post as unknown as Record<string, unknown>).platform as string ?? "threads";
       const { data, error } = await supabase.from("content_queue").insert({
         user_id: userId,
-        platform: "threads",
+        platform: postPlatform,
         content_type: contentType,
         body: bodyStr,
         scheduled_for: scheduledFor.toISOString(),
@@ -235,6 +265,25 @@ async function gatherDailyContext(
         .in("id", ids);
       topPostBodies = bodies?.map((b: Record<string, unknown>) => b.body as string) ?? [];
     }
+  }
+
+  // --- Voice references: Tyler's own ad-hoc posts (external/manual) ---
+  let voiceReferences: string[] = [];
+  try {
+    const { data: externalPosts } = await supabase
+      .from("content_queue")
+      .select("body, platform")
+      .eq("user_id", userId)
+      .eq("source", "external")
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    voiceReferences = (externalPosts ?? [])
+      .filter((p: Record<string, unknown>) => p.body && (p.body as string).length > 20)
+      .map((p: Record<string, unknown>) => `[${(p.platform as string).toUpperCase()}] ${p.body as string}`)
+      .slice(0, 8);
+  } catch (err) {
+    console.error("[creator-generate] Voice refs fetch failed (non-fatal):", err);
   }
 
   // --- Strava: recent training data ---
@@ -345,6 +394,7 @@ async function gatherDailyContext(
     currentTasks: tasks ?? [],
     briefingSummary: briefing?.content_md?.slice(0, 500) ?? "",
     topPerformingPosts: topPostBodies,
+    voiceReferences,
     strava: stravaData,
     motus: motusData,
     strategyInsights,

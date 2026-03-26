@@ -551,6 +551,33 @@ export async function syncExternalPosts(
           logError("jobs.sync-external.insert", insertError, { postId: post.postId });
         } else {
           imported++;
+
+          // Embed external posts into semantic memory for voice/brand learning.
+          // Tyler's ad-hoc posts are the purest signal of his authentic voice —
+          // the content agent should study them to match his tone, style, and topics.
+          if (post.body && post.body.length > 20) {
+            try {
+              await embedAndStore(
+                `[TYLER'S OWN ${(token.platform as string).toUpperCase()} POST — voice reference]\n${post.body}`,
+                {
+                  userId,
+                  source: "manual",
+                  sourceId: `external-post:${post.postId}`,
+                  category: "general",
+                  importance: 7,
+                  tags: [
+                    "content:voice-reference",
+                    `platform:${token.platform}`,
+                    "creator-os",
+                    "external",
+                  ],
+                }
+              );
+            } catch (embedErr) {
+              // Non-fatal: post is already saved to content_queue
+              logError("jobs.sync-external.embed", embedErr, { postId: post.postId });
+            }
+          }
         }
       }
     } catch (err) {
