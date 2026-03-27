@@ -20,6 +20,25 @@ const SOURCE_LABELS: Record<string, string> = {
   command: "from command bar",
 };
 
+// Pillar-to-color mapping for visual variety in spotlight
+const PILLAR_COLORS: Record<string, string> = {
+  "Ventures & BDHE": C.cl,
+  "Fitness & Athletics": "#41c998",
+  "Content & Brand": "#5d9ef8",
+  "Financial": "#f4c842",
+  "Career & Instacart": C.gem,
+  "Relationship & Family": "#e06b9e",
+  "Health & Recovery": "#41c998",
+  "Travel & Experiences": "#b07de0",
+  "Personal Growth": C.cl,
+  "Community & Impact": "#6fcf9a",
+};
+
+interface PinnedGoal {
+  pillar: string;
+  text: string;
+}
+
 interface FocusItem {
   id: string;
   title: string;
@@ -29,12 +48,13 @@ interface FocusItem {
   source?: string;
   recommendedAI?: string;
   howTo?: string;
+  goalId?: string;
 }
 
 export function TodaysFocus() {
   const [greeting, setGreeting] = useState("");
   const [focusItems, setFocusItems] = useState<FocusItem[]>([]);
-  const [goalSpotlight, setGoalSpotlight] = useState<GoalData | null>(null);
+  const [goalSpotlights, setGoalSpotlights] = useState<GoalData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedWhy, setExpandedWhy] = useState<Set<string>>(new Set());
@@ -58,11 +78,101 @@ export function TodaysFocus() {
       setLoading(true);
       setError(null);
 
-      // Fetch high-priority tasks — use items[] for full PlannerItem data
+      // Fetch pinned goals from brain dump + high-priority tasks in parallel
+      const [brainRes, tasksRes, goalsRes] = await Promise.all([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        api<any>("/api/brain/dump"),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        api<any>("/api/tasks?state=started,unstarted&priority=1,2&limit=8"),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        api<any>("/api/goals"),
+      ]);
+
+      // --- Build Goal Spotlight from pinned brain dump goals ---
+      const pinnedGoals: PinnedGoal[] = brainRes?.pinnedGoals ?? [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tasksRes: any = await api("/api/tasks?state=started,unstarted&priority=1,2&limit=5");
+      const dbGoals: any[] = goalsRes?.goals ?? [];
+
+      if (pinnedGoals.length > 0) {
+        const spotlights: GoalData[] = pinnedGoals.map((pinned, idx) => {
+          // Try to match this pinned goal to a DB goal for progress data
+          const matched = dbGoals.find((g) => {
+            const pillarMatch = g.pillars?.name && pinned.pillar
+              .toLowerCase().includes(g.pillars.name.toLowerCase().slice(0, 8));
+            const titleMatch = pinned.text.toLowerCase().includes(g.title?.toLowerCase().slice(0, 20));
+            return pillarMatch || titleMatch;
+          });
+
+          const pillarColor = PILLAR_COLORS[pinned.pillar] ?? C.cl;
+
+          return {
+            id: matched?.id ?? `pinned-${idx}`,
+            title: pinned.text,
+            pillar: pinned.pillar,
+            pillarColor,
+            progress: matched ? computeProgress(matched) : 0,
+            currentValue: matched?.progress_current ?? undefined,
+            targetValue: matched?.progress_target ?? undefined,
+            metricLabel: matched?.progress_metric ?? undefined,
+            activeMethods: matched?.methods ?? [],
+          };
+        });
+
+        setGoalSpotlights(spotlights);
+      } else if (dbGoals.length > 0) {
+        // Fallback: pick the goal with nearest target date (old behavior)
+        const now = new Date();
+        const active = dbGoals
+          .filter((g) => g.status === "active")
+          .sort((a, b) => {
+            const da = a.target_date ? Math.abs(new Date(a.target_date).getTime() - now.getTime()) : Infinity;
+            const db = b.target_date ? Math.abs(new Date(b.target_date).getTime() - now.getTime()) : Infinity;
+            return da - db;
+          });
+        if (active.length > 0) {
+          const best = active[0];
+          const pillarName = best.pillars?.name || "";
+          const pillarEmoji = best.pillars?.emoji || "";
+          setGoalSpotlights([{
+            id: best.id,
+            title: best.title,
+            pillar: pillarEmoji ? `${pillarEmoji} ${pillarName}` : pillarName,
+            pillarColor: C.cl,
+            progress: computeProgress(best),
+            currentValue: best.progress_current || undefined,
+            targetValue: best.progress_target || undefined,
+            metricLabel: best.progress_metric || undefined,
+            activeMethods: best.methods || [],
+          }]);
+        }
+      }
+
+      // --- Rank tasks by impact toward pinned goals ---
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rawItems: any[] = tasksRes?.items ?? [];
+
+      // Build goal-matching context: IDs + keyword fragments for text matching
+      const pinnedGoalIds = new Set<string>();
+      const goalKeywords: string[] = [];
+      for (const pinned of pinnedGoals) {
+        // Extract key terms from the goal text for fuzzy matching
+        const terms = pinned.text.toLowerCase()
+          .split(/[\s,.:;]+/)
+          .filter((w) => w.length > 4)
+          .slice(0, 6);
+        goalKeywords.push(...terms);
+
+        // Also match by DB goal_id
+        const matched = dbGoals.find((g) => {
+          const pillarMatch = g.pillars?.name && pinned.pillar
+            .toLowerCase().includes(g.pillars.name.toLowerCase().slice(0, 8));
+          const titleMatch = pinned.text.toLowerCase().includes(g.title?.toLowerCase().slice(0, 20));
+          return pillarMatch || titleMatch;
+        });
+        if (matched) pinnedGoalIds.add(matched.id);
+      }
+
+      const priorityScore: Record<string, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
 
       const items: FocusItem[] = rawItems.map((task) => ({
         id: task.id,
@@ -73,49 +183,31 @@ export function TodaysFocus() {
         source: task.sourceText || undefined,
         recommendedAI: task.recommendedAI || "claude",
         howTo: task.howTo || undefined,
+        goalId: task.goalId || undefined,
       }));
 
-      setFocusItems(items);
+      // Score each task by goal impact: direct link (10) + keyword overlap (0-6) + priority (1-4)
+      const scored = items.map((item) => {
+        let score = 0;
 
-      // Fetch goals with pillar info — pick the one with nearest target_date
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const goalsRes: any = await api("/api/goals");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const goalsList: any[] = goalsRes?.goals ?? [];
+        // Direct goal linkage — highest signal
+        if (item.goalId && pinnedGoalIds.has(item.goalId)) score += 10;
 
-      if (goalsList.length > 0) {
-        const now = new Date();
-        const scored = goalsList
-          .filter((g) => g.status === "active")
-          .map((g) => {
-            const targetDate = g.target_date ? new Date(g.target_date) : null;
-            const daysUntil = targetDate ? Math.ceil((targetDate.getTime() - now.getTime()) / 86400000) : 999;
-            const priorityScore = g.priority === "critical" ? 0 : g.priority === "high" ? 1 : g.priority === "medium" ? 2 : 3;
-            return { goal: g, daysUntil, priorityScore };
-          })
-          .sort((a, b) => {
-            if (a.daysUntil !== b.daysUntil) return a.daysUntil - b.daysUntil;
-            return a.priorityScore - b.priorityScore;
-          });
-
-        if (scored.length > 0) {
-          const best = scored[0].goal;
-          const pillarName = best.pillars?.name || "";
-          const pillarEmoji = best.pillars?.emoji || "";
-
-          setGoalSpotlight({
-            id: best.id,
-            title: best.title,
-            pillar: pillarEmoji ? `${pillarEmoji} ${pillarName}` : pillarName,
-            pillarColor: C.cl,
-            progress: 0,
-            currentValue: best.progress_current || undefined,
-            targetValue: best.progress_target || undefined,
-            metricLabel: best.progress_metric || undefined,
-            activeMethods: best.methods || [],
-          });
+        // Text relevance — how many goal keywords appear in the task's title/description/leverage reason
+        if (goalKeywords.length > 0) {
+          const haystack = `${item.title} ${item.description} ${item.leverageReason ?? ""}`.toLowerCase();
+          const matches = goalKeywords.filter((kw) => haystack.includes(kw)).length;
+          score += Math.min(matches, 6);
         }
-      }
+
+        // Priority bump
+        score += priorityScore[item.priority] ?? 1;
+
+        return { item, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      setFocusItems(scored.slice(0, 5).map((s) => s.item));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load today's focus");
       console.error("Error loading today's focus:", err);
@@ -174,12 +266,32 @@ export function TodaysFocus() {
       </div>
 
       {/* Goal Spotlight */}
-      {goalSpotlight && (
+      {goalSpotlights.length > 0 && (
         <div style={{ marginBottom: 32 }}>
-          <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: C.textFaint, marginBottom: 8 }}>
-            Goal Spotlight
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: C.textFaint }}>
+              Goal Spotlight
+            </span>
+            <span
+              style={{
+                fontFamily: C.mono,
+                fontSize: 9,
+                color: C.gold,
+                background: `${C.gold}18`,
+                border: `1px solid ${C.gold}30`,
+                borderRadius: 3,
+                padding: "1px 5px",
+                letterSpacing: 0.4,
+              }}
+            >
+              Q2 2026
+            </span>
           </div>
-          <GoalProgressCard goal={goalSpotlight} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {goalSpotlights.map((goal) => (
+              <GoalProgressCard key={goal.id} goal={goal} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -234,6 +346,20 @@ export function TodaysFocus() {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function computeProgress(goal: any): number {
+  if (typeof goal.progress_current === "number" && typeof goal.progress_target === "number" && goal.progress_target > 0) {
+    return Math.min(100, Math.round((goal.progress_current / goal.progress_target) * 100));
+  }
+  // Try parsing string values
+  const current = parseFloat(goal.progress_current);
+  const target = parseFloat(goal.progress_target);
+  if (!isNaN(current) && !isNaN(target) && target > 0) {
+    return Math.min(100, Math.round((current / target) * 100));
+  }
+  return 0;
+}
+
 interface FocusCardProps {
   item: FocusItem;
   index: number;
@@ -251,6 +377,8 @@ function FocusCard(props: FocusCardProps) {
   const { item, onDelete, onMarkDone, onSnooze, isDeleting, onDeleteClick, onCancelDelete, expandedWhy, onToggleWhy } = props;
   const isExpanded = expandedWhy.has(item.id);
   const whyContent = item.leverageReason;
+  const [feedbackGiven, setFeedbackGiven] = useState<"up" | "down" | null>(null);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
   const priorityColors: Record<string, string> = {
     urgent: C.reminder,
     high: C.task,
@@ -284,6 +412,29 @@ function FocusCard(props: FocusCardProps) {
       url = `https://claude.ai/new?q=${encoded}`;
     }
     window.open(url, "_blank", "noopener");
+  };
+
+  const handleFeedback = async (type: "up" | "down") => {
+    if (feedbackGiven || feedbackSaving) return;
+    setFeedbackSaving(true);
+    try {
+      await api("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          section: "leverage_tasks",
+          action: type === "up" ? "thumbs_up" : "thumbs_down",
+          note: type === "up"
+            ? `High-leverage: "${item.title}"`
+            : `Not high-leverage: "${item.title}"`,
+          task_id: item.id,
+        }),
+      });
+      setFeedbackGiven(type);
+    } catch (err) {
+      console.error("Error saving feedback:", err);
+    } finally {
+      setFeedbackSaving(false);
+    }
   };
 
   // Friendly source label
@@ -444,6 +595,51 @@ function FocusCard(props: FocusCardProps) {
           )}
         </div>
       )}
+
+      {/* Feedback Row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: C.textFaint }}>
+          {feedbackGiven ? "Thanks for the feedback" : "Is this high-leverage?"}
+        </span>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button
+            onClick={() => handleFeedback("up")}
+            disabled={!!feedbackGiven || feedbackSaving}
+            style={{
+              background: feedbackGiven === "up" ? `${C.todo}25` : "none",
+              border: feedbackGiven === "up" ? `1px solid ${C.todo}60` : `1px solid ${C.border}`,
+              color: feedbackGiven === "up" ? C.todo : C.textDim,
+              borderRadius: 4,
+              padding: "2px 8px",
+              fontSize: 14,
+              cursor: feedbackGiven ? "default" : "pointer",
+              opacity: feedbackGiven && feedbackGiven !== "up" ? 0.3 : 1,
+              transition: "all 0.15s",
+            }}
+            title="Yes, high-leverage"
+          >
+            ▲
+          </button>
+          <button
+            onClick={() => handleFeedback("down")}
+            disabled={!!feedbackGiven || feedbackSaving}
+            style={{
+              background: feedbackGiven === "down" ? `${C.reminder}25` : "none",
+              border: feedbackGiven === "down" ? `1px solid ${C.reminder}60` : `1px solid ${C.border}`,
+              color: feedbackGiven === "down" ? C.reminder : C.textDim,
+              borderRadius: 4,
+              padding: "2px 8px",
+              fontSize: 14,
+              cursor: feedbackGiven ? "default" : "pointer",
+              opacity: feedbackGiven && feedbackGiven !== "down" ? 0.3 : 1,
+              transition: "all 0.15s",
+            }}
+            title="Not high-leverage"
+          >
+            ▼
+          </button>
+        </div>
+      </div>
 
       {/* Action Row */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

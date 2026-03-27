@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
   if (response || !user) return response;
 
   const body = await request.json();
-  const { section, action, note, briefing_id } = body;
+  const { section, action, note, briefing_id, task_id } = body;
 
   if (!section || !action || !note) {
     return NextResponse.json(
@@ -81,6 +81,7 @@ export async function POST(request: NextRequest) {
       action,
       note,
       briefing_id: briefing_id ?? null,
+      task_id: task_id ?? null,
       applied: false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

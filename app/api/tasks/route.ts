@@ -52,6 +52,10 @@ export async function GET(request: NextRequest) {
     query = query.eq("goal_id", goalIdParam);
   }
 
+  // Exclude snoozed tasks (snoozed_until in the future)
+  const now = new Date().toISOString();
+  query = query.or(`snoozed_until.is.null,snoozed_until.lte.${now}`);
+
   if (dueBeforeParam) {
     query = query.lte("due_date", dueBeforeParam);
   }

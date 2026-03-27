@@ -13,6 +13,7 @@ import { logError } from "@/lib/logger";
 interface DirectContext {
   openTasks: { title: string; description: string | null; priority_num: number | null; due_date: string | null; state: string | null }[];
   activeGoals: { title: string; description: string | null; pillar_name: string | null; progress_current: string | null; progress_target: string | null; target_date: string | null }[];
+  recentFeedback: { action: string; note: string; created_at: string }[];
 }
 
 async function fetchDirectContext(userId: string): Promise<DirectContext> {
@@ -35,6 +36,17 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
     .eq("status", "active")
     .limit(10);
 
+  // Fetch recent leverage_tasks feedback (last 30 days, unapplied)
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: feedback } = await supabase
+    .from("feedback")
+    .select("action, note, created_at")
+    .eq("user_id", userId)
+    .eq("section", "leverage_tasks")
+    .gte("created_at", thirtyDaysAgo)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
   return {
     openTasks: (tasks ?? []).map((t) => ({
       title: t.title,
@@ -51,6 +63,11 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
       progress_current: g.progress_current,
       progress_target: g.progress_target,
       target_date: g.target_date,
+    })),
+    recentFeedback: (feedback ?? []).map((f) => ({
+      action: f.action,
+      note: f.note,
+      created_at: f.created_at,
     })),
   };
 }
@@ -82,6 +99,22 @@ function formatDirectContext(ctx: DirectContext): string {
     parts.push(`## Active Goals (${ctx.activeGoals.length} total)\n${goalLines.join("\n")}`);
   }
 
+  if (ctx.recentFeedback.length > 0) {
+    const thumbsUp = ctx.recentFeedback.filter((f) => f.action === "thumbs_up");
+    const thumbsDown = ctx.recentFeedback.filter((f) => f.action === "thumbs_down");
+
+    const feedbackLines: string[] = [];
+    if (thumbsDown.length > 0) {
+      feedbackLines.push("Tyler marked these as NOT high-leverage (avoid suggesting similar tasks):");
+      thumbsDown.forEach((f) => feedbackLines.push(`  - ${f.note}`));
+    }
+    if (thumbsUp.length > 0) {
+      feedbackLines.push("Tyler confirmed these as high-leverage (suggest more like these):");
+      thumbsUp.forEach((f) => feedbackLines.push(`  - ${f.note}`));
+    }
+    parts.push(`## Recent Leverage Feedback\n${feedbackLines.join("\n")}`);
+  }
+
   return parts.join("\n\n");
 }
 
@@ -102,7 +135,7 @@ ${directContext || "(No open tasks or active goals found in database.)"}
 Using the above data AND the retrieved memories, return a structured daily briefing with EXACTLY these four markdown sections. You MUST use ## headings exactly as shown. Each section MUST have at least one bullet point. Be specific — reference real items, people, deadlines, and context.
 
 ## Leverage Tasks
-The top 3-5 highest-leverage tasks Tyler should tackle TODAY. Prioritize by urgency and impact. Include why each matters and any deadlines. Pull from the open tasks above.
+The top 3-5 highest-leverage tasks Tyler should tackle TODAY. Prioritize by urgency and impact. Include why each matters and any deadlines. Pull from the open tasks above. IMPORTANT: If "Recent Leverage Feedback" is provided, use it to calibrate — avoid suggesting tasks similar to ones Tyler marked as not high-leverage, and favor patterns matching tasks he confirmed as high-leverage.
 
 ## Open Decisions
 Decisions pending Tyler's input. Include context on what's blocking each decision and who is waiting. If none are clear from context, surface the most ambiguous open items that need Tyler's judgment call.
@@ -177,12 +210,9 @@ function sectionsToContentJson(sections: ReturnType<typeof parseDailySections>) 
   }));
 }
 
-// ---------------------------------------------------------------------------
-// Persist briefing to DB
-// ---------------------------------------------------------------------------
-
-async function saveBriefing(userId: string, rawMd: string, contentJson: unknown) {
-  const supabase = await createClient();
+/** Persist briefing to the briefings table, upserting by date+period */
+async function saveBriefing(userId: string, rawMd: string, contentJson: unknown, useAdmin = false) {
+  const supabase = useAdmin ? createAdminClient() : await createClient();
   const today = new Date().toISOString().split("T")[0];
 
   // Upsert — if a briefing already exists for today, update it
@@ -305,7 +335,8 @@ export async function POST(request: NextRequest) {
     // 3. Parse + persist
     const sections = parseDailySections(result.answer);
     const contentJson = sectionsToContentJson(sections);
-    const saved = await saveBriefing(userId, result.answer, contentJson);
+    // Persist to DB (admin client — no user session in webhook context)
+    const saved = await saveBriefing(userId, result.answer, contentJson, true);
 
     return NextResponse.json({
       briefing: saved ?? {
