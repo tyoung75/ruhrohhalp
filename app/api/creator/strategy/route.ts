@@ -18,7 +18,18 @@ export async function GET() {
 
   try {
     const strategy = await getCurrentStrategy();
-    return NextResponse.json(strategy);
+
+    // Check if there's analytics data available (so UI can show appropriate message)
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    const supabase = createAdminClient();
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { count } = await supabase
+      .from("post_analytics")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .gte("fetched_at", thirtyDaysAgo);
+
+    return NextResponse.json({ ...strategy, hasAnalytics: (count ?? 0) > 0 });
   } catch (error) {
     console.error("[creator-strategy] Error:", error);
     return NextResponse.json(
