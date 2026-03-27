@@ -1,4 +1,4 @@
-/**
+ /**
  * Embedding utility — BGE-M3 via Hugging Face Inference API.
  * Replaced OpenAI text-embedding-3-small with BGE-M3 (1024-dim, MIT license).
  */
@@ -13,7 +13,7 @@ async function generateEmbedding(text: string): Promise<number[]> {
   }
 
   const response = await fetch(
-    `https://router.huggingface.co/hf-inference/models/${AI_MODELS.EMBEDDING_MODEL}`,
+    `https://router.huggingface.co/hf-inference/models/${AI_MODELS.EMBEDDING_MODEL}/pipeline/feature-extractiont `,
     {
       method: "POST",
       headers: {
