@@ -240,10 +240,10 @@ export class TikTokAdapter implements PlatformAdapter {
     // 2. Compute content trends from video data
     let contentTrends: ContentTrends | null = null;
     if (allVideos.length > 0) {
-      const totalViews = allVideos.reduce((sum, v) => sum + ((v.view_count as number) ?? 0), 0);
-      const totalLikes = allVideos.reduce((sum, v) => sum + ((v.like_count as number) ?? 0), 0);
-      const totalComments = allVideos.reduce((sum, v) => sum + ((v.comment_count as number) ?? 0), 0);
-      const totalShares = allVideos.reduce((sum, v) => sum + ((v.share_count as number) ?? 0), 0);
+      const _totalViews = allVideos.reduce((sum, v) => sum + ((v.view_count as number) ?? 0), 0);
+      const _totalLikes = allVideos.reduce((sum, v) => sum + ((v.like_count as number) ?? 0), 0);
+      const _totalComments = allVideos.reduce((sum, v) => sum + ((v.comment_count as number) ?? 0), 0);
+      const _totalShares = allVideos.reduce((sum, v) => sum + ((v.share_count as number) ?? 0), 0);
       const totalDuration = allVideos.reduce((sum, v) => sum + ((v.duration as number) ?? 0), 0);
 
       // Categorize by duration buckets (short < 30s, medium 30-60s, long > 60s)

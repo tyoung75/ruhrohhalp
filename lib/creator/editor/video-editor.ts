@@ -13,7 +13,7 @@ import { writeFile, unlink, mkdtemp, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { VideoEdits } from "@/lib/creator/director";
-import { logInfo, logError } from "@/lib/logger";
+import { logInfo } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
 // FFmpeg binary resolution

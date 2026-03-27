@@ -72,7 +72,7 @@ export class YouTubeAdapter implements PlatformAdapter {
     };
   }
 
-  async publish(params: {
+  async publish(_params: {
     accessToken: string;
     userId: string;
     body: string;
@@ -267,7 +267,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         `${analyticsBase}?ids=channel==${channelId}&startDate=${start}&endDate=${end}&metrics=views&dimensions=insightTrafficSourceType&sort=-views`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
-      const trafficData = await trafficRes.json();
+      const _trafficData = await trafficRes.json();
 
       // Peak hours (using day-of-week and time data isn't directly available;
       // we use the video upload times + their view performance as a proxy)
@@ -319,8 +319,8 @@ export class YouTubeAdapter implements PlatformAdapter {
         const formatBuckets: Record<string, { views: number; engagement: number; watchTime: number; count: number }> = {};
         const tagPerformance: Record<string, { views: number; engagement: number; count: number }> = {};
 
-        let totalWatchTime = 0;
-        let totalAvgDuration = 0;
+        let _totalWatchTime = 0;
+        let _totalAvgDuration = 0;
 
         for (const row of videoRows) {
           const videoId = row[0] as string;
@@ -331,8 +331,8 @@ export class YouTubeAdapter implements PlatformAdapter {
           const watchMinutes = row[5] as number;
           const avgDuration = row[6] as number;
 
-          totalWatchTime += watchMinutes;
-          totalAvgDuration += avgDuration;
+          _totalWatchTime += watchMinutes;
+          _totalAvgDuration += avgDuration;
 
           const detail = videoDetails[videoId];
           const dur = detail?.duration ?? 0;
