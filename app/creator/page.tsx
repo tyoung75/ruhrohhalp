@@ -1098,14 +1098,14 @@ function AnalyticsTab() {
     setRefreshing(true);
     setRefreshMessage(null);
     try {
-      const result = await api<{
-        success: boolean;
-        analytics: { processed: number; errors: number; totalPosts: number };
-        followers: { snapshots: number; errors: string[] };
-      }>("/api/creator/analytics/refresh", { method: "POST", body: JSON.stringify({}) });
-      setRefreshMessage(
-        `Refreshed ${result.analytics.processed} posts, ${result.followers.snapshots} platform snapshots`
-      );
+      const [analyticsResult, followersResult] = await Promise.all([
+        api<{ processed: number; errors: number }>("/api/creator/analytics", { method: "POST" }),
+        api<{ snapshots: number; errors: string[] }>("/api/creator/followers", { method: "POST" }),
+      ]);
+      const parts: string[] = [];
+      if (analyticsResult.processed > 0) parts.push(`${analyticsResult.processed} posts refreshed`);
+      if (followersResult.snapshots > 0) parts.push(`${followersResult.snapshots} follower snapshots updated`);
+      setRefreshMessage(parts.length ? parts.join(", ") : "No new data to refresh");
       fetchAnalytics();
     } catch (err) {
       setRefreshMessage(err instanceof Error ? err.message : "Refresh failed");
@@ -1137,9 +1137,8 @@ function AnalyticsTab() {
 
   return (
     <div>
-      {/* Refresh bar */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <SectionLabel>Analytics Dashboard</SectionLabel>
+      {/* Refresh button */}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
@@ -1367,7 +1366,8 @@ function AnalyticsTab() {
 function HistoryTab() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [feedbackStates, setFeedbackStates] = useState<Record<string, number | null>>({});
   const [feedbackNotes, setFeedbackNotes] = useState<Record<string, string>>({});
   const [submittingFeedback, setSubmittingFeedback] = useState<string | null>(null);
@@ -1383,12 +1383,20 @@ function HistoryTab() {
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncMessage(null);
     try {
-      await fetchHistory();
+      const result = await api<{ imported: number; skipped: number; errors: string[] }>(
+        "/api/creator/sync",
+        { method: "POST" }
+      );
+      setSyncMessage(`Synced: ${result.imported} new posts imported${result.skipped ? `, ${result.skipped} skipped` : ""}`);
+      fetchHistory();
+    } catch (err) {
+      setSyncMessage(err instanceof Error ? err.message : "Sync failed");
     } finally {
-      setRefreshing(false);
+      setSyncing(false);
     }
   };
 
@@ -1426,29 +1434,49 @@ function HistoryTab() {
 
   if (items.length === 0) {
     return (
-      <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
-        No posted content yet. Once posts are published, they&apos;ll appear here for review.
+      <div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            style={{
+              background: C.cl, color: C.bg, border: "none", borderRadius: 6,
+              padding: "6px 14px", fontFamily: C.sans, fontSize: 12, cursor: "pointer",
+              opacity: syncing ? 0.5 : 1,
+            }}
+          >
+            {syncing ? "Syncing..." : "Pull Latest Posts"}
+          </button>
+        </div>
+        <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
+          No posted content yet. Once posts are published, they&apos;ll appear here for review.
+        </div>
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* Header with refresh */}
+      {/* Header with sync button */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <SectionLabel>Posted Content</SectionLabel>
         <button
-          onClick={handleRefresh}
-          disabled={refreshing}
+          onClick={handleSync}
+          disabled={syncing}
           style={{
             background: C.cl, color: C.bg, border: "none", borderRadius: 6,
             padding: "6px 14px", fontFamily: C.sans, fontSize: 12, cursor: "pointer",
-            opacity: refreshing ? 0.5 : 1,
+            opacity: syncing ? 0.5 : 1,
           }}
         >
-          {refreshing ? "Refreshing..." : "Pull Latest Posts"}
+          {syncing ? "Syncing..." : "Pull Latest Posts"}
         </button>
       </div>
+      {syncMessage && (
+        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.gpt, marginBottom: 8 }}>
+          {syncMessage}
+        </div>
+      )}
       {items.map((item) => {
         const isExpanded = expandedId === item.id;
         const currentRating = feedbackStates[item.id] ?? null;
@@ -1846,7 +1874,6 @@ interface StrategyData {
   velocity: { postsPerWeek: number; platformBreakdown: Record<string, number>; bestTimes: string[] } | null;
   trends: Array<{ topic: string; platform: string | null; relevance_score: number; context: string | null }>;
   lastUpdated: string | null;
-  hasAnalytics?: boolean;
 }
 
 function StrategyTab() {
@@ -1884,7 +1911,7 @@ function StrategyTab() {
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>;
 
-  const empty = !data || (!data.insights?.length && !data.trends?.length);
+  const empty = !data || (!data.insights?.length && !data.trends?.length && !data.recommendations?.length);
 
   return (
     <div>
@@ -1919,10 +1946,7 @@ function StrategyTab() {
 
       {empty ? (
         <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
-          {data?.hasAnalytics
-            ? <>Analytics data is available. Click &quot;Regenerate Strategy&quot; to analyze your content and generate recommendations.</>
-            : <>No analytics data yet. Publish posts and wait for analytics to be collected, then generate your strategy.</>
-          }
+          Strategy hasn&apos;t been generated yet. Click &quot;Regenerate Strategy&quot; to analyze your existing analytics and generate recommendations.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
