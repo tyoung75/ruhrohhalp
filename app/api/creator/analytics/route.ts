@@ -1,13 +1,10 @@
 /**
- * Creator Analytics Dashboard — GET /api/creator/analytics
+ * Creator Analytics Dashboard
  *
- * Returns aggregated analytics data for the creator dashboard:
- * - Overall stats (total posts, avg engagement, total impressions)
- * - Top performing posts
- * - Engagement trend over time
- * - Platform breakdown
+ * GET  /api/creator/analytics — Returns aggregated analytics data
+ * POST /api/creator/analytics — Triggers ad-hoc analytics refresh (re-fetches metrics from platform APIs)
  *
- * Query params:
+ * Query params (GET):
  *   ?days=30  (default 30, max 90)
  *   ?platform=threads  (optional filter)
  *
@@ -17,6 +14,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPlatformAdapter } from "@/lib/creator/platforms";
+import { limitByKey } from "@/lib/security/rate-limit";
 
 export async function GET(request: NextRequest) {
   const { user, response } = await requireUser();
@@ -167,6 +166,107 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Analytics fetch failed" },
+      { status: 500 }
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST — Ad-hoc analytics refresh (re-fetch metrics from platform APIs)
+// ---------------------------------------------------------------------------
+
+export async function POST() {
+  const { user, response } = await requireUser();
+  if (!user) return response!;
+
+  // Rate limit: 5 refreshes per hour
+  const { ok } = limitByKey(`creator-analytics-refresh:${user.id}`, 5, 60 * 60 * 1000);
+  if (!ok) {
+    return NextResponse.json(
+      { error: "Rate limited. Max 5 analytics refreshes per hour." },
+      { status: 429 }
+    );
+  }
+
+  const supabase = createAdminClient();
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  try {
+    // Find all posted content in the last 30 days
+    const { data: posts, error: postsError } = await supabase
+      .from("content_queue")
+      .select("id, platform, post_id, body")
+      .eq("user_id", user.id)
+      .eq("status", "posted")
+      .not("post_id", "is", null)
+      .gte("created_at", thirtyDaysAgo)
+      .order("created_at", { ascending: false });
+
+    if (postsError) throw new Error(`Failed to fetch posts: ${postsError.message}`);
+    if (!posts?.length) {
+      return NextResponse.json({ processed: 0, errors: 0, message: "No posts to refresh" });
+    }
+
+    // Get platform tokens
+    const platforms = [...new Set(posts.map((p: Record<string, unknown>) => p.platform as string))];
+    const { data: tokens } = await supabase
+      .from("platform_tokens")
+      .select("platform, access_token, platform_user_id")
+      .eq("user_id", user.id)
+      .in("platform", platforms);
+
+    const tokenMap = new Map<string, { accessToken: string; platformUserId: string }>(
+      (tokens ?? []).map((t: Record<string, unknown>) => [
+        t.platform as string,
+        { accessToken: t.access_token as string, platformUserId: t.platform_user_id as string },
+      ])
+    );
+
+    let processed = 0;
+    let errors = 0;
+
+    for (const post of posts) {
+      const token = tokenMap.get(post.platform as string);
+      if (!token) continue;
+
+      try {
+        const adapter = getPlatformAdapter(post.platform as string);
+        const metrics = await adapter.getPostMetrics({
+          accessToken: token.accessToken,
+          postId: post.post_id as string,
+        });
+
+        const totalEngagement = metrics.likes + metrics.replies + metrics.reposts + metrics.quotes;
+        const engagementRate = metrics.impressions > 0 ? totalEngagement / metrics.impressions : 0;
+
+        await supabase.from("post_analytics").upsert(
+          {
+            user_id: user.id,
+            content_queue_id: post.id,
+            platform: post.platform,
+            post_id: post.post_id,
+            impressions: metrics.impressions,
+            likes: metrics.likes,
+            replies: metrics.replies,
+            reposts: metrics.reposts,
+            quotes: metrics.quotes,
+            follows_gained: metrics.followsGained,
+            engagement_rate: engagementRate,
+            fetched_at: new Date().toISOString(),
+          },
+          { onConflict: "platform,post_id,fetched_at" }
+        );
+
+        processed++;
+      } catch {
+        errors++;
+      }
+    }
+
+    return NextResponse.json({ processed, errors, totalPosts: posts.length });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Analytics refresh failed" },
       { status: 500 }
     );
   }

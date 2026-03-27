@@ -1,7 +1,7 @@
 /**
  * TikTok API adapter for Creator OS.
  *
- * Uses the TikTok API v2 for profile stats and post metrics.
+ * Uses the TikTok API for profile/follower data.
  * Docs: https://developers.tiktok.com/doc/research-api-get-user-info
  */
 
@@ -18,13 +18,16 @@ export class TikTokAdapter implements PlatformAdapter {
   }): Promise<PlatformProfile> {
     const { accessToken } = params;
 
-    const res = await fetch(`${TIKTOK_API}/user/info/?fields=follower_count,following_count,video_count,display_name,avatar_url`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+    const res = await fetch(`${TIKTOK_API}/user/info/?fields=follower_count,following_count,video_count,display_name,bio_description`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
     });
     const data = await res.json();
 
     if (!res.ok || data.error?.code) {
-      throw new Error(data.error?.message ?? "Failed to fetch TikTok profile");
+      throw new Error(data.error?.message ?? `TikTok profile fetch failed (${res.status})`);
     }
 
     const user = data.data?.user ?? {};
@@ -35,9 +38,13 @@ export class TikTokAdapter implements PlatformAdapter {
       postsCount: user.video_count ?? 0,
       extras: {
         displayName: user.display_name,
-        avatarUrl: user.avatar_url,
+        bio: user.bio_description,
       },
     };
+  }
+
+  async publish(): Promise<PublishResult> {
+    return { success: false, error: "TikTok publishing not yet implemented" };
   }
 
   async getPostMetrics(params: {
@@ -46,21 +53,18 @@ export class TikTokAdapter implements PlatformAdapter {
   }): Promise<PostMetrics> {
     const { accessToken, postId } = params;
 
-    const res = await fetch(`${TIKTOK_API}/video/query/`, {
+    const res = await fetch(`${TIKTOK_API}/video/query/?fields=like_count,comment_count,share_count,view_count`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        filters: { video_ids: [postId] },
-        fields: ["view_count", "like_count", "comment_count", "share_count"],
-      }),
+      body: JSON.stringify({ filters: { video_ids: [postId] } }),
     });
     const data = await res.json();
 
     if (!res.ok || data.error?.code) {
-      throw new Error(data.error?.message ?? "Failed to fetch TikTok video metrics");
+      throw new Error(data.error?.message ?? "Failed to fetch TikTok post metrics");
     }
 
     const video = data.data?.videos?.[0] ?? {};
@@ -81,9 +85,9 @@ export class TikTokAdapter implements PlatformAdapter {
     since?: string;
     limit?: number;
   }): Promise<PlatformPost[]> {
-    const { accessToken, limit = 50 } = params;
+    const { accessToken, limit = 20 } = params;
 
-    const res = await fetch(`${TIKTOK_API}/video/list/?fields=id,title,video_description,create_time,share_url,cover_image_url`, {
+    const res = await fetch(`${TIKTOK_API}/video/list/?fields=id,title,create_time,share_url`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -97,60 +101,13 @@ export class TikTokAdapter implements PlatformAdapter {
       throw new Error(data.error?.message ?? "Failed to list TikTok videos");
     }
 
-    return ((data.data?.videos ?? []) as Array<Record<string, unknown>>).map((item) => ({
+    return (data.data?.videos ?? []).map((item: Record<string, unknown>) => ({
       postId: item.id as string,
-      body: (item.video_description as string) ?? (item.title as string) ?? "",
+      body: (item.title as string) ?? "",
       contentType: "reel" as const,
       permalink: item.share_url as string | undefined,
       timestamp: new Date((item.create_time as number) * 1000).toISOString(),
     }));
-  }
-
-  async publish(params: {
-    accessToken: string;
-    userId: string;
-    body: string;
-    mediaUrls?: string[];
-    contentType: "text" | "image" | "carousel" | "reel" | "thread";
-  }): Promise<PublishResult> {
-    const { accessToken, body, mediaUrls } = params;
-
-    if (!mediaUrls?.length) {
-      return { success: false, error: "TikTok requires a video URL to publish" };
-    }
-
-    try {
-      // Initiate upload
-      const initRes = await fetch(`${TIKTOK_API}/post/publish/video/init/`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          post_info: {
-            title: body.slice(0, 150),
-            privacy_level: "PUBLIC_TO_EVERYONE",
-          },
-          source_info: {
-            source: "PULL_FROM_URL",
-            video_url: mediaUrls[0],
-          },
-        }),
-      });
-      const initData = await initRes.json();
-
-      if (!initRes.ok || initData.error?.code) {
-        return { success: false, error: initData.error?.message ?? "TikTok publish init failed" };
-      }
-
-      return {
-        success: true,
-        postId: initData.data?.publish_id,
-      };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
-    }
   }
 
   async exchangeCodeForToken(code: string, redirectUri: string) {
@@ -180,6 +137,7 @@ export class TikTokAdapter implements PlatformAdapter {
       tokenType: "bearer",
       expiresIn: data.expires_in,
       userId: data.open_id,
+      username: undefined,
     };
   }
 

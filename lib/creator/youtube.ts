@@ -1,7 +1,7 @@
 /**
  * YouTube Data API adapter for Creator OS.
  *
- * Uses the YouTube Data API v3 for channel stats and video metrics.
+ * Uses YouTube Data API v3 for channel/subscriber data.
  * Docs: https://developers.google.com/youtube/v3
  */
 
@@ -16,37 +16,42 @@ export class YouTubeAdapter implements PlatformAdapter {
     accessToken: string;
     userId: string;
   }): Promise<PlatformProfile> {
-    const { accessToken, userId } = params;
+    const { accessToken } = params;
 
-    // Try channel ID first, fall back to "mine"
-    const idParam = userId ? `&id=${userId}` : "&mine=true";
     const res = await fetch(
-      `${YT_API}/channels?part=statistics,snippet${idParam}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      `${YT_API}/channels?part=statistics,snippet&mine=true`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
     );
     const data = await res.json();
 
     if (!res.ok || data.error) {
-      throw new Error(data.error?.message ?? "Failed to fetch YouTube channel");
+      throw new Error(data.error?.message ?? `YouTube profile fetch failed (${res.status})`);
     }
 
     const channel = data.items?.[0];
     if (!channel) {
-      throw new Error("YouTube channel not found");
+      throw new Error("No YouTube channel found for this account");
     }
 
     const stats = channel.statistics ?? {};
 
     return {
-      followers: Number(stats.subscriberCount ?? 0),
-      following: 0, // YouTube doesn't expose subscriptions count via this endpoint
-      postsCount: Number(stats.videoCount ?? 0),
+      followers: parseInt(stats.subscriberCount ?? "0", 10),
+      following: 0, // YouTube doesn't have a "following" concept
+      postsCount: parseInt(stats.videoCount ?? "0", 10),
       extras: {
         title: channel.snippet?.title,
-        viewCount: Number(stats.viewCount ?? 0),
-        hiddenSubscriberCount: stats.hiddenSubscriberCount,
+        description: channel.snippet?.description,
+        viewCount: parseInt(stats.viewCount ?? "0", 10),
+        hiddenSubscriberCount: stats.hiddenSubscriberCount ?? false,
       },
     };
+  }
+
+  async publish(): Promise<PublishResult> {
+    return { success: false, error: "YouTube publishing not yet implemented" };
   }
 
   async getPostMetrics(params: {
@@ -57,7 +62,9 @@ export class YouTubeAdapter implements PlatformAdapter {
 
     const res = await fetch(
       `${YT_API}/videos?part=statistics&id=${postId}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
     );
     const data = await res.json();
 
@@ -68,10 +75,10 @@ export class YouTubeAdapter implements PlatformAdapter {
     const stats = data.items?.[0]?.statistics ?? {};
 
     return {
-      impressions: Number(stats.viewCount ?? 0),
-      likes: Number(stats.likeCount ?? 0),
-      replies: Number(stats.commentCount ?? 0),
-      reposts: 0, // YouTube doesn't have a share count in Data API
+      impressions: parseInt(stats.viewCount ?? "0", 10),
+      likes: parseInt(stats.likeCount ?? "0", 10),
+      replies: parseInt(stats.commentCount ?? "0", 10),
+      reposts: 0,
       quotes: 0,
       followsGained: 0,
     };
@@ -83,20 +90,17 @@ export class YouTubeAdapter implements PlatformAdapter {
     since?: string;
     limit?: number;
   }): Promise<PlatformPost[]> {
-    const { accessToken, userId, since, limit = 50 } = params;
+    const { accessToken, limit = 20 } = params;
 
-    // First get the uploads playlist
-    const channelParam = userId ? `&id=${userId}` : "&mine=true";
+    // Get the uploads playlist for the authenticated user's channel
     const channelRes = await fetch(
-      `${YT_API}/channels?part=contentDetails${channelParam}`,
+      `${YT_API}/channels?part=contentDetails&mine=true`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const channelData = await channelRes.json();
     const uploadsPlaylistId = channelData.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
 
-    if (!uploadsPlaylistId) {
-      return [];
-    }
+    if (!uploadsPlaylistId) return [];
 
     const res = await fetch(
       `${YT_API}/playlistItems?part=snippet&playlistId=${uploadsPlaylistId}&maxResults=${Math.min(limit, 50)}`,
@@ -108,27 +112,18 @@ export class YouTubeAdapter implements PlatformAdapter {
       throw new Error(data.error?.message ?? "Failed to list YouTube videos");
     }
 
-    return ((data.items ?? []) as Array<Record<string, unknown>>)
-      .map((item) => {
-        const snippet = item.snippet as Record<string, unknown>;
-        return {
-          postId: (snippet.resourceId as Record<string, unknown>)?.videoId as string,
-          body: (snippet.title as string) ?? "",
-          contentType: "reel" as const,
-          permalink: `https://www.youtube.com/watch?v=${(snippet.resourceId as Record<string, unknown>)?.videoId}`,
-          timestamp: snippet.publishedAt as string,
-        };
-      })
-      .filter((p) => {
-        if (!since) return true;
-        return new Date(p.timestamp) >= new Date(since);
-      })
-      .slice(0, limit);
-  }
+    return (data.items ?? []).map((item: Record<string, unknown>) => {
+      const snippet = item.snippet as Record<string, unknown>;
+      const resourceId = snippet?.resourceId as Record<string, unknown>;
 
-  async publish(): Promise<PublishResult> {
-    // YouTube upload requires resumable upload protocol — not practical via simple API call.
-    return { success: false, error: "YouTube publishing requires the resumable upload API — use YouTube Studio" };
+      return {
+        postId: (resourceId?.videoId as string) ?? "",
+        body: (snippet?.title as string) ?? "",
+        contentType: "reel" as const,
+        permalink: `https://www.youtube.com/watch?v=${resourceId?.videoId}`,
+        timestamp: (snippet?.publishedAt as string) ?? new Date().toISOString(),
+      };
+    });
   }
 
   async exchangeCodeForToken(code: string, redirectUri: string) {
@@ -153,20 +148,12 @@ export class YouTubeAdapter implements PlatformAdapter {
       throw new Error(data.error_description ?? "YouTube token exchange failed");
     }
 
-    // Get channel info
-    const channelRes = await fetch(
-      `${YT_API}/channels?part=snippet&mine=true`,
-      { headers: { Authorization: `Bearer ${data.access_token}` } }
-    );
-    const channelData = await channelRes.json();
-    const channel = channelData.items?.[0];
-
     return {
       accessToken: data.access_token,
       tokenType: data.token_type ?? "bearer",
       expiresIn: data.expires_in,
-      userId: channel?.id ?? "",
-      username: channel?.snippet?.title,
+      userId: "me", // YouTube uses "me" for the authenticated user
+      username: undefined,
     };
   }
 
