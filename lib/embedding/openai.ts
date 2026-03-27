@@ -13,7 +13,7 @@ async function generateEmbedding(text: string): Promise<number[]> {
   }
 
   const response = await fetch(
-    `https://router.huggingface.co/hf-inference/models/${AI_MODELS.EMBEDDING_MODEL}/pipeline/feature-extractiont `,
+    `https://router.huggingface.co/hf-inference/models/${AI_MODELS.EMBEDDING_MODEL}/pipeline/feature-extraction`,
     {
       method: "POST",
       headers: {
