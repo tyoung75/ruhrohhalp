@@ -72,6 +72,7 @@ export class YouTubeAdapter implements PlatformAdapter {
     };
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async publish(_params: {
     accessToken: string;
     userId: string;
@@ -267,6 +268,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         `${analyticsBase}?ids=channel==${channelId}&startDate=${start}&endDate=${end}&metrics=views&dimensions=insightTrafficSourceType&sort=-views`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const _trafficData = await trafficRes.json();
 
       // Peak hours (using day-of-week and time data isn't directly available;
@@ -319,9 +321,6 @@ export class YouTubeAdapter implements PlatformAdapter {
         const formatBuckets: Record<string, { views: number; engagement: number; watchTime: number; count: number }> = {};
         const tagPerformance: Record<string, { views: number; engagement: number; count: number }> = {};
 
-        let _totalWatchTime = 0;
-        let _totalAvgDuration = 0;
-
         for (const row of videoRows) {
           const videoId = row[0] as string;
           const views = row[1] as number;
@@ -329,10 +328,6 @@ export class YouTubeAdapter implements PlatformAdapter {
           const comments = row[3] as number;
           const shares = row[4] as number;
           const watchMinutes = row[5] as number;
-          const avgDuration = row[6] as number;
-
-          _totalWatchTime += watchMinutes;
-          _totalAvgDuration += avgDuration;
 
           const detail = videoDetails[videoId];
           const dur = detail?.duration ?? 0;

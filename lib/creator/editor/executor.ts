@@ -64,10 +64,6 @@ export async function executeEditPlan(
     }
 
     let outputStoragePath: string;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars, prefer-const
-    let outputThumbnailPath: string | null = null;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    let outputMimeType: string;
 
     // Route to appropriate editor
     const isVideo = assets.some((a) => a.mime_type.startsWith("video/")) || plan.video_edits;
@@ -97,7 +93,6 @@ export async function executeEditPlan(
       // Upload result
       const dateStr = new Date().toISOString().split("T")[0];
       outputStoragePath = `media/edited/${dateStr}/${planId}.mp4`;
-      outputMimeType = result.mime_type;
 
       const { error: uploadError } = await supabase.storage
         .from("creator-media")
@@ -131,7 +126,6 @@ export async function executeEditPlan(
       // Upload result
       const dateStr = new Date().toISOString().split("T")[0];
       outputStoragePath = `media/edited/${dateStr}/${planId}.jpg`;
-      outputMimeType = result.mime_type;
 
       const { error: uploadError } = await supabase.storage
         .from("creator-media")
