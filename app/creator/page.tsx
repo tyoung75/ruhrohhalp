@@ -2029,8 +2029,7 @@ function StrategyTab() {
   const heroRecs = todayRecs.length > 0 ? todayRecs.slice(0, 3) : (data?.recommendations ?? []).slice(0, 3);
 
   // Group recommendations by day for the game plan grid
-  const _recs = data?.recommendations ?? [];
-  const _recsByDay: Record<string, StrategyData["recommendations"]> = {};
+  const recsByDay: Record<string, StrategyData["recommendations"]> = {};
   for (const rec of data?.recommendations ?? []) {
     const day = rec.suggestedTiming?.split(/\s+/)[0] ?? "Anytime";
     if (!recsByDay[day]) recsByDay[day] = [];

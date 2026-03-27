@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { syncMediaFromDrive } from "@/lib/creator/media-ingest";
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function POST(_request: NextRequest) {
   const { user, response } = await requireUser();
   if (!user) return response!;

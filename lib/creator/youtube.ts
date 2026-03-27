@@ -355,7 +355,7 @@ export class YouTubeAdapter implements PlatformAdapter {
           `${analyticsBase}?ids=channel==${channelId}&startDate=${start}&endDate=${end}&metrics=views&dimensions=insightTrafficSourceType&sort=-views`,
           { headers: { Authorization: `Bearer ${accessToken}` } }
         );
-        const _trafficData = await trafficRes.json();
+        const trafficData = await trafficRes.json();
         const totalTrafficViews = (trafficData.rows ?? []).reduce(
           (sum: number, r: unknown[]) => sum + (r[1] as number),
           0
