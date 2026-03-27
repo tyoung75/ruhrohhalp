@@ -19,6 +19,54 @@ export interface PostMetrics {
   followsGained: number;
 }
 
+/**
+ * Extended analytics: audience demographics, content trends, and revenue.
+ * Not all platforms expose all fields — adapters return what's available.
+ */
+export interface AudienceInsights {
+  /** Age/gender breakdown (e.g., "18-24_male": 0.12) */
+  demographics: Record<string, number>;
+  /** Top countries by viewer percentage */
+  topCountries: Array<{ country: string; percentage: number }>;
+  /** Peak active hours (0-23 in UTC) */
+  peakHours: number[];
+  /** Follower vs non-follower view split */
+  followerViewPct: number;
+  nonFollowerViewPct: number;
+}
+
+export interface ContentTrends {
+  /** Best performing content types with avg engagement */
+  topFormats: Array<{ format: string; avgEngagement: number; avgViews: number; count: number }>;
+  /** Topics/hashtags driving the most reach */
+  topTopics: Array<{ topic: string; totalViews: number; avgEngagement: number }>;
+  /** Traffic sources (e.g., "For You Page", "Search", "Profile") */
+  trafficSources: Array<{ source: string; percentage: number }>;
+  /** Average watch time / retention (seconds) */
+  avgWatchTimeSec: number;
+  /** Average completion rate (0-1) for video content */
+  avgCompletionRate: number;
+}
+
+export interface RevenueData {
+  /** Total estimated revenue for the period */
+  totalRevenue: number;
+  currency: string;
+  /** Revenue by source (ads, creator fund, memberships, etc.) */
+  breakdown: Array<{ source: string; amount: number }>;
+  /** RPM (revenue per mille / 1000 views) */
+  rpm: number;
+  /** CPM (cost per mille — what advertisers pay) */
+  cpm: number;
+}
+
+export interface ExtendedAnalytics {
+  audience: AudienceInsights | null;
+  contentTrends: ContentTrends | null;
+  revenue: RevenueData | null;
+  period: { start: string; end: string };
+}
+
 export interface PlatformPost {
   postId: string;
   body: string;
@@ -78,6 +126,17 @@ export interface PlatformAdapter {
     tokenType: string;
     expiresIn: number;
   }>;
+
+  /**
+   * Fetch extended analytics: audience demographics, content trends, revenue.
+   * Optional — adapters return null for unsupported sections.
+   */
+  getExtendedAnalytics?(params: {
+    accessToken: string;
+    userId: string;
+    startDate: string; // ISO date
+    endDate: string;   // ISO date
+  }): Promise<ExtendedAnalytics>;
 }
 
 /**

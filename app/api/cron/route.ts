@@ -14,10 +14,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryBrain } from "@/lib/query";
 import { logError } from "@/lib/logger";
-import { publishQueuedPosts, syncExternalPosts, collectAnalytics, refreshExpiringTokens, expireStaleDrafts } from "@/lib/creator/jobs";
+import { publishQueuedPosts, syncExternalPosts, collectAnalytics, collectExtendedAnalytics, refreshExpiringTokens, expireStaleDrafts } from "@/lib/creator/jobs";
 import { syncStravaActivities } from "@/lib/strava/sync";
 import { snapshotFollowerCounts } from "@/lib/creator/followers";
 import { getCurrentStrategy, generateStrategy, detectTrends } from "@/lib/creator/strategy";
+import { syncMediaFromDrive } from "@/lib/creator/media-ingest";
+import { analyzeMedia, generateEditPlans } from "@/lib/creator/director";
+import { processPendingPlans } from "@/lib/creator/editor/executor";
 
 /** Tyler's Supabase user ID — hardcoded for cron (no session context). */
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
@@ -238,7 +241,16 @@ export async function GET(request: NextRequest) {
     results.creator_analytics = { error: "Analytics failed" };
   }
 
-  // 3e. Sync Strava activities into brain (goal signals)
+  // 3e. Collect extended analytics (audience demographics, content trends, revenue)
+  try {
+    const extendedResult = await collectExtendedAnalytics(TYLER_USER_ID);
+    results.extended_analytics = extendedResult;
+  } catch (error) {
+    logError("cron.extended-analytics", error);
+    results.extended_analytics = { error: "Extended analytics failed" };
+  }
+
+  // 3f. Sync Strava activities into brain (goal signals)
   try {
     const stravaResult = await syncStravaActivities();
     results.strava_sync = stravaResult;
@@ -263,6 +275,44 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     logError("cron.token-refresh", error);
     results.token_refresh = { error: "Token refresh failed" };
+  }
+
+  // --- AI Editor pipeline (sync media → analyze → plan → execute) ---
+
+  // 4a. Sync media from Google Drive
+  try {
+    const mediaSyncResult = await syncMediaFromDrive(TYLER_USER_ID);
+    results.media_sync = mediaSyncResult;
+  } catch (error) {
+    logError("cron.media-sync", error);
+    results.media_sync = { error: "Media sync failed" };
+  }
+
+  // 4b. Analyze new media via Gemini Vision
+  try {
+    const analyzeResult = await analyzeMedia(TYLER_USER_ID);
+    results.media_analysis = analyzeResult;
+  } catch (error) {
+    logError("cron.media-analysis", error);
+    results.media_analysis = { error: "Media analysis failed" };
+  }
+
+  // 4c. Generate edit plans from analyzed media + strategy
+  try {
+    const planResult = await generateEditPlans(TYLER_USER_ID);
+    results.edit_plans = planResult;
+  } catch (error) {
+    logError("cron.edit-plans", error);
+    results.edit_plans = { error: "Edit plan generation failed" };
+  }
+
+  // 4d. Execute pending edit plans (photo/video editing)
+  try {
+    const execResult = await processPendingPlans(TYLER_USER_ID);
+    results.edit_execution = execResult;
+  } catch (error) {
+    logError("cron.edit-execution", error);
+    results.edit_execution = { error: "Edit execution failed" };
   }
 
   return NextResponse.json(results);

@@ -57,14 +57,16 @@ export interface StrategyOutput {
 
 const STRATEGY_AGENT_SYSTEM = `You are Tyler Young's Social Media Strategy Agent. You analyze ALL available context to produce data-driven, adaptive content strategy recommendations.
 
-Tyler is a NYC-based runner, software engineer, and entrepreneur (BearDuckHornEmpire LLC). His platforms: Threads (@t_young), Instagram, TikTok, and YouTube (growing channel). His niches: running/endurance training, building in public (tech), NYC lifestyle, travel running, fitness tech (Motus app, Iron Passport).
+Tyler is a NYC-based runner, software engineer, and entrepreneur (BearDuckHornEmpire LLC). His platforms: Threads (@t_.young), Instagram (@t_.young), TikTok (@tyler_.young), and YouTube (growing channel). His niches: running/endurance training, travel & food, building in public (tech), NYC lifestyle, fitness tech (Motus app, Iron Passport).
+
+CRITICAL VOICE NOTE: Tyler genuinely enjoys his life — training, building, traveling, eating well. His content should always radiate positive energy, humor, and curiosity. NEVER generate strategy recommendations that produce stressed, negative, self-deprecating, or preachy content. Tyler is not grinding through misery. He's having a great time and documenting it.
 
 BRAND PILLARS (use these to organize recommendations):
-1. Running & Endurance — marathon training, race recaps, gear, VO2 data, HYROX
-2. Building in Public — software dev, Motus/Iron Passport updates, indie hacking, MRR milestones
-3. NYC Lifestyle — city running, daily life, spots, energy
-4. Fitness & Strength — functional fitness, concurrent training, lifting + running balance
-5. Travel & Adventure — travel running, destination races, exploring new cities on foot
+1. Running & Endurance — marathon training, race recaps, gear, VO2 data, HYROX, weekly mileage
+2. Travel & Food — travel days, airports, city exploration, restaurants, specific meals, trip recaps, Iron Passport, airport lounges
+3. Building in Public — software dev, Motus/Iron Passport updates, shipping — always casual and alongside life, never the main source of drama
+4. NYC Lifestyle — city running, daily life, restaurants, Wesley walks, spots, weather, observations, 18K steps/day
+5. Fitness & Strength — functional fitness, concurrent training, lifting + running balance, gym observations
 
 YOUTUBE STRATEGY:
 YouTube is a growth priority. Recommend YouTube-specific content: long-form running vlogs, build-in-public dev logs, race day films, training series, gear reviews. YouTube Shorts can repurpose TikTok content. Consider YouTube as the long-form storytelling platform complementing short-form on Threads/TikTok.
@@ -72,12 +74,13 @@ YouTube is a growth priority. Recommend YouTube-specific content: long-form runn
 Your job: Analyze the provided data and return a comprehensive strategy update.
 
 ANALYSIS FRAMEWORK:
-1. CONTENT PATTERNS — What types of posts get the most engagement? What gets algorithm push (high impressions relative to followers)?
-2. TIMING — When do Tyler's posts perform best? What posting velocity is optimal?
-3. TRENDS — What's trending in Tyler's niches that he should capitalize on?
-4. GAPS — What topics/formats is Tyler underutilizing?
-5. AUDIENCE — What does the data tell us about who's engaging and why?
-6. PLATFORM — Where should Tyler focus more/less effort?
+1. CONTENT PATTERNS — What types of posts get the most engagement? What gets algorithm push (high impressions relative to followers)? Use format performance data (Shorts vs Regular vs Long-form) from extendedAnalytics.contentTrends.
+2. TIMING — When do Tyler's posts perform best? Use audience.peakHours data when available. What posting velocity is optimal?
+3. TRENDS — What's trending in Tyler's niches that he should capitalize on? Use topTopics and trafficSources data.
+4. GAPS — What topics/formats is Tyler underutilizing? Cross-reference format performance with actual posting frequency.
+5. AUDIENCE — Use extendedAnalytics.audience for demographics (age/gender), top countries, and follower vs non-follower split. What does this tell us about content targeting?
+6. PLATFORM — Where should Tyler focus more/less effort? Use revenue data (RPM, CPM) when available to factor in monetization potential.
+7. RETENTION — Use avgWatchTimeSec and avgCompletionRate to recommend optimal video lengths. What duration sweet spot maximizes both reach and retention?
 
 OUTPUT FORMAT — respond with ONLY a JSON object:
 {
@@ -234,6 +237,30 @@ async function gatherStrategyContext(userId: string) {
     .sort((a, b) => (b.impressions ?? 0) - (a.impressions ?? 0))
     .slice(0, 5);
 
+  // Extended analytics insights (audience, content trends, revenue)
+  // These are stored by collectExtendedAnalytics() and contain platform-specific
+  // audience demographics, format performance, traffic sources, and monetization data.
+  const { data: extendedInsights } = await supabase
+    .from("strategy_insights")
+    .select("insight_type, content, data, confidence")
+    .eq("user_id", userId)
+    .eq("active", true)
+    .in("insight_type", ["audience", "content_pattern", "platform_rec"])
+    .order("confidence", { ascending: false });
+
+  // Separate extended analytics by type for structured context
+  const audienceData = (extendedInsights ?? [])
+    .filter((i) => i.insight_type === "audience")
+    .map((i) => i.data as Record<string, unknown>);
+
+  const contentTrendData = (extendedInsights ?? [])
+    .filter((i) => i.insight_type === "content_pattern")
+    .map((i) => i.data as Record<string, unknown>);
+
+  const revenueData = (extendedInsights ?? [])
+    .filter((i) => i.insight_type === "platform_rec" && (i.data as Record<string, unknown>)?.totalRevenue)
+    .map((i) => i.data as Record<string, unknown>);
+
   return {
     analytics: {
       total: enrichedAnalytics.length,
@@ -260,6 +287,12 @@ async function gatherStrategyContext(userId: string) {
         followerCount: latestFollowers[a.platform],
         ratio: latestFollowers[a.platform] ? Math.round((a.impressions ?? 0) / latestFollowers[a.platform] * 10) / 10 : null,
       })),
+    },
+    // Extended platform analytics (audience demographics, content format trends, revenue)
+    extendedAnalytics: {
+      audience: audienceData,
+      contentTrends: contentTrendData,
+      revenue: revenueData,
     },
     followerGrowth: followerData ?? [],
     trends: trends ?? [],

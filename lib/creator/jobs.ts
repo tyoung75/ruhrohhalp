@@ -858,6 +858,111 @@ async function generateContentGoalSignals(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Collect extended analytics (audience, trends, revenue)
+// ---------------------------------------------------------------------------
+
+export async function collectExtendedAnalytics(
+  userId: string
+): Promise<{ platforms: string[]; errors: string[] }> {
+  const supabase = createAdminClient();
+  const platforms: string[] = [];
+  const errors: string[] = [];
+
+  // Get all connected platforms with active tokens
+  const { data: tokens } = await supabase
+    .from("platform_tokens")
+    .select("platform, access_token, platform_user_id, expires_at")
+    .eq("user_id", userId);
+
+  if (!tokens?.length) return { platforms, errors };
+
+  const endDate = new Date().toISOString();
+  const startDate = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  for (const token of tokens) {
+    if (token.expires_at && new Date(token.expires_at as string) < new Date()) {
+      continue;
+    }
+
+    try {
+      const adapter = getPlatformAdapter(token.platform as string);
+
+      // Only call if the adapter supports extended analytics
+      if (!adapter.getExtendedAnalytics) continue;
+
+      const extended = await adapter.getExtendedAnalytics({
+        accessToken: token.access_token as string,
+        userId: token.platform_user_id as string,
+        startDate,
+        endDate,
+      });
+
+      // Store in strategy_insights as structured data for the strategy agent
+      // Upsert by platform so we always have the latest snapshot
+
+      if (extended.audience) {
+        await supabase
+          .from("strategy_insights")
+          .upsert(
+            {
+              user_id: userId,
+              insight_type: "audience",
+              content: `${(token.platform as string).toUpperCase()} audience: Peak hours ${extended.audience.peakHours.join(", ")} UTC. Top countries: ${extended.audience.topCountries.slice(0, 3).map((c) => c.country).join(", ") || "N/A"}.`,
+              data: {
+                platform: token.platform,
+                ...extended.audience,
+                period: extended.period,
+              },
+              confidence: 0.85,
+              active: true,
+            },
+            { onConflict: "user_id,insight_type" }
+          );
+      }
+
+      if (extended.contentTrends) {
+        const topFormat = extended.contentTrends.topFormats[0];
+        await supabase.from("strategy_insights").insert({
+          user_id: userId,
+          insight_type: "content_pattern",
+          content: `${(token.platform as string).toUpperCase()} content trends: Best format is ${topFormat?.format ?? "unknown"} (${topFormat?.avgViews ?? 0} avg views). Avg watch time: ${extended.contentTrends.avgWatchTimeSec}s. Completion rate: ${Math.round((extended.contentTrends.avgCompletionRate ?? 0) * 100)}%.`,
+          data: {
+            platform: token.platform,
+            ...extended.contentTrends,
+            period: extended.period,
+          },
+          confidence: 0.8,
+          active: true,
+        });
+      }
+
+      if (extended.revenue && extended.revenue.totalRevenue > 0) {
+        await supabase.from("strategy_insights").insert({
+          user_id: userId,
+          insight_type: "platform_rec",
+          content: `${(token.platform as string).toUpperCase()} revenue: $${extended.revenue.totalRevenue.toFixed(2)} over 30 days. RPM: $${extended.revenue.rpm.toFixed(2)}. CPM: $${extended.revenue.cpm.toFixed(2)}.`,
+          data: {
+            platform: token.platform,
+            ...extended.revenue,
+            period: extended.period,
+          },
+          confidence: 0.95,
+          active: true,
+        });
+      }
+
+      platforms.push(token.platform as string);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      errors.push(`${token.platform}: ${msg}`);
+      logError("jobs.extended-analytics", err, { platform: token.platform });
+    }
+  }
+
+  return { platforms, errors };
+}
+
 async function embedPerformanceMemories(
   userId: string,
   metrics: Array<{ contentQueueId: string; body: string; engagementRate: number; impressions: number; likes: number; platform: string }>
