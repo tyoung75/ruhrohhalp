@@ -377,6 +377,8 @@ function FocusCard(props: FocusCardProps) {
   const { item, onDelete, onMarkDone, onSnooze, isDeleting, onDeleteClick, onCancelDelete, expandedWhy, onToggleWhy } = props;
   const isExpanded = expandedWhy.has(item.id);
   const whyContent = item.leverageReason;
+  const [feedbackGiven, setFeedbackGiven] = useState<"up" | "down" | null>(null);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
   const priorityColors: Record<string, string> = {
     urgent: C.reminder,
     high: C.task,
@@ -410,6 +412,29 @@ function FocusCard(props: FocusCardProps) {
       url = `https://claude.ai/new?q=${encoded}`;
     }
     window.open(url, "_blank", "noopener");
+  };
+
+  const handleFeedback = async (type: "up" | "down") => {
+    if (feedbackGiven || feedbackSaving) return;
+    setFeedbackSaving(true);
+    try {
+      await api("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          section: "leverage_tasks",
+          action: type === "up" ? "thumbs_up" : "thumbs_down",
+          note: type === "up"
+            ? `High-leverage: "${item.title}"`
+            : `Not high-leverage: "${item.title}"`,
+          task_id: item.id,
+        }),
+      });
+      setFeedbackGiven(type);
+    } catch (err) {
+      console.error("Error saving feedback:", err);
+    } finally {
+      setFeedbackSaving(false);
+    }
   };
 
   // Friendly source label
@@ -570,6 +595,51 @@ function FocusCard(props: FocusCardProps) {
           )}
         </div>
       )}
+
+      {/* Feedback Row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: C.textFaint }}>
+          {feedbackGiven ? "Thanks for the feedback" : "Is this high-leverage?"}
+        </span>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button
+            onClick={() => handleFeedback("up")}
+            disabled={!!feedbackGiven || feedbackSaving}
+            style={{
+              background: feedbackGiven === "up" ? `${C.todo}25` : "none",
+              border: feedbackGiven === "up" ? `1px solid ${C.todo}60` : `1px solid ${C.border}`,
+              color: feedbackGiven === "up" ? C.todo : C.textDim,
+              borderRadius: 4,
+              padding: "2px 8px",
+              fontSize: 14,
+              cursor: feedbackGiven ? "default" : "pointer",
+              opacity: feedbackGiven && feedbackGiven !== "up" ? 0.3 : 1,
+              transition: "all 0.15s",
+            }}
+            title="Yes, high-leverage"
+          >
+            ▲
+          </button>
+          <button
+            onClick={() => handleFeedback("down")}
+            disabled={!!feedbackGiven || feedbackSaving}
+            style={{
+              background: feedbackGiven === "down" ? `${C.reminder}25` : "none",
+              border: feedbackGiven === "down" ? `1px solid ${C.reminder}60` : `1px solid ${C.border}`,
+              color: feedbackGiven === "down" ? C.reminder : C.textDim,
+              borderRadius: 4,
+              padding: "2px 8px",
+              fontSize: 14,
+              cursor: feedbackGiven ? "default" : "pointer",
+              opacity: feedbackGiven && feedbackGiven !== "down" ? 0.3 : 1,
+              transition: "all 0.15s",
+            }}
+            title="Not high-leverage"
+          >
+            ▼
+          </button>
+        </div>
+      </div>
 
       {/* Action Row */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

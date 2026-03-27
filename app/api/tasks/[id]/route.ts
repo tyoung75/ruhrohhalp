@@ -16,9 +16,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   const { id } = await context.params;
 
   const updates: Record<string, string | null> = {};
-  if (parsed.data.status) updates.status = parsed.data.status;
+  if (parsed.data.status) {
+    updates.status = parsed.data.status;
+    // Sync state with status so task queries filtering on state work correctly
+    if (parsed.data.status === "done") updates.state = "done";
+    else if (parsed.data.status === "open") updates.state = "unstarted";
+  }
   if (parsed.data.title) updates.title = parsed.data.title;
   if (parsed.data.description !== undefined) updates.description = parsed.data.description;
+  if (parsed.data.snoozed_until !== undefined) updates.snoozed_until = parsed.data.snoozed_until;
 
   if (parsed.data.selectedModel !== undefined) {
     const tier = await getTierForUser(user.id);
