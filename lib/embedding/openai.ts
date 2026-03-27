@@ -9,11 +9,11 @@ export type EmbeddingResult = { embedding: number[]; index: number };
 
 async function generateEmbedding(text: string): Promise<number[]> {
   if (!process.env.HF_API_TOKEN) {
-    throw new Error("Missing HF_API_TOKEN env var — required for BGE-M3 embeddings");
+    throw new Error("Missing HF_API_OKEN env var — required for BGE-M3 embeddings");
   }
 
   const response = await fetch(
-    `https://api-inference.huggingface.co/models/${AI_MODELS.EMBEDDING_MODEL}`,
+    `https://router.huggingface.co/models/${AI_MODELS.EMBEDDING_MODEL}`,
     {
       method: "POST",
       headers: {
