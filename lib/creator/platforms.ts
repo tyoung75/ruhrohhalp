@@ -82,12 +82,17 @@ export interface PlatformAdapter {
 
 /**
  * Registry of available platform adapters.
- * Start with Threads, add Instagram and TikTok later.
  */
 import { ThreadsAdapter } from "./threads";
+import { InstagramAdapter } from "./instagram";
+import { TikTokAdapter } from "./tiktok";
+import { YouTubeAdapter } from "./youtube";
 
 const adapters: Record<string, PlatformAdapter> = {
   threads: new ThreadsAdapter(),
+  instagram: new InstagramAdapter(),
+  tiktok: new TikTokAdapter(),
+  youtube: new YouTubeAdapter(),
 };
 
 export function getPlatformAdapter(platform: string): PlatformAdapter {

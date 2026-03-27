@@ -1080,15 +1080,39 @@ function QueueTab() {
 function AnalyticsTab() {
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [days, setDays] = useState(30);
 
-  useEffect(() => {
+  const fetchAnalytics = useCallback(() => {
     setLoading(true);
     api<AnalyticsResponse>(`/api/creator/analytics?days=${days}`)
       .then(setData)
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [days]);
+
+  useEffect(() => { fetchAnalytics(); }, [fetchAnalytics]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setRefreshMessage(null);
+    try {
+      const result = await api<{
+        success: boolean;
+        analytics: { processed: number; errors: number; totalPosts: number };
+        followers: { snapshots: number; errors: string[] };
+      }>("/api/creator/analytics/refresh", { method: "POST", body: JSON.stringify({}) });
+      setRefreshMessage(
+        `Refreshed ${result.analytics.processed} posts, ${result.followers.snapshots} platform snapshots`
+      );
+      fetchAnalytics();
+    } catch (err) {
+      setRefreshMessage(err instanceof Error ? err.message : "Refresh failed");
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -1113,6 +1137,27 @@ function AnalyticsTab() {
 
   return (
     <div>
+      {/* Refresh bar */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <SectionLabel>Analytics Dashboard</SectionLabel>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          style={{
+            background: C.cl, color: C.bg, border: "none", borderRadius: 6,
+            padding: "6px 14px", fontFamily: C.sans, fontSize: 12, cursor: "pointer",
+            opacity: refreshing ? 0.5 : 1,
+          }}
+        >
+          {refreshing ? "Refreshing..." : "Refresh Analytics"}
+        </button>
+      </div>
+      {refreshMessage && (
+        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.gpt, marginBottom: 12 }}>
+          {refreshMessage}
+        </div>
+      )}
+
       {/* Follower Tracking Cards */}
       <FollowerCards />
 
@@ -1322,18 +1367,30 @@ function AnalyticsTab() {
 function HistoryTab() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [feedbackStates, setFeedbackStates] = useState<Record<string, number | null>>({});
   const [feedbackNotes, setFeedbackNotes] = useState<Record<string, string>>({});
   const [submittingFeedback, setSubmittingFeedback] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchHistory = useCallback(() => {
     setLoading(true);
     api<QueueResponse>("/api/creator/queue?status=posted&limit=100")
       .then((data) => setItems(data.items))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await fetchHistory();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   async function submitFeedback(itemId: string) {
     const rating = feedbackStates[itemId];
@@ -1377,6 +1434,21 @@ function HistoryTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Header with refresh */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <SectionLabel>Posted Content</SectionLabel>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          style={{
+            background: C.cl, color: C.bg, border: "none", borderRadius: 6,
+            padding: "6px 14px", fontFamily: C.sans, fontSize: 12, cursor: "pointer",
+            opacity: refreshing ? 0.5 : 1,
+          }}
+        >
+          {refreshing ? "Refreshing..." : "Pull Latest Posts"}
+        </button>
+      </div>
       {items.map((item) => {
         const isExpanded = expandedId === item.id;
         const currentRating = feedbackStates[item.id] ?? null;
@@ -1774,6 +1846,7 @@ interface StrategyData {
   velocity: { postsPerWeek: number; platformBreakdown: Record<string, number>; bestTimes: string[] } | null;
   trends: Array<{ topic: string; platform: string | null; relevance_score: number; context: string | null }>;
   lastUpdated: string | null;
+  hasAnalytics?: boolean;
 }
 
 function StrategyTab() {
@@ -1846,7 +1919,10 @@ function StrategyTab() {
 
       {empty ? (
         <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
-          No strategy generated yet. Click &quot;Regenerate Strategy&quot; to analyze your content and generate recommendations.
+          {data?.hasAnalytics
+            ? <>Analytics data is available. Click &quot;Regenerate Strategy&quot; to analyze your content and generate recommendations.</>
+            : <>No analytics data yet. Publish posts and wait for analytics to be collected, then generate your strategy.</>
+          }
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
