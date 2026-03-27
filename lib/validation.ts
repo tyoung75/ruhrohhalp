@@ -9,6 +9,7 @@ export const taskPatchSchema = z.object({
   selectedModel: z.string().max(120).nullable().optional(),
   title: z.string().min(1).max(80).optional(),
   description: z.string().max(1_000).optional(),
+  snoozed_until: z.string().datetime().nullable().optional(),
 });
 
 export const agentChatSchema = z.object({
