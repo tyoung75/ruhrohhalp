@@ -251,16 +251,75 @@ async function gatherStrategyContext(userId: string) {
 export async function generateStrategy(): Promise<StrategyOutput> {
   const context = await gatherStrategyContext(TYLER_USER_ID);
 
-  const userMessage = `Here is the full context for strategy generation:\n\n${JSON.stringify(context, null, 2)}\n\nAnalyze everything and generate an updated social media strategy. Return ONLY JSON.`;
-  const rawResponse = await callClaude(STRATEGY_AGENT_SYSTEM, userMessage, 4096);
+  const userMessage = `Here is the full context for strategy generation:\n\n${JSON.stringify(context, null, 2)}\n\nAnalyze everything and generate an updated social media strategy. Return ONLY valid JSON — no markdown, no commentary. Keep rationale and insight text concise (1-2 sentences each) to stay within output limits.`;
+  const rawResponse = await callClaude(STRATEGY_AGENT_SYSTEM, userMessage, 8192);
 
   const jsonStr = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  const output: StrategyOutput = JSON.parse(jsonStr);
+
+  let output: StrategyOutput;
+  try {
+    output = JSON.parse(jsonStr);
+  } catch (parseErr) {
+    // Claude may have been truncated at max_tokens — attempt to repair
+    const repaired = repairTruncatedJSON(jsonStr);
+    try {
+      output = JSON.parse(repaired);
+    } catch {
+      throw new Error(
+        `Strategy generation returned invalid JSON: ${parseErr instanceof Error ? parseErr.message : "parse error"}. Response length: ${rawResponse.length} chars.`
+      );
+    }
+  }
 
   // Store new insights (deactivate old ones first)
   await storeInsights(output.insights);
 
   return output;
+}
+
+/**
+ * Attempt to repair JSON truncated by max_tokens.
+ * Closes open strings, arrays, and objects so JSON.parse can succeed.
+ */
+function repairTruncatedJSON(json: string): string {
+  let s = json.trim();
+
+  // If truncated inside a string, close the string
+  const quoteCount = (s.match(/(?<!\\)"/g) ?? []).length;
+  if (quoteCount % 2 !== 0) {
+    // Remove the partial string value back to the last comma or opening bracket
+    // to avoid including garbage data
+    const lastCleanBreak = Math.max(s.lastIndexOf(","), s.lastIndexOf("["), s.lastIndexOf("{"));
+    if (lastCleanBreak > s.length * 0.5) {
+      s = s.substring(0, lastCleanBreak);
+    } else {
+      s += '"';
+    }
+  }
+
+  // Remove any trailing commas
+  s = s.replace(/,\s*$/, "");
+
+  // Close open brackets/braces
+  const opens: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of s) {
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{" || ch === "[") opens.push(ch);
+    if (ch === "}" || ch === "]") opens.pop();
+  }
+
+  // Close in reverse order
+  while (opens.length) {
+    const open = opens.pop();
+    s += open === "{" ? "}" : "]";
+  }
+
+  return s;
 }
 
 // ---------------------------------------------------------------------------
