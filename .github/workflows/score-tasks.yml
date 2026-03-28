@@ -1,0 +1,15 @@
+name: Score Tasks
+on:
+  schedule:
+    - cron: '0 11 * * *' # 7 AM ET daily
+  workflow_dispatch:
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger task scoring
+        run: |
+          curl -sf -X POST "${{ secrets.RUHROHHALP_URL }}/api/internal/score-tasks" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.RUHROHHALP_SECRET }}"

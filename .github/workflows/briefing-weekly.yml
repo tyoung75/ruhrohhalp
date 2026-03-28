@@ -1,0 +1,16 @@
+name: Weekly Briefing
+on:
+  schedule:
+    - cron: '0 12 * * 0' # Sunday 8 AM ET
+  workflow_dispatch:
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger weekly briefing
+        run: |
+          curl -sf -X POST "${{ secrets.RUHROHHALP_URL }}/api/internal/briefing" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.RUHROHHALP_SECRET }}" \
+            -d '{"type":"weekly"}'
