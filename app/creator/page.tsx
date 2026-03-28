@@ -1836,7 +1836,6 @@ function AnalyticsTab() {
           platform={expandedPlatform}
           platformData={platforms.find((p) => p.platform === expandedPlatform)}
           topPosts={top_posts.filter((p) => p.platform === expandedPlatform)}
-          dailyTrend={daily_trend}
           days={days}
           onClose={() => setExpandedPlatform(null)}
         />
@@ -1853,14 +1852,12 @@ function PlatformDeepDive({
   platform,
   platformData,
   topPosts,
-  dailyTrend,
   days,
   onClose,
 }: {
   platform: string;
   platformData?: { platform: string; posts: number; impressions: number; avg_engagement: number };
   topPosts: Array<{ body: string; platform: string; impressions: number; likes: number; replies: number; reposts: number; engagement_rate: number; created_at: string }>;
-  dailyTrend: Array<{ date: string; impressions: number; avg_engagement: number; posts: number }>;
   days: number;
   onClose: () => void;
 }) {
