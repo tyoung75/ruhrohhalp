@@ -1,10 +1,9 @@
 /**
- * OAuth callback for Instagram Graph API.
+ * OAuth callback for Instagram API (Instagram Login flow).
  * Exchanges auth code for long-lived token and stores in platform_tokens.
  *
- * Instagram uses Facebook Login, so the token exchange goes through
- * graph.facebook.com. After getting the token, we look up the user's
- * Instagram Business Account ID via their connected Facebook Page.
+ * Uses the Instagram API OAuth flow (not legacy Facebook Login).
+ * Token exchange: api.instagram.com → short-lived → ig_exchange_token → long-lived.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -59,11 +58,10 @@ export async function GET(request: NextRequest) {
           expires_at: expiresAt,
           platform_user_id: tokenData.userId,
           scopes: [
-            "instagram_basic",
-            "instagram_content_publish",
-            "instagram_manage_insights",
-            "pages_show_list",
-            "pages_read_engagement",
+            "instagram_business_basic",
+            "instagram_business_content_publish",
+            "instagram_business_manage_insights",
+            "instagram_business_manage_comments",
           ],
           updated_at: new Date().toISOString(),
         },

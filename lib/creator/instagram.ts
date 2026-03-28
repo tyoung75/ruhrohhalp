@@ -1,8 +1,8 @@
 /**
- * Instagram Graph API adapter for Creator OS.
+ * Instagram API adapter for Creator OS.
  *
- * Uses the same Meta developer app as Threads. Requires Instagram Business
- * or Creator account connected via Facebook Login / Instagram Graph API.
+ * Uses Instagram Login OAuth for professional Instagram accounts and the
+ * Instagram API endpoints for publishing, insights, and token management.
  *
  * Docs: https://developers.facebook.com/docs/instagram-platform
  */
@@ -10,7 +10,6 @@
 import type { PlatformAdapter, PublishResult, PostMetrics, PlatformPost, PlatformProfile } from "./platforms";
 
 const IG_GRAPH = "https://graph.instagram.com/v21.0";
-const FB_GRAPH = "https://graph.facebook.com/v21.0";
 
 export class InstagramAdapter implements PlatformAdapter {
   platform = "instagram";
@@ -244,12 +243,12 @@ export class InstagramAdapter implements PlatformAdapter {
   }
 
   async exchangeCodeForToken(code: string, redirectUri: string) {
-    const appId = process.env.INSTAGRAM_APP_ID ?? process.env.THREADS_APP_ID;
-    const appSecret = process.env.INSTAGRAM_APP_SECRET ?? process.env.THREADS_APP_SECRET;
+    const appId = process.env.INSTAGRAM_APP_ID;
+    const appSecret = process.env.INSTAGRAM_APP_SECRET;
     if (!appId || !appSecret) throw new Error("Missing INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET");
 
-    // Exchange code for short-lived token
-    const shortRes = await fetch(`${FB_GRAPH}/oauth/access_token`, {
+    // Step 1: Exchange code for short-lived token via Instagram API
+    const shortRes = await fetch("https://api.instagram.com/oauth/access_token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -261,33 +260,39 @@ export class InstagramAdapter implements PlatformAdapter {
       }),
     });
     const shortData = await shortRes.json();
-    if (shortData.error) throw new Error(shortData.error.message);
+    if (shortData.error_type || shortData.error_message) {
+      throw new Error(shortData.error_message ?? shortData.error_type);
+    }
 
-    // Exchange for long-lived token
+    const shortToken = shortData.access_token;
+    const userId = String(shortData.user_id);
+
+    // Step 2: Exchange short-lived token for long-lived token (60 days)
     const longRes = await fetch(
-      `${FB_GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${shortData.access_token}`
+      `${IG_GRAPH}/access_token?grant_type=ig_exchange_token&client_secret=${appSecret}&access_token=${shortToken}`
     );
     const longData = await longRes.json();
     if (longData.error) throw new Error(longData.error.message);
 
-    // Get IG Business Account ID
-    const pagesRes = await fetch(
-      `${FB_GRAPH}/me/accounts?fields=instagram_business_account&access_token=${longData.access_token}`
+    // Step 3: Get username from profile
+    const profileRes = await fetch(
+      `${IG_GRAPH}/me?fields=user_id,username&access_token=${longData.access_token}`
     );
-    const pagesData = await pagesRes.json();
-    const igId = pagesData.data?.[0]?.instagram_business_account?.id;
+    const profileData = await profileRes.json();
 
     return {
       accessToken: longData.access_token,
       tokenType: "bearer",
       expiresIn: longData.expires_in,
-      userId: igId ?? "",
+      userId: userId,
+      username: profileData.username ?? undefined,
     };
   }
 
   async refreshLongLivedToken(token: string) {
+    // Instagram API long-lived token refresh
     const res = await fetch(
-      `${FB_GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${process.env.INSTAGRAM_APP_ID ?? process.env.THREADS_APP_ID}&client_secret=${process.env.INSTAGRAM_APP_SECRET ?? process.env.THREADS_APP_SECRET}&fb_exchange_token=${token}`
+      `${IG_GRAPH}/refresh_access_token?grant_type=ig_refresh_token&access_token=${token}`
     );
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
