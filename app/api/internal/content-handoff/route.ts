@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
         .eq("id", item.id);
 
       try {
-        const result = await postToPlatform({
+        const postResult = await postToPlatform({
           id: item.id,
           user_id: item.user_id,
           platform: item.platform,
@@ -48,14 +48,14 @@ export async function POST(request: NextRequest) {
           platform_spec: item.platform_spec ?? undefined,
         });
 
-        if (result.success) {
+        if (postResult.success) {
           await supabase
             .from("content_queue")
             .update({
               status: "posted",
-              external_id: result.external_id ?? null,
-              post_url: result.post_url ?? null,
-              post_id: result.external_id ?? null,
+              external_id: postResult.external_id ?? null,
+              post_url: postResult.post_url ?? null,
+              post_id: postResult.external_id ?? null,
             })
             .eq("id", item.id);
           succeeded++;
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
             .from("content_queue")
             .update({
               status: attempts >= maxAttempts ? "failed" : "queued",
-              last_error: result.error ?? "Unknown error",
+              last_error: postResult.error ?? "Unknown error",
             })
             .eq("id", item.id);
           failed++;
