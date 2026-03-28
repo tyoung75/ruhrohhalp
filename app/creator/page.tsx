@@ -2159,7 +2159,7 @@ function StrategyTab() {
             {data?.velocity && (
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
                 <StatBox label="Posts / Week" value={String(data.velocity.postsPerWeek)} color={C.cream} />
-                {Object.entries(data.velocity.platformBreakdown).map(([p, count]) => (
+                {data.velocity.platformBreakdown && Object.entries(data.velocity.platformBreakdown).map(([p, count]) => (
                   <StatBox key={p} label={p} value={`${count}/wk`} color={PLATFORM_COLORS[p] ?? C.textDim} />
                 ))}
               </div>
