@@ -355,16 +355,6 @@ export function TodaysFocus() {
     }
   };
 
-  const handleSnooze = async (taskId: string) => {
-    try {
-      await api(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ snoozed_until: new Date(Date.now() + 3600000).toISOString() }) });
-      setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
-    } catch (err: unknown) {
-      console.error("Error snoozing task:", err);
-      setError("Failed to snooze task");
-    }
-  };
-
   return (
     <div style={{ padding: "24px 20px", maxWidth: 800, margin: "0 auto" }}>
       {/* Greeting */}
@@ -439,12 +429,9 @@ export function TodaysFocus() {
                 item={item}
                 index={index}
                 onDelete={handleDeleteTask}
-                onMarkDone={handleMarkDone}
-                onSnooze={handleSnooze}
                 onDismiss={handleDismiss}
                 onSetState={handleSetState}
                 isDeleting={deletingId === item.id}
-                onDeleteClick={() => setDeletingId(item.id)}
                 onCancelDelete={() => setDeletingId(null)}
                 expandedWhy={expandedWhy}
                 onToggleWhy={toggleWhyExpanded}
@@ -475,19 +462,16 @@ interface FocusCardProps {
   item: FocusItem;
   index: number;
   onDelete: (id: string) => void;
-  onMarkDone: (id: string) => void;
-  onSnooze: (id: string) => void;
   onDismiss: (id: string, reason: DismissReason) => void;
   onSetState: (id: string, state: string) => void;
   isDeleting: boolean;
-  onDeleteClick: () => void;
   onCancelDelete: () => void;
   expandedWhy: Set<string>;
   onToggleWhy: (id: string) => void;
 }
 
 function FocusCard(props: FocusCardProps) {
-  const { item, onDelete, onMarkDone, onSnooze, onDismiss, onSetState, isDeleting, onDeleteClick, onCancelDelete, expandedWhy, onToggleWhy } = props;
+  const { item, onDelete, onDismiss, onSetState, isDeleting, onCancelDelete, expandedWhy, onToggleWhy } = props;
   const [showDismissReasons, setShowDismissReasons] = useState(false);
   const isExpanded = expandedWhy.has(item.id);
   const whyContent = item.leverageReason;
