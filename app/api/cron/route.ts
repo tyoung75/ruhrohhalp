@@ -23,6 +23,9 @@ import { syncMediaFromDrive } from "@/lib/creator/media-ingest";
 import { analyzeMedia, generateEditPlans } from "@/lib/creator/director";
 import { processPendingPlans } from "@/lib/creator/editor/executor";
 
+// Route segment config: allow up to 60s (Hobby plan max)
+export const maxDuration = 60;
+
 /** Tyler's Supabase user ID — hardcoded for cron (no session context). */
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
 
