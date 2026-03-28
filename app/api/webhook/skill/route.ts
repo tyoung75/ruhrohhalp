@@ -184,12 +184,13 @@ async function handleUpdateTaskState(
   else if (newState === "cancelled") updates.status = "done";
   else updates.status = "open";
 
+  // Fetch task details (including goal_id and title for signal)
   const { data, error } = await supabase
     .from("tasks")
     .update(updates)
     .eq("id", taskId)
     .eq("user_id", userId)
-    .select("id, state")
+    .select("id, state, title, goal_id")
     .maybeSingle();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -203,6 +204,22 @@ async function handleUpdateTaskState(
     entity_id: taskId,
     payload: { new_state: newState, source: "skill" },
   });
+
+  // Auto-signal on task completion: insert goal_signal when done + goal_id set
+  if (newState === "done" && data.goal_id) {
+    supabase.from("goals").select("pillar_id").eq("id", data.goal_id).single().then(async ({ data: goal }) => {
+      if (!goal) return;
+      await supabase.from("goal_signals").insert({
+        user_id: userId,
+        goal_id: data.goal_id,
+        pillar_id: goal.pillar_id,
+        signal_type: "task_completed",
+        content: `Task completed: ${data.title}`,
+        impact_score: 0.7,
+        source_ref: data.id,
+      });
+    }).catch(() => {});
+  }
 
   return NextResponse.json({
     ok: true,

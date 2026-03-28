@@ -62,6 +62,24 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ error: "Task not found" }, { status: 404 });
 
+  // Auto-signal on task completion: insert goal_signal when state → done and goal_id is set
+  if (updates.state === "done" && data.goal_id) {
+    const admin = createAdminClient();
+    // Get pillar_id from goal
+    admin.from("goals").select("pillar_id").eq("id", data.goal_id).single().then(async ({ data: goal }) => {
+      if (!goal) return;
+      await admin.from("goal_signals").insert({
+        user_id: user.id,
+        goal_id: data.goal_id,
+        pillar_id: goal.pillar_id,
+        signal_type: "task_completed",
+        content: `Task completed: ${data.title}`,
+        impact_score: 0.7,
+        source_ref: data.id,
+      });
+    }).catch(() => {});
+  }
+
   // Fire-and-forget: generate unblock_hint when state → blocked
   if (updates.state === "blocked") {
     const admin = createAdminClient();
