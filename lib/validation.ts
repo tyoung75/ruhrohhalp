@@ -6,6 +6,7 @@ export const processInputSchema = z.object({
 
 export const taskPatchSchema = z.object({
   status: z.enum(["open", "done"]).optional(),
+  state: z.enum(["backlog", "unstarted", "started", "in_review", "done", "cancelled", "blocked"]).optional(),
   selectedModel: z.string().max(120).nullable().optional(),
   title: z.string().min(1).max(80).optional(),
   description: z.string().max(1_000).optional(),

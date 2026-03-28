@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { taskPatchSchema } from "@/lib/validation";
 import { getTierForUser } from "@/lib/profile";
 import { isModelAllowedForTier } from "@/lib/tiers";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { generateUnblockHint } from "@/lib/ai/unblock-hint";
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { user, response } = await requireUser();
@@ -16,12 +18,24 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   const { id } = await context.params;
 
   const updates: Record<string, string | null> = {};
+
+  // Handle explicit state changes
+  if (parsed.data.state) {
+    updates.state = parsed.data.state;
+    if (parsed.data.state === "done" || parsed.data.state === "cancelled") {
+      updates.status = "done";
+    } else {
+      updates.status = "open";
+    }
+  }
+
+  // Handle legacy status changes
   if (parsed.data.status) {
     updates.status = parsed.data.status;
-    // Sync state with status so task queries filtering on state work correctly
     if (parsed.data.status === "done") updates.state = "done";
-    else if (parsed.data.status === "open") updates.state = "unstarted";
+    else if (parsed.data.status === "open") updates.state = updates.state ?? "unstarted";
   }
+
   if (parsed.data.title) updates.title = parsed.data.title;
   if (parsed.data.description !== undefined) updates.description = parsed.data.description;
   if (parsed.data.snoozed_until !== undefined) updates.snoozed_until = parsed.data.snoozed_until;
@@ -42,11 +56,37 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     .update(updates)
     .eq("id", id)
     .eq("user_id", user.id)
-    .select("id")
+    .select("id, title, description, state, goal_id")
     .maybeSingle();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+
+  // Fire-and-forget: generate unblock_hint when state → blocked
+  if (updates.state === "blocked") {
+    const admin = createAdminClient();
+    // Fetch goal title if linked
+    let goalTitle: string | undefined;
+    if (data.goal_id) {
+      const { data: goal } = await admin.from("goals").select("title").eq("id", data.goal_id).single();
+      goalTitle = goal?.title;
+    }
+
+    generateUnblockHint({
+      title: data.title,
+      description: data.description ?? undefined,
+      goal_title: goalTitle,
+    }).then(async (hint) => {
+      if (hint) {
+        const { data: existing } = await admin.from("tasks").select("ai_metadata").eq("id", id).single();
+        const meta = (existing?.ai_metadata as Record<string, unknown>) ?? {};
+        await admin
+          .from("tasks")
+          .update({ ai_metadata: { ...meta, unblock_hint: hint } })
+          .eq("id", id);
+      }
+    }).catch(() => {});
+  }
 
   return NextResponse.json({ ok: true });
 }
