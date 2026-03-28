@@ -90,13 +90,13 @@ export default function IntegrationsPage() {
   useEffect(() => {
     async function fetchConnections() {
       try {
-        const res = await fetch("/api/creator/analytics?platforms=tiktok,threads,instagram,youtube");
+        const res = await fetch("/api/creator/connections");
         if (res.ok) {
           const data = await res.json();
           const connected: Record<string, { connected: boolean; username?: string }> = {};
-          if (data?.platforms) {
-            for (const p of data.platforms) {
-              connected[p.platform] = { connected: true, username: p.username };
+          if (data?.connections) {
+            for (const c of data.connections) {
+              connected[c.platform] = { connected: true, username: c.username };
             }
           }
           setConnections((prev) => ({ ...prev, ...connected }));
