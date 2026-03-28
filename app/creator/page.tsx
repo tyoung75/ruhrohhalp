@@ -1481,14 +1481,49 @@ function AnalyticsTab() {
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState<string | null>(null);
+  const [scrapingFollowers, setScrapingFollowers] = useState(false);
+  const [scrapeResult, setScrapeResult] = useState<string | null>(null);
+  const [expandedPlatform, setExpandedPlatform] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchData = useCallback(() => {
     setLoading(true);
     api<AnalyticsResponse>(`/api/creator/analytics?days=${days}`)
       .then(setData)
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [days]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  async function handlePullAnalytics() {
+    setRefreshing(true);
+    setRefreshResult(null);
+    try {
+      const res = await api<{ processed: number; errors: number; totalPosts?: number }>("/api/creator/analytics", { method: "POST" });
+      setRefreshResult(`Refreshed ${res.processed} post${res.processed !== 1 ? "s" : ""}${res.errors > 0 ? ` (${res.errors} errors)` : ""}`);
+      fetchData(); // Re-fetch after refresh
+    } catch (e) {
+      setRefreshResult(e instanceof Error ? e.message : "Refresh failed");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function handleScrapeFollowers() {
+    setScrapingFollowers(true);
+    setScrapeResult(null);
+    try {
+      await api<Record<string, unknown>>("/api/creator/followers", { method: "POST" });
+      setScrapeResult("Follower snapshot complete");
+      fetchData();
+    } catch (e) {
+      setScrapeResult(e instanceof Error ? e.message : "Scrape failed");
+    } finally {
+      setScrapingFollowers(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -1501,7 +1536,31 @@ function AnalyticsTab() {
   if (!data) {
     return (
       <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
-        No analytics data yet. Posts need to be published first.
+        <div style={{ marginBottom: 16 }}>No analytics data yet. Posts need to be published first.</div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+          <button
+            onClick={handlePullAnalytics}
+            disabled={refreshing}
+            style={{
+              background: C.cl, border: "none", color: "#0f1117", padding: "8px 16px",
+              borderRadius: 6, fontFamily: C.mono, fontSize: 11, fontWeight: 600,
+              cursor: refreshing ? "wait" : "pointer", opacity: refreshing ? 0.6 : 1,
+            }}
+          >
+            {refreshing ? "Pulling..." : "Pull Analytics"}
+          </button>
+          <button
+            onClick={handleScrapeFollowers}
+            disabled={scrapingFollowers}
+            style={{
+              background: "transparent", border: `1px solid ${C.cl}40`, color: C.cl, padding: "8px 16px",
+              borderRadius: 6, fontFamily: C.mono, fontSize: 11,
+              cursor: scrapingFollowers ? "wait" : "pointer", opacity: scrapingFollowers ? 0.6 : 1,
+            }}
+          >
+            {scrapingFollowers ? "Scraping..." : "Scrape Followers"}
+          </button>
+        </div>
       </div>
     );
   }
@@ -1516,8 +1575,8 @@ function AnalyticsTab() {
       {/* Follower Tracking Cards */}
       <FollowerCards />
 
-      {/* Period selector */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 20, marginTop: 20 }}>
+      {/* Controls bar: Period selector + Pull buttons */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, marginTop: 20, flexWrap: "wrap" }}>
         {[7, 14, 30, 60].map((d) => (
           <button
             key={d}
@@ -1536,7 +1595,64 @@ function AnalyticsTab() {
             {d}d
           </button>
         ))}
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={handleScrapeFollowers}
+          disabled={scrapingFollowers}
+          style={{
+            background: "transparent", border: `1px solid ${C.gem}40`, color: C.gem, padding: "5px 12px",
+            borderRadius: 6, fontFamily: C.mono, fontSize: 10,
+            cursor: scrapingFollowers ? "wait" : "pointer", opacity: scrapingFollowers ? 0.6 : 1,
+            display: "flex", alignItems: "center", gap: 5,
+          }}
+        >
+          {scrapingFollowers ? <><Spinner size={10} color={C.gem} /> Scraping...</> : "Scrape Followers"}
+        </button>
+        <button
+          onClick={handlePullAnalytics}
+          disabled={refreshing}
+          style={{
+            background: C.cl, border: "none", color: "#0f1117", padding: "5px 12px",
+            borderRadius: 6, fontFamily: C.mono, fontSize: 10, fontWeight: 600,
+            cursor: refreshing ? "wait" : "pointer", opacity: refreshing ? 0.6 : 1,
+            display: "flex", alignItems: "center", gap: 5,
+          }}
+        >
+          {refreshing ? <><Spinner size={10} color="#0f1117" /> Pulling...</> : "Pull Analytics"}
+        </button>
       </div>
+
+      {/* Refresh result messages */}
+      {(refreshResult || scrapeResult) && (
+        <div style={{
+          display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap",
+        }}>
+          {refreshResult && (
+            <div style={{
+              padding: "6px 12px", borderRadius: 6, fontFamily: C.mono, fontSize: 10,
+              background: refreshResult.includes("fail") || refreshResult.includes("Rate") ? `${C.reminder}14` : `${C.gpt}14`,
+              color: refreshResult.includes("fail") || refreshResult.includes("Rate") ? C.reminder : C.gpt,
+              border: `1px solid ${refreshResult.includes("fail") || refreshResult.includes("Rate") ? `${C.reminder}30` : `${C.gpt}30`}`,
+              display: "flex", alignItems: "center", gap: 8,
+            }}>
+              {refreshResult}
+              <button onClick={() => setRefreshResult(null)} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 12 }}>✕</button>
+            </div>
+          )}
+          {scrapeResult && (
+            <div style={{
+              padding: "6px 12px", borderRadius: 6, fontFamily: C.mono, fontSize: 10,
+              background: scrapeResult.includes("fail") || scrapeResult.includes("Rate") ? `${C.reminder}14` : `${C.gpt}14`,
+              color: scrapeResult.includes("fail") || scrapeResult.includes("Rate") ? C.reminder : C.gpt,
+              border: `1px solid ${scrapeResult.includes("fail") || scrapeResult.includes("Rate") ? `${C.reminder}30` : `${C.gpt}30`}`,
+              display: "flex", alignItems: "center", gap: 8,
+            }}>
+              {scrapeResult}
+              <button onClick={() => setScrapeResult(null)} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 12 }}>✕</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Overview cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
@@ -1649,24 +1765,26 @@ function AnalyticsTab() {
                   key={p.platform}
                   style={{
                     background: C.card,
-                    border: `1px solid ${C.border}`,
+                    border: `1px solid ${expandedPlatform === p.platform ? `${C.cl}45` : C.border}`,
                     borderRadius: 8,
                     padding: "10px 14px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
+                    cursor: "pointer",
+                    transition: "border-color 0.15s",
                   }}
+                  onClick={() => setExpandedPlatform(expandedPlatform === p.platform ? null : p.platform)}
                 >
-                  <div>
-                    <div style={{ fontFamily: C.sans, fontSize: 13, color: C.cream, textTransform: "capitalize" }}>
-                      {p.platform}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontFamily: C.sans, fontSize: 13, color: C.cream, textTransform: "capitalize" }}>
+                        {p.platform}
+                      </div>
+                      <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
+                        {p.posts} posts &middot; {p.impressions.toLocaleString()} impressions
+                      </div>
                     </div>
-                    <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
-                      {p.posts} posts &middot; {p.impressions.toLocaleString()} impressions
+                    <div style={{ fontFamily: C.mono, fontSize: 14, color: C.cl }}>
+                      {(p.avg_engagement * 100).toFixed(1)}%
                     </div>
-                  </div>
-                  <div style={{ fontFamily: C.mono, fontSize: 14, color: C.cl }}>
-                    {(p.avg_engagement * 100).toFixed(1)}%
                   </div>
                 </div>
               ))
@@ -1711,6 +1829,152 @@ function AnalyticsTab() {
           </div>
         </div>
       </div>
+
+      {/* Platform-Specific Deep Dive */}
+      {expandedPlatform && (
+        <PlatformDeepDive
+          platform={expandedPlatform}
+          platformData={platforms.find((p) => p.platform === expandedPlatform)}
+          topPosts={top_posts.filter((p) => p.platform === expandedPlatform)}
+          days={days}
+          onClose={() => setExpandedPlatform(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Platform Deep Dive (expanded analytics per platform)
+// ---------------------------------------------------------------------------
+
+function PlatformDeepDive({
+  platform,
+  platformData,
+  topPosts,
+  days,
+  onClose,
+}: {
+  platform: string;
+  platformData?: { platform: string; posts: number; impressions: number; avg_engagement: number };
+  topPosts: Array<{ body: string; platform: string; impressions: number; likes: number; replies: number; reposts: number; engagement_rate: number; created_at: string }>;
+  days: number;
+  onClose: () => void;
+}) {
+  const pColor = PLATFORM_COLORS[platform] ?? C.cl;
+  const pIcon = PLATFORM_ICONS[platform] ?? "◈";
+
+  // Platform-specific metrics
+  const totalImpressions = platformData?.impressions ?? 0;
+  const totalPosts = platformData?.posts ?? 0;
+  const avgEngagement = platformData?.avg_engagement ?? 0;
+  const avgImpressionsPerPost = totalPosts > 0 ? Math.round(totalImpressions / totalPosts) : 0;
+  const totalLikes = topPosts.reduce((s, p) => s + p.likes, 0);
+  const totalReplies = topPosts.reduce((s, p) => s + p.replies, 0);
+  const totalReposts = topPosts.reduce((s, p) => s + p.reposts, 0);
+
+  return (
+    <div style={{ marginTop: 24, paddingTop: 24, borderTop: `1px solid ${C.border}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <span style={{ fontSize: 18, color: pColor }}>{pIcon}</span>
+        <h3 style={{ fontFamily: C.serif, fontSize: 18, fontStyle: "italic", color: C.cream, margin: 0, textTransform: "capitalize" }}>
+          {platform} Analytics
+        </h3>
+        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim }}>Last {days} days</span>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={onClose}
+          style={{ background: "none", border: `1px solid ${C.border}`, color: C.textDim, padding: "4px 10px", borderRadius: 6, fontSize: 11, fontFamily: C.mono, cursor: "pointer" }}
+        >
+          Close
+        </button>
+      </div>
+
+      {/* Platform KPI cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 20 }}>
+        <StatCard label="Posts" value={totalPosts} />
+        <StatCard label="Impressions" value={totalImpressions.toLocaleString()} />
+        <StatCard label="Engagement" value={`${(avgEngagement * 100).toFixed(1)}%`} accent />
+        <StatCard label="Avg Imp/Post" value={avgImpressionsPerPost.toLocaleString()} />
+        <StatCard label="Likes" value={totalLikes} />
+        <StatCard label="Replies" value={totalReplies} />
+      </div>
+
+      {/* Platform-specific metrics */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* Content performance */}
+        <div>
+          <SectionHeader>{platform} Top Content</SectionHeader>
+          {topPosts.length === 0 ? (
+            <div style={{ color: C.textDim, fontFamily: C.sans, fontSize: 12, padding: "16px 0" }}>No posts for this platform yet</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {topPosts.slice(0, 5).map((post, i) => (
+                <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px" }}>
+                  <div style={{ fontFamily: C.sans, fontSize: 12, color: C.text, lineHeight: 1.4, marginBottom: 6, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                    {post.body}
+                  </div>
+                  <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ color: pColor }}>{(post.engagement_rate * 100).toFixed(1)}% eng</span>
+                    <span>{post.impressions.toLocaleString()} views</span>
+                    <span>{post.likes} likes</span>
+                    <span>{post.replies} replies</span>
+                    <span>{post.reposts} reposts</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Platform-specific insights */}
+        <div>
+          <SectionHeader>{platform} Insights</SectionHeader>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "14px 16px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, textTransform: "uppercase", marginBottom: 4 }}>
+                  Avg Engagement Rate
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ flex: 1, height: 6, background: C.border, borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ width: `${Math.min(avgEngagement * 100 * 10, 100)}%`, height: "100%", background: pColor, borderRadius: 3 }} />
+                  </div>
+                  <span style={{ fontFamily: C.mono, fontSize: 12, color: pColor }}>{(avgEngagement * 100).toFixed(1)}%</span>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, textTransform: "uppercase", marginBottom: 4 }}>
+                  Impressions per Post
+                </div>
+                <div style={{ fontFamily: C.serif, fontSize: 20, fontStyle: "italic", color: C.cream }}>
+                  {avgImpressionsPerPost.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, textTransform: "uppercase", marginBottom: 4 }}>
+                  Interaction Breakdown
+                </div>
+                <div style={{ display: "flex", gap: 16, fontFamily: C.mono, fontSize: 11 }}>
+                  <span style={{ color: C.gpt }}>{totalLikes} likes</span>
+                  <span style={{ color: C.gem }}>{totalReplies} replies</span>
+                  <span style={{ color: C.gold }}>{totalReposts} reposts</span>
+                </div>
+              </div>
+              {totalPosts > 0 && (
+                <div>
+                  <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, textTransform: "uppercase", marginBottom: 4 }}>
+                    Posting Frequency
+                  </div>
+                  <div style={{ fontFamily: C.mono, fontSize: 12, color: C.text }}>
+                    {(totalPosts / (days / 7)).toFixed(1)} posts/week
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1731,11 +1995,45 @@ function HistoryTab() {
   const [deletedPromptId, setDeletedPromptId] = useState<string | null>(null);
   // Track which items already have feedback saved (green check)
   const [savedItems, setSavedItems] = useState<Record<string, boolean>>({});
+  // Sort: "recent" (default) or "engagement"
+  const [sortBy, setSortBy] = useState<"recent" | "engagement">("recent");
+  // Analytics data for engagement numbers
+  const [analyticsMap, setAnalyticsMap] = useState<Record<string, { impressions: number; likes: number; replies: number; reposts: number; engagement_rate: number }>>({});
 
   useEffect(() => {
     setLoading(true);
-    api<QueueResponse>("/api/creator/queue?status=posted&limit=100")
-      .then((data) => setItems(data.items))
+    Promise.all([
+      api<QueueResponse>("/api/creator/queue?status=posted&limit=100"),
+      api<AnalyticsResponse>("/api/creator/analytics?days=30").catch(() => null),
+    ])
+      .then(([queueData, analyticsData]) => {
+        // Filter to last 30 days only
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).getTime();
+        const filtered = queueData.items.filter((item) => {
+          const postDate = new Date(item.scheduled_for ?? item.updated_at).getTime();
+          return postDate >= thirtyDaysAgo;
+        });
+        setItems(filtered);
+
+        // Build analytics lookup by matching post body (since we don't have direct content_queue_id mapping in top_posts)
+        if (analyticsData?.top_posts) {
+          const aMap: typeof analyticsMap = {};
+          for (const post of analyticsData.top_posts) {
+            // Match by body prefix
+            const matchedItem = filtered.find((item) => item.body?.slice(0, 100) === post.body?.slice(0, 100));
+            if (matchedItem) {
+              aMap[matchedItem.id] = {
+                impressions: post.impressions,
+                likes: post.likes,
+                replies: post.replies,
+                reposts: post.reposts,
+                engagement_rate: post.engagement_rate,
+              };
+            }
+          }
+          setAnalyticsMap(aMap);
+        }
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -1799,14 +2097,56 @@ function HistoryTab() {
   if (items.length === 0) {
     return (
       <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
-        No posted content yet. Once posts are published, they&apos;ll appear here for review.
+        No posted content in the last 30 days. Once posts are published, they&apos;ll appear here for review.
       </div>
     );
   }
 
+  // Sort items
+  const sortedItems = [...items].sort((a, b) => {
+    if (sortBy === "engagement") {
+      const engA = analyticsMap[a.id]?.engagement_rate ?? 0;
+      const engB = analyticsMap[b.id]?.engagement_rate ?? 0;
+      return engB - engA;
+    }
+    // Default: most recent first
+    const dateA = new Date(a.scheduled_for ?? a.updated_at).getTime();
+    const dateB = new Date(b.scheduled_for ?? b.updated_at).getTime();
+    return dateB - dateA;
+  });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {items.map((item) => {
+      {/* Sort controls + info */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim }}>Last 30 days</span>
+        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>&middot; {items.length} posts</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint }}>Sort:</span>
+        {([
+          { id: "recent" as const, label: "Most Recent" },
+          { id: "engagement" as const, label: "Top Engagement" },
+        ]).map((opt) => (
+          <button
+            key={opt.id}
+            onClick={() => setSortBy(opt.id)}
+            style={{
+              background: sortBy === opt.id ? `${C.cl}14` : "transparent",
+              border: `1px solid ${sortBy === opt.id ? `${C.cl}45` : C.border}`,
+              color: sortBy === opt.id ? C.cl : C.textDim,
+              padding: "3px 10px",
+              borderRadius: 20,
+              fontFamily: C.mono,
+              fontSize: 9,
+              cursor: "pointer",
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {sortedItems.map((item) => {
         const isExpanded = expandedId === item.id;
         const currentState = feedbackStates[item.id] ?? null;
         const isSaving = submittingFeedback === item.id;
@@ -1873,16 +2213,36 @@ function HistoryTab() {
                 </div>
               </div>
 
-              <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 6 }}>
-                Posted {item.scheduled_for
-                  ? new Date(item.scheduled_for).toLocaleString("en-US", {
-                      weekday: "short",
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })
-                  : new Date(item.updated_at).toLocaleDateString()}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
+                  Posted {item.scheduled_for
+                    ? new Date(item.scheduled_for).toLocaleString("en-US", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })
+                    : new Date(item.updated_at).toLocaleDateString()}
+                </span>
+                {/* Engagement numbers */}
+                {analyticsMap[item.id] && (
+                  <>
+                    <span style={{ color: C.border }}>|</span>
+                    <span style={{ fontFamily: C.mono, fontSize: 10, color: C.cl }}>
+                      {(analyticsMap[item.id].engagement_rate * 100).toFixed(1)}% eng
+                    </span>
+                    <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim }}>
+                      {analyticsMap[item.id].impressions.toLocaleString()} views
+                    </span>
+                    <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim }}>
+                      {analyticsMap[item.id].likes} likes
+                    </span>
+                    <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim }}>
+                      {analyticsMap[item.id].replies} replies
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 
