@@ -31,6 +31,53 @@ create table if not exists content_feedback (
   created_at  timestamptz not null default now()
 );
 
+-- Older environments may already have a legacy content_feedback table with
+-- `feedback` instead of `content`, and without `context` / `active`.
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'content_feedback'
+      and column_name = 'feedback'
+  ) and not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'content_feedback'
+      and column_name = 'content'
+  ) then
+    alter table public.content_feedback rename column feedback to content;
+  end if;
+end $$;
+
+alter table public.content_feedback
+  add column if not exists content_queue_id uuid references public.content_queue(id) on delete set null,
+  add column if not exists feedback_type text,
+  add column if not exists content text,
+  add column if not exists context jsonb default '{}'::jsonb,
+  add column if not exists active boolean default true,
+  add column if not exists created_at timestamptz default now();
+
+update public.content_feedback
+set context = '{}'::jsonb
+where context is null;
+
+update public.content_feedback
+set active = true
+where active is null;
+
+update public.content_feedback
+set content = ''
+where content is null;
+
+alter table public.content_feedback
+  alter column content set not null,
+  alter column active set default true,
+  alter column active set not null,
+  alter column created_at set default now();
+
 -- Index for querying recent active feedback
 create index if not exists idx_content_feedback_user_active
   on content_feedback (user_id, active, created_at desc);

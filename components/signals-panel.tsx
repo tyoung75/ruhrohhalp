@@ -7,6 +7,47 @@ import { api } from "@/lib/client-api";
 import { OneTapAction, type ActionType } from "@/components/one-tap-action";
 
 // ---------------------------------------------------------------------------
+// CW-3/4/5/6: New right-panel section types
+// ---------------------------------------------------------------------------
+
+interface BlockedTask {
+  id: string;
+  title: string;
+  state: string;
+  ai_metadata?: {
+    unblock_hint?: string;
+  };
+}
+
+interface ZombieAlert {
+  id: string;
+  type: string;
+  task_id?: string;
+  task_title?: string;
+  days_stale?: number;
+  message?: string;
+  created_at: string;
+}
+
+interface DeadLetterAlert {
+  id: string;
+  type: string;
+  job_name?: string;
+  error_snippet?: string;
+  created_at: string;
+  original_endpoint?: string;
+}
+
+interface ContentReviewItem {
+  id: string;
+  platform: string;
+  topic?: string;
+  status: string;
+  ai_audit_passed?: boolean;
+  audit_notes?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -268,6 +309,432 @@ function CategoryFilter({
 }
 
 // ---------------------------------------------------------------------------
+// CW-3: Blocked Tasks Section
+// ---------------------------------------------------------------------------
+
+function BlockedTasksSection({ tasks }: { tasks: BlockedTask[] }) {
+  const [expanded, setExpanded] = useState(true);
+  const visibleTasks = tasks.slice(0, 3);
+
+  const handleUnblock = async (taskId: string) => {
+    try {
+      await api(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ state: "unstarted" }),
+      });
+      window.dispatchEvent(new Event("signals:refresh"));
+    } catch (e) {
+      console.error("Failed to unblock task:", e);
+    }
+  };
+
+  if (tasks.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          background: "none",
+          border: "none",
+          color: C.task,
+          fontFamily: C.mono,
+          fontSize: 10,
+          fontWeight: 600,
+          cursor: "pointer",
+          padding: 0,
+          marginBottom: 6,
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+        }}
+      >
+        <span style={{ fontSize: 8 }}>{expanded ? "▼" : "▶"}</span>
+        Blocked ({tasks.length})
+      </button>
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {visibleTasks.map((task) => (
+            <div
+              key={task.id}
+              style={{
+                background: C.card,
+                border: `1px solid ${C.task}20`,
+                borderLeft: `3px solid ${C.task}`,
+                borderRadius: 6,
+                padding: "8px 10px",
+              }}
+            >
+              <div style={{ fontSize: 11, color: C.text, fontWeight: 500, marginBottom: 4 }}>
+                {task.title}
+              </div>
+              {task.ai_metadata?.unblock_hint && (
+                <div style={{ fontSize: 10, color: C.textDim, fontStyle: "italic", marginBottom: 6, lineHeight: 1.4 }}>
+                  💡 {task.ai_metadata.unblock_hint}
+                </div>
+              )}
+              <button
+                onClick={() => handleUnblock(task.id)}
+                style={{
+                  background: `${C.gpt}14`,
+                  border: `1px solid ${C.gpt}30`,
+                  color: C.gpt,
+                  borderRadius: 4,
+                  padding: "3px 8px",
+                  fontSize: 9,
+                  fontFamily: C.mono,
+                  cursor: "pointer",
+                }}
+              >
+                Mark Unblocked
+              </button>
+            </div>
+          ))}
+          {tasks.length > 3 && (
+            <button
+              style={{
+                background: "none",
+                border: "none",
+                color: C.cl,
+                fontSize: 10,
+                fontFamily: C.mono,
+                cursor: "pointer",
+                padding: "4px 0",
+              }}
+            >
+              View all {tasks.length} blocked →
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CW-4: Zombie Task Alerts Section
+// ---------------------------------------------------------------------------
+
+function ZombieAlertsSection({ alerts }: { alerts: ZombieAlert[] }) {
+  const [expanded, setExpanded] = useState(true);
+  const visibleAlerts = alerts.slice(0, 3);
+
+  const handleAction = async (alertId: string, action: "snooze" | "done" | "remove", taskId?: string) => {
+    try {
+      if (action === "done" && taskId) {
+        await api(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ state: "done" }) });
+      } else if (action === "snooze" && taskId) {
+        await api(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ snoozed_until: new Date(Date.now() + 7 * 86400000).toISOString() }) });
+      } else if (action === "remove") {
+        await api(`/api/system-alerts/${alertId}`, { method: "DELETE" });
+      }
+      window.dispatchEvent(new Event("signals:refresh"));
+    } catch (e) {
+      console.error("Failed to handle zombie action:", e);
+    }
+  };
+
+  if (alerts.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          background: "none",
+          border: "none",
+          color: C.reminder,
+          fontFamily: C.mono,
+          fontSize: 10,
+          fontWeight: 600,
+          cursor: "pointer",
+          padding: 0,
+          marginBottom: 6,
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+        }}
+      >
+        <span style={{ fontSize: 8 }}>{expanded ? "▼" : "▶"}</span>
+        Stale Tasks ({alerts.length})
+      </button>
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {visibleAlerts.map((alert) => (
+            <div
+              key={alert.id}
+              style={{
+                background: C.card,
+                border: `1px solid ${C.reminder}15`,
+                borderRadius: 6,
+                padding: "8px 10px",
+              }}
+            >
+              <div style={{ fontSize: 11, color: C.text, fontWeight: 500, marginBottom: 2 }}>
+                {alert.task_title || alert.message || "Stale task"}
+              </div>
+              <div style={{ fontSize: 9, color: C.textFaint, fontFamily: C.mono, marginBottom: 6 }}>
+                No update in {alert.days_stale || "7+"} days
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button
+                  onClick={() => handleAction(alert.id, "snooze", alert.task_id)}
+                  style={{
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    color: C.textDim,
+                    borderRadius: 3,
+                    padding: "2px 6px",
+                    fontSize: 9,
+                    fontFamily: C.mono,
+                    cursor: "pointer",
+                  }}
+                >
+                  Snooze 7d
+                </button>
+                <button
+                  onClick={() => handleAction(alert.id, "done", alert.task_id)}
+                  style={{
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    color: C.gpt,
+                    borderRadius: 3,
+                    padding: "2px 6px",
+                    fontSize: 9,
+                    fontFamily: C.mono,
+                    cursor: "pointer",
+                  }}
+                >
+                  Mark Done
+                </button>
+                <button
+                  onClick={() => handleAction(alert.id, "remove")}
+                  style={{
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    color: C.reminder,
+                    borderRadius: 3,
+                    padding: "2px 6px",
+                    fontSize: 9,
+                    fontFamily: C.mono,
+                    cursor: "pointer",
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CW-5: Dead-Letter Job Alerts Section
+// ---------------------------------------------------------------------------
+
+function DeadLetterSection({ alerts }: { alerts: DeadLetterAlert[] }) {
+  const handleRetry = async (alert: DeadLetterAlert) => {
+    if (!alert.original_endpoint) return;
+    try {
+      await api(alert.original_endpoint, {
+        method: "POST",
+        headers: { "x-idempotency-key": `retry-${alert.id}-${Date.now()}` },
+      });
+      window.dispatchEvent(new Event("signals:refresh"));
+    } catch (e) {
+      console.error("Failed to retry job:", e);
+    }
+  };
+
+  if (alerts.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div
+        style={{
+          color: C.reminder,
+          fontFamily: C.mono,
+          fontSize: 10,
+          fontWeight: 600,
+          marginBottom: 6,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+        }}
+      >
+        ⚡ System Alerts ({alerts.length})
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {alerts.map((alert) => (
+          <div
+            key={alert.id}
+            style={{
+              background: `${C.reminder}08`,
+              border: `1px solid ${C.reminder}20`,
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            <div style={{ fontSize: 11, color: C.reminder, fontWeight: 500, marginBottom: 2 }}>
+              {alert.job_name || "Job failure"}
+            </div>
+            {alert.error_snippet && (
+              <div
+                style={{
+                  fontSize: 9,
+                  color: C.textDim,
+                  fontFamily: C.mono,
+                  marginBottom: 4,
+                  background: C.surface,
+                  padding: "4px 6px",
+                  borderRadius: 3,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {alert.error_snippet}
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 8, color: C.textFaint, fontFamily: C.mono }}>
+                {formatTime(alert.created_at)}
+              </span>
+              {alert.original_endpoint && (
+                <button
+                  onClick={() => handleRetry(alert)}
+                  style={{
+                    background: `${C.cl}14`,
+                    border: `1px solid ${C.cl}30`,
+                    color: C.cl,
+                    borderRadius: 3,
+                    padding: "2px 6px",
+                    fontSize: 9,
+                    fontFamily: C.mono,
+                    cursor: "pointer",
+                  }}
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CW-6: Content Needing Review Section
+// ---------------------------------------------------------------------------
+
+function ContentReviewSection({ items }: { items: ContentReviewItem[] }) {
+  const platformIcons: Record<string, string> = {
+    tiktok: "♪",
+    instagram: "◻",
+    youtube: "▶",
+    threads: "◈",
+  };
+
+  const handleApprove = async (itemId: string) => {
+    try {
+      await api(`/api/content-queue/${itemId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "queued" }),
+      });
+      window.dispatchEvent(new Event("signals:refresh"));
+    } catch (e) {
+      console.error("Failed to approve content:", e);
+    }
+  };
+
+  if (items.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div
+        style={{
+          color: C.gem,
+          fontFamily: C.mono,
+          fontSize: 10,
+          fontWeight: 600,
+          marginBottom: 6,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+        }}
+      >
+        Content Review ({items.length})
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {items.map((item) => (
+          <div
+            key={item.id}
+            style={{
+              background: C.card,
+              border: `1px solid ${item.ai_audit_passed ? `${C.gpt}20` : `${C.task}20`}`,
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <span style={{ fontSize: 12 }}>{platformIcons[item.platform] || "●"}</span>
+              <span style={{ fontSize: 11, color: C.text, fontWeight: 500 }}>
+                {item.topic || item.platform}
+              </span>
+              <span
+                style={{
+                  fontSize: 8,
+                  fontFamily: C.mono,
+                  color: item.ai_audit_passed ? C.gpt : C.task,
+                  background: item.ai_audit_passed ? `${C.gpt}14` : `${C.task}14`,
+                  border: `1px solid ${item.ai_audit_passed ? `${C.gpt}30` : `${C.task}30`}`,
+                  borderRadius: 3,
+                  padding: "1px 4px",
+                }}
+              >
+                {item.ai_audit_passed ? "Ready" : "Needs edit"}
+              </span>
+            </div>
+            {!item.ai_audit_passed && item.audit_notes && (
+              <div style={{ fontSize: 10, color: C.textDim, fontStyle: "italic", marginBottom: 6, lineHeight: 1.4 }}>
+                {item.audit_notes}
+              </div>
+            )}
+            {item.ai_audit_passed && (
+              <button
+                onClick={() => handleApprove(item.id)}
+                style={{
+                  background: `${C.gpt}14`,
+                  border: `1px solid ${C.gpt}30`,
+                  color: C.gpt,
+                  borderRadius: 4,
+                  padding: "3px 8px",
+                  fontSize: 9,
+                  fontFamily: C.mono,
+                  cursor: "pointer",
+                }}
+              >
+                Approve & Queue
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SignalsPanel — right sidebar
 // ---------------------------------------------------------------------------
 
@@ -277,6 +744,11 @@ export function SignalsPanel() {
   const [generating, setGenerating] = useState(false);
   const [activeFilter, setActiveFilter] = useState<SignalCategory | "all">("all");
   const [error, setError] = useState("");
+  // CW-3/4/5/6: New right-panel section state
+  const [blockedTasks, setBlockedTasks] = useState<BlockedTask[]>([]);
+  const [zombieAlerts, setZombieAlerts] = useState<ZombieAlert[]>([]);
+  const [deadLetterAlerts, setDeadLetterAlerts] = useState<DeadLetterAlert[]>([]);
+  const [contentReviewItems, setContentReviewItems] = useState<ContentReviewItem[]>([]);
 
   const generateBriefing = useCallback(async () => {
     try {
@@ -341,6 +813,51 @@ export function SignalsPanel() {
       }
 
       setSignals(sigs);
+
+      // CW-3/4/5/6: Fetch new right-panel section data in parallel (silent fail if endpoints not deployed)
+      const [blockedRes, zombieRes, deadLetterRes, contentRes] = await Promise.allSettled([
+        // CW-3: Blocked tasks
+        api<{ tasks: BlockedTask[] }>("/api/tasks?state=blocked"),
+        // CW-4: Zombie alerts
+        api<{ alerts: Array<{ id: string; type: string; entity_id: string; payload: Record<string, unknown>; created_at: string }> }>("/api/system-alerts?type=zombie_alert"),
+        // CW-5: Dead-letter alerts (job_runs table)
+        api<{ dead_letter_jobs: DeadLetterAlert[] }>("/api/system-alerts"),
+        // CW-6: Content needing review
+        api<{ items: ContentReviewItem[] }>("/api/content-queue?status=draft&ai_audit_passed=false"),
+      ]);
+
+      if (blockedRes.status === "fulfilled" && blockedRes.value.tasks) {
+        setBlockedTasks(blockedRes.value.tasks);
+      }
+      if (zombieRes.status === "fulfilled" && zombieRes.value.alerts) {
+        // Map activity_log payload fields to ZombieAlert shape
+        const mapped: ZombieAlert[] = zombieRes.value.alerts.map((a) => ({
+          id: a.id,
+          type: a.type,
+          task_id: (a.payload?.task_id as string) ?? a.entity_id,
+          task_title: (a.payload?.task_title as string) ?? undefined,
+          days_stale: (a.payload?.days_stale as number) ?? undefined,
+          message: (a.payload?.message as string) ?? undefined,
+          created_at: a.created_at,
+        }));
+        setZombieAlerts(mapped);
+      }
+      if (deadLetterRes.status === "fulfilled" && deadLetterRes.value.dead_letter_jobs) {
+        // Map dead_letter_jobs from job_runs table
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mapped: DeadLetterAlert[] = (deadLetterRes.value.dead_letter_jobs as any[]).map((j) => ({
+          id: j.id,
+          type: "dead_letter",
+          job_name: j.job_type ?? j.job_name ?? "",
+          error_snippet: j.error ?? "",
+          created_at: j.created_at,
+          original_endpoint: undefined,
+        }));
+        setDeadLetterAlerts(mapped);
+      }
+      if (contentRes.status === "fulfilled" && contentRes.value.items) {
+        setContentReviewItems(contentRes.value.items);
+      }
     } catch (e) {
       console.error("Failed to load signals:", e);
     } finally {
@@ -435,6 +952,18 @@ export function SignalsPanel() {
       {signals.length > 0 && (
         <QuickStats signalCount={signals.length} unreadCount={unreadCount} topSource={topSource} />
       )}
+
+      {/* CW-3: Blocked tasks */}
+      <BlockedTasksSection tasks={blockedTasks} />
+
+      {/* CW-4: Zombie alerts */}
+      <ZombieAlertsSection alerts={zombieAlerts} />
+
+      {/* CW-5: Dead-letter job alerts */}
+      <DeadLetterSection alerts={deadLetterAlerts} />
+
+      {/* CW-6: Content needing review */}
+      <ContentReviewSection items={contentReviewItems} />
 
       {/* Category filter */}
       {signals.length > 0 && (

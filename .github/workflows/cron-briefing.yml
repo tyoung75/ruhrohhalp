@@ -1,0 +1,51 @@
+name: Daily Briefing (Morning + Evening)
+
+# Runs the unified /api/cron endpoint which handles:
+#   - Daily briefing generation (every run)
+#   - Weekly CEO synthesis + strategy refresh (Monday morning only)
+#   - Creator OS: sync external posts, expire stale drafts, publish queued posts
+#   - Analytics collection, Strava sync, follower snapshots, token refresh
+#   - AI Editor pipeline: media sync, analysis, edit plan generation + execution
+#
+# Times are in UTC. Currently EDT (UTC-4), so:
+#   10:00 UTC = 6:00 AM ET  (morning briefing)
+#   00:05 UTC = 8:05 PM ET  (evening briefing)
+#
+# Note: During EST (Nov–Mar, UTC-5) these fire 1 hour earlier than ET.
+# Adjust the cron expressions seasonally if precision matters.
+
+on:
+  schedule:
+    - cron: "0 10 * * *"   # 6:00 AM ET (EDT) — morning briefing
+    - cron: "5 0 * * *"    # 8:05 PM ET (EDT) — evening briefing
+  workflow_dispatch:        # Allow manual trigger from GitHub Actions UI
+
+jobs:
+  run-cron:
+    name: Run /api/cron
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger unified cron endpoint
+        run: |
+          echo "Triggering ruhrohhalp /api/cron at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X GET \
+            "https://ruhrohhalp.com/api/cron" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 300)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: /api/cron returned HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✓ Cron completed successfully"

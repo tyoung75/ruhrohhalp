@@ -49,7 +49,23 @@ interface FocusItem {
   recommendedAI?: string;
   howTo?: string;
   goalId?: string;
+  // CW-1: New fields from ranked endpoint
+  priorityScore?: number;
+  goalTitle?: string;
+  pillarName?: string;
+  state?: string;
 }
+
+// CW-2: Dismiss reason options
+const DISMISS_REASONS = [
+  { value: "not_relevant", label: "Not relevant" },
+  { value: "already_done", label: "Already done" },
+  { value: "wrong_timing", label: "Wrong timing" },
+  { value: "too_hard", label: "Too complex" },
+  { value: "other", label: "Just close" },
+] as const;
+
+type DismissReason = typeof DISMISS_REASONS[number]["value"];
 
 export function TodaysFocus() {
   const [greeting, setGreeting] = useState("");
@@ -78,12 +94,26 @@ export function TodaysFocus() {
       setLoading(true);
       setError(null);
 
-      // Fetch pinned goals from brain dump + high-priority tasks in parallel
+      // CW-1: Try ranked endpoint first, fall back to legacy fetch
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let rankedTasks: any[] | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rankedRes = await api<any>("/api/tasks?ranked=true&limit=3&state=started,unstarted,backlog");
+        if (rankedRes?.tasks?.length > 0 && rankedRes.tasks[0].priority_score != null) {
+          rankedTasks = rankedRes.tasks;
+        }
+      } catch {
+        // Ranked endpoint not deployed yet, fall back to legacy
+      }
+
+      // Fetch pinned goals from brain dump + tasks (legacy fallback) + goals in parallel
       const [brainRes, tasksRes, goalsRes] = await Promise.all([
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         api<any>("/api/brain/dump"),
+        // Only fetch legacy tasks if ranked endpoint didn't work
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        api<any>("/api/tasks?state=started,unstarted&priority=1,2&limit=8"),
+        rankedTasks ? Promise.resolve({ items: [] }) : api<any>("/api/tasks?state=started,unstarted&priority=1,2&limit=8"),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         api<any>("/api/goals"),
       ]);
@@ -147,67 +177,111 @@ export function TodaysFocus() {
         }
       }
 
-      // --- Rank tasks by impact toward pinned goals ---
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const rawItems: any[] = tasksRes?.items ?? [];
+      // --- CW-1: Use ranked tasks if available, otherwise fall back to legacy scoring ---
+      if (rankedTasks && rankedTasks.length > 0) {
+        // Ranked endpoint provides pre-scored tasks with ai_metadata
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const items: FocusItem[] = rankedTasks.map((task: any) => ({
+          id: task.id,
+          title: task.title,
+          priority: task.priority || "high",
+          description: task.description || "",
+          leverageReason: task.ai_metadata?.leverage_reason || task.leverageReason || task.aiReason || undefined,
+          source: task.sourceText || task.source || undefined,
+          recommendedAI: task.recommendedAI || "claude",
+          howTo: task.howTo || undefined,
+          goalId: task.goal_id || task.goalId || undefined,
+          priorityScore: task.priority_score ?? undefined,
+          goalTitle: task.goals?.title || undefined,
+          pillarName: task.goals?.pillars?.name || undefined,
+          state: task.state || undefined,
+        }));
 
-      // Build goal-matching context: IDs + keyword fragments for text matching
-      const pinnedGoalIds = new Set<string>();
-      const goalKeywords: string[] = [];
-      for (const pinned of pinnedGoals) {
-        // Extract key terms from the goal text for fuzzy matching
-        const terms = pinned.text.toLowerCase()
-          .split(/[\s,.:;]+/)
-          .filter((w) => w.length > 4)
-          .slice(0, 6);
-        goalKeywords.push(...terms);
+        // CW-1: If leverage_reason is null, poll once after 3 seconds
+        const needsPolling = items.some(item => !item.leverageReason);
+        setFocusItems(items);
 
-        // Also match by DB goal_id
-        const matched = dbGoals.find((g) => {
-          const pillarMatch = g.pillars?.name && pinned.pillar
-            .toLowerCase().includes(g.pillars.name.toLowerCase().slice(0, 8));
-          const titleMatch = pinned.text.toLowerCase().includes(g.title?.toLowerCase().slice(0, 20));
-          return pillarMatch || titleMatch;
-        });
-        if (matched) pinnedGoalIds.add(matched.id);
-      }
+        if (needsPolling) {
+          setTimeout(async () => {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const refreshRes = await api<any>("/api/tasks?ranked=true&limit=3&state=started,unstarted,backlog");
+              if (refreshRes?.tasks?.length > 0) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const refreshed: FocusItem[] = refreshRes.tasks.map((task: any) => ({
+                  id: task.id,
+                  title: task.title,
+                  priority: task.priority || "high",
+                  description: task.description || "",
+                  leverageReason: task.ai_metadata?.leverage_reason || task.leverageReason || undefined,
+                  source: task.sourceText || task.source || undefined,
+                  recommendedAI: task.recommendedAI || "claude",
+                  howTo: task.howTo || undefined,
+                  goalId: task.goal_id || task.goalId || undefined,
+                  priorityScore: task.priority_score ?? undefined,
+                  goalTitle: task.goals?.title || undefined,
+                  pillarName: task.goals?.pillars?.name || undefined,
+                  state: task.state || undefined,
+                }));
+                setFocusItems(refreshed);
+              }
+            } catch {
+              // Silent fail on poll
+            }
+          }, 3000);
+        }
+      } else {
+        // Legacy scoring fallback
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rawItems: any[] = tasksRes?.items ?? [];
 
-      const priorityScore: Record<string, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
+        const pinnedGoalIds = new Set<string>();
+        const goalKeywords: string[] = [];
+        for (const pinned of pinnedGoals) {
+          const terms = pinned.text.toLowerCase()
+            .split(/[\s,.:;]+/)
+            .filter((w) => w.length > 4)
+            .slice(0, 6);
+          goalKeywords.push(...terms);
 
-      const items: FocusItem[] = rawItems.map((task) => ({
-        id: task.id,
-        title: task.title,
-        priority: task.priority || "high",
-        description: task.description || "",
-        leverageReason: task.leverageReason || task.aiReason || undefined,
-        source: task.sourceText || undefined,
-        recommendedAI: task.recommendedAI || "claude",
-        howTo: task.howTo || undefined,
-        goalId: task.goalId || undefined,
-      }));
-
-      // Score each task by goal impact: direct link (10) + keyword overlap (0-6) + priority (1-4)
-      const scored = items.map((item) => {
-        let score = 0;
-
-        // Direct goal linkage — highest signal
-        if (item.goalId && pinnedGoalIds.has(item.goalId)) score += 10;
-
-        // Text relevance — how many goal keywords appear in the task's title/description/leverage reason
-        if (goalKeywords.length > 0) {
-          const haystack = `${item.title} ${item.description} ${item.leverageReason ?? ""}`.toLowerCase();
-          const matches = goalKeywords.filter((kw) => haystack.includes(kw)).length;
-          score += Math.min(matches, 6);
+          const matched = dbGoals.find((g) => {
+            const pillarMatch = g.pillars?.name && pinned.pillar
+              .toLowerCase().includes(g.pillars.name.toLowerCase().slice(0, 8));
+            const titleMatch = pinned.text.toLowerCase().includes(g.title?.toLowerCase().slice(0, 20));
+            return pillarMatch || titleMatch;
+          });
+          if (matched) pinnedGoalIds.add(matched.id);
         }
 
-        // Priority bump
-        score += priorityScore[item.priority] ?? 1;
+        const priorityScoreMap: Record<string, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
 
-        return { item, score };
-      });
+        const items: FocusItem[] = rawItems.map((task) => ({
+          id: task.id,
+          title: task.title,
+          priority: task.priority || "high",
+          description: task.description || "",
+          leverageReason: task.leverageReason || task.aiReason || undefined,
+          source: task.sourceText || undefined,
+          recommendedAI: task.recommendedAI || "claude",
+          howTo: task.howTo || undefined,
+          goalId: task.goalId || undefined,
+        }));
 
-      scored.sort((a, b) => b.score - a.score);
-      setFocusItems(scored.slice(0, 5).map((s) => s.item));
+        const scored = items.map((item) => {
+          let score = 0;
+          if (item.goalId && pinnedGoalIds.has(item.goalId)) score += 10;
+          if (goalKeywords.length > 0) {
+            const haystack = `${item.title} ${item.description} ${item.leverageReason ?? ""}`.toLowerCase();
+            const matches = goalKeywords.filter((kw) => haystack.includes(kw)).length;
+            score += Math.min(matches, 6);
+          }
+          score += priorityScoreMap[item.priority] ?? 1;
+          return { item, score };
+        });
+
+        scored.sort((a, b) => b.score - a.score);
+        setFocusItems(scored.slice(0, 5).map((s) => s.item));
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load today's focus");
       console.error("Error loading today's focus:", err);
@@ -224,6 +298,41 @@ export function TodaysFocus() {
     } catch (err: unknown) {
       console.error("Error deleting task:", err);
       setError("Failed to delete task");
+    }
+  };
+
+  // CW-2: Dismiss with reason
+  const handleDismiss = async (taskId: string, reason: DismissReason) => {
+    try {
+      await api(`/api/tasks/${taskId}/dismiss`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      });
+      // Fade out dismissed card, then load replacement
+      setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
+      setDeletingId(null);
+      // TODO: Fetch next-highest-scored task to replace dismissed one
+    } catch {
+      // Dismiss endpoint not deployed yet — fall back to delete
+      handleDeleteTask(taskId);
+    }
+  };
+
+  // CW-1: State change handlers
+  const handleSetState = async (taskId: string, state: string) => {
+    try {
+      await api(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ state }) });
+      if (state === "done") {
+        setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
+      } else {
+        // Update local state
+        setFocusItems((prev) =>
+          prev.map((item) => (item.id === taskId ? { ...item, state } : item))
+        );
+      }
+    } catch {
+      // Fall back to old status-based API
+      if (state === "done") handleMarkDone(taskId);
     }
   };
 
@@ -332,6 +441,8 @@ export function TodaysFocus() {
                 onDelete={handleDeleteTask}
                 onMarkDone={handleMarkDone}
                 onSnooze={handleSnooze}
+                onDismiss={handleDismiss}
+                onSetState={handleSetState}
                 isDeleting={deletingId === item.id}
                 onDeleteClick={() => setDeletingId(item.id)}
                 onCancelDelete={() => setDeletingId(null)}
@@ -366,6 +477,8 @@ interface FocusCardProps {
   onDelete: (id: string) => void;
   onMarkDone: (id: string) => void;
   onSnooze: (id: string) => void;
+  onDismiss: (id: string, reason: DismissReason) => void;
+  onSetState: (id: string, state: string) => void;
   isDeleting: boolean;
   onDeleteClick: () => void;
   onCancelDelete: () => void;
@@ -374,7 +487,8 @@ interface FocusCardProps {
 }
 
 function FocusCard(props: FocusCardProps) {
-  const { item, onDelete, onMarkDone, onSnooze, isDeleting, onDeleteClick, onCancelDelete, expandedWhy, onToggleWhy } = props;
+  const { item, onDelete, onMarkDone, onSnooze, onDismiss, onSetState, isDeleting, onDeleteClick, onCancelDelete, expandedWhy, onToggleWhy } = props;
+  const [showDismissReasons, setShowDismissReasons] = useState(false);
   const isExpanded = expandedWhy.has(item.id);
   const whyContent = item.leverageReason;
   const [feedbackGiven, setFeedbackGiven] = useState<"up" | "down" | null>(null);
@@ -450,7 +564,7 @@ function FocusCard(props: FocusCardProps) {
         position: "relative",
       }}
     >
-      {/* Header: Priority + Title + Delete Button */}
+      {/* Header: Priority + Title + Score Badge + Dismiss Button */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
         <div
           style={{
@@ -463,13 +577,42 @@ function FocusCard(props: FocusCardProps) {
           }}
         />
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 15, fontWeight: 500, color: C.text, marginBottom: 4 }}>
-            {item.title}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontSize: 15, fontWeight: 500, color: C.text }}>
+              {item.title}
+            </div>
+            {/* CW-1: Priority score badge */}
+            {item.priorityScore != null && (
+              <span
+                style={{
+                  fontFamily: C.mono,
+                  fontSize: 9,
+                  color: C.gold,
+                  background: `${C.gold}18`,
+                  border: `1px solid ${C.gold}30`,
+                  borderRadius: 3,
+                  padding: "1px 5px",
+                  letterSpacing: 0.4,
+                  flexShrink: 0,
+                }}
+              >
+                {item.priorityScore.toFixed(2)}
+              </span>
+            )}
           </div>
+          {/* CW-1: Goal + pillar name */}
+          {(item.goalTitle || item.pillarName) && (
+            <div style={{ fontSize: 11, color: C.textDim, marginTop: 2, display: "flex", gap: 4, alignItems: "center" }}>
+              {item.pillarName && <span>{item.pillarName}</span>}
+              {item.pillarName && item.goalTitle && <span style={{ color: C.textFaint }}>·</span>}
+              {item.goalTitle && <span>{item.goalTitle}</span>}
+            </div>
+          )}
         </div>
-        {!isDeleting && (
+        {/* CW-2: Dismiss button (replaces delete) */}
+        {!isDeleting && !showDismissReasons && (
           <button
-            onClick={onDeleteClick}
+            onClick={() => setShowDismissReasons(true)}
             style={{
               background: "none",
               border: "none",
@@ -486,15 +629,66 @@ function FocusCard(props: FocusCardProps) {
             onMouseLeave={(e) => {
               (e.target as HTMLElement).style.color = C.textFaint;
             }}
-            title="Delete task"
+            title="Dismiss task"
           >
             ×
           </button>
         )}
       </div>
 
-      {/* Delete Confirmation */}
-      {isDeleting && (
+      {/* CW-2: Dismiss with reason picker */}
+      {showDismissReasons && (
+        <div
+          style={{
+            background: `${C.cl}10`,
+            border: `1px solid ${C.cl}30`,
+            borderRadius: 6,
+            padding: "10px 12px",
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontSize: 11, color: C.textDim, marginBottom: 8 }}>Why dismiss?</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {DISMISS_REASONS.map((reason) => (
+              <button
+                key={reason.value}
+                onClick={() => {
+                  onDismiss(item.id, reason.value);
+                  setShowDismissReasons(false);
+                }}
+                style={{
+                  background: C.surface,
+                  color: C.text,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 4,
+                  padding: "5px 10px",
+                  fontSize: 11,
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                }}
+              >
+                {reason.label}
+              </button>
+            ))}
+            <button
+              onClick={() => setShowDismissReasons(false)}
+              style={{
+                background: "none",
+                color: C.textFaint,
+                border: "none",
+                padding: "5px 6px",
+                fontSize: 11,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Legacy delete confirmation (fallback) */}
+      {isDeleting && !showDismissReasons && (
         <div
           style={{
             background: C.reminder + "15",
@@ -555,46 +749,44 @@ function FocusCard(props: FocusCardProps) {
         </div>
       )}
 
-      {/* Why High-Leverage? Section */}
-      {whyContent && (
-        <div style={{ marginBottom: 12 }}>
-          <button
-            onClick={() => onToggleWhy(item.id)}
+      {/* Why High-Leverage? Section — CW-1: Show "Analyzing..." when null */}
+      <div style={{ marginBottom: 12 }}>
+        <button
+          onClick={() => onToggleWhy(item.id)}
+          style={{
+            background: "none",
+            border: "none",
+            color: C.cl,
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: "pointer",
+            padding: 0,
+            marginBottom: 6,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          <span style={{ fontSize: 14 }}>{isExpanded ? "▼" : "▶"}</span>
+          Why high-leverage?
+        </button>
+        {isExpanded && (
+          <div
             style={{
-              background: "none",
-              border: "none",
-              color: C.cl,
-              fontSize: 12,
-              fontWeight: 500,
-              cursor: "pointer",
-              padding: 0,
-              marginBottom: 6,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
+              background: C.surface,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              padding: "10px 12px",
+              fontSize: 13,
+              color: whyContent ? C.text : C.textDim,
+              fontStyle: "italic",
+              lineHeight: 1.5,
             }}
           >
-            <span style={{ fontSize: 14 }}>{isExpanded ? "▼" : "▶"}</span>
-            Why high-leverage?
-          </button>
-          {isExpanded && (
-            <div
-              style={{
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                borderRadius: 6,
-                padding: "10px 12px",
-                fontSize: 13,
-                color: C.text,
-                fontStyle: "italic",
-                lineHeight: 1.5,
-              }}
-            >
-              {whyContent}
-            </div>
-          )}
-        </div>
-      )}
+            {whyContent || "Analyzing..."}
+          </div>
+        )}
+      </div>
 
       {/* Feedback Row */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -641,7 +833,7 @@ function FocusCard(props: FocusCardProps) {
         </div>
       </div>
 
-      {/* Action Row */}
+      {/* Action Row — CW-1: One-tap execution (Start/Done/Block) */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {/* Primary: Open in recommended AI tool */}
         <button
@@ -665,8 +857,26 @@ function FocusCard(props: FocusCardProps) {
           <span>{aiTool.icon}</span>
           {aiTool.label}
         </button>
+        {/* CW-1: State-based one-tap actions */}
+        {item.state !== "started" && (
+          <button
+            onClick={() => onSetState(item.id, "started")}
+            style={{
+              background: `${C.gpt}18`,
+              color: C.gpt,
+              border: `1px solid ${C.gpt}30`,
+              borderRadius: 6,
+              padding: "8px 12px",
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: "pointer",
+            }}
+          >
+            Start
+          </button>
+        )}
         <button
-          onClick={() => onMarkDone(item.id)}
+          onClick={() => onSetState(item.id, "done")}
           style={{
             background: C.surface,
             color: C.text,
@@ -681,11 +891,11 @@ function FocusCard(props: FocusCardProps) {
           Done
         </button>
         <button
-          onClick={() => onSnooze(item.id)}
+          onClick={() => onSetState(item.id, "blocked")}
           style={{
             background: C.surface,
-            color: C.text,
-            border: `1px solid ${C.border}`,
+            color: C.task,
+            border: `1px solid ${C.task}30`,
             borderRadius: 6,
             padding: "8px 12px",
             fontSize: 13,
@@ -693,7 +903,7 @@ function FocusCard(props: FocusCardProps) {
             cursor: "pointer",
           }}
         >
-          Snooze
+          Block
         </button>
       </div>
     </div>

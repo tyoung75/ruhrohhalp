@@ -19,7 +19,7 @@ const PLATFORMS: Omit<PlatformConnection, "connected" | "username">[] = [
   {
     id: "tiktok",
     name: "TikTok",
-    icon: "âª",
+    icon: "♪",
     color: "#ff0050",
     authPath: "/api/auth/tiktok",
     description:
@@ -44,7 +44,7 @@ const PLATFORMS: Omit<PlatformConnection, "connected" | "username">[] = [
   {
     id: "instagram",
     name: "Instagram",
-    icon: "â§",
+    icon: "◧",
     color: "#E1306C",
     authPath: "/api/auth/instagram",
     description:
@@ -54,7 +54,7 @@ const PLATFORMS: Omit<PlatformConnection, "connected" | "username">[] = [
   {
     id: "youtube",
     name: "YouTube",
-    icon: "â¶",
+    icon: "▶",
     color: "#ff0000",
     authPath: "/api/auth/youtube",
     description:
@@ -102,7 +102,7 @@ export default function IntegrationsPage() {
           setConnections((prev) => ({ ...prev, ...connected }));
         }
       } catch {
-        // silent â just means we can't detect existing connections
+        // silent — just means we can't detect existing connections
       }
     }
     fetchConnections();
@@ -221,7 +221,7 @@ export default function IntegrationsPage() {
                       border: `1px solid ${C.gpt}28`,
                     }}
                   >
-                    â Connected
+                    ✓ Connected
                   </span>
                 ) : (
                   <a
@@ -239,7 +239,7 @@ export default function IntegrationsPage() {
                       transition: "all 0.15s",
                     }}
                   >
-                    Connect â
+                    Connect →
                   </a>
                 )}
               </div>

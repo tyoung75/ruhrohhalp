@@ -61,6 +61,8 @@ export async function processInputWithDualAI(params: {
           linearIssueId: null,
           linearUrl: null,
           linearSyncedAt: null,
+          leverageReason: "",
+          githubPrUrl: null,
         };
       });
 
@@ -83,6 +85,8 @@ export async function processInputWithDualAI(params: {
           linearIssueId: null,
           linearUrl: null,
           linearSyncedAt: null,
+          leverageReason: "",
+          githubPrUrl: null,
         },
       ];
     }
@@ -136,6 +140,8 @@ export async function processInputWithDualAI(params: {
       linearIssueId: item.linearIssueId ?? null,
       linearUrl: item.linearUrl ?? null,
       linearSyncedAt: item.linearSyncedAt ?? null,
+      leverageReason: item.leverageReason ?? "",
+      githubPrUrl: item.githubPrUrl ?? null,
     };
   });
 

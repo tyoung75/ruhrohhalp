@@ -19,7 +19,7 @@ ALTER TABLE public.outcome_signals ENABLE ROW LEVEL SECURITY;
 -- Add gmail_draft_pending to briefings for the Gmail contract
 ALTER TABLE public.briefings ADD COLUMN IF NOT EXISTS gmail_draft_pending BOOLEAN DEFAULT false;
 
--- Add period 'weekly' to briefings check constraint
+-- Add weekly while keeping legacy daily rows and routes valid during migration.
 ALTER TABLE public.briefings DROP CONSTRAINT IF EXISTS briefings_period_check;
 ALTER TABLE public.briefings ADD CONSTRAINT briefings_period_check
-  CHECK (period IN ('morning', 'evening', 'weekly'));
+  CHECK (period IN ('morning', 'evening', 'daily', 'weekly'));

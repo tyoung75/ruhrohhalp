@@ -1,14 +1,14 @@
 /**
- * Threads OAuth initiation â redirects user to Threads authorization screen.
+ * Threads OAuth initiation — redirects user to Threads authorization screen.
  *
- * Usage: GET /api/auth/threads â redirects to Threads OAuth consent
+ * Usage: GET /api/auth/threads → redirects to Threads OAuth consent
  *
  * Required scopes for Creator OS:
- *   threads_basic              â profile info, user ID
- *   threads_content_publish    â create and publish threads
- *   threads_delete             â delete posts
- *   threads_manage_insights    â read post/account analytics
- *   threads_manage_replies     â manage reply threads
+ *   threads_basic              — profile info, user ID
+ *   threads_content_publish    — create and publish threads
+ *   threads_delete             — delete posts
+ *   threads_manage_insights    — read post/account analytics
+ *   threads_manage_replies     — manage reply threads
  */
 
 import { NextRequest, NextResponse } from "next/server";

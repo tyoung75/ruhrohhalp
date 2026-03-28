@@ -1,17 +1,17 @@
 /**
- * Instagram OAuth initiation â redirects user to Facebook/Instagram authorization screen.
+ * Instagram OAuth initiation — redirects user to Facebook/Instagram authorization screen.
  *
- * Usage: GET /api/auth/instagram â redirects to Facebook OAuth consent
+ * Usage: GET /api/auth/instagram → redirects to Facebook OAuth consent
  *
  * Instagram Graph API uses Facebook Login for OAuth. The user must have an
  * Instagram Business or Creator account connected to a Facebook Page.
  *
  * Required permissions:
- *   instagram_basic          â read profile info
- *   instagram_content_publish â publish images, carousels, reels
- *   instagram_manage_insights â read post/account analytics
- *   pages_show_list          â list connected Facebook pages (needed to get IG business account)
- *   pages_read_engagement    â read page engagement metrics
+ *   instagram_basic          — read profile info
+ *   instagram_content_publish — publish images, carousels, reels
+ *   instagram_manage_insights — read post/account analytics
+ *   pages_show_list          — list connected Facebook pages (needed to get IG business account)
+ *   pages_read_engagement    — read page engagement metrics
  */
 
 import { NextRequest, NextResponse } from "next/server";

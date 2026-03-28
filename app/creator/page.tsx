@@ -37,6 +37,31 @@ interface QueueResponse {
   offset: number;
 }
 
+// CW-7: Content generation types for Platform Intelligence Agent
+interface ContentIdea {
+  topic: string;
+  context?: string;
+  goal_id?: string;
+  platforms: string[];
+}
+
+interface GeneratedVariant {
+  id: string;
+  content_idea_id: string;
+  platform: string;
+  platform_format?: string;
+  body: string;
+  ai_audit_passed?: boolean;
+  audit_notes?: string;
+  status: string;
+}
+
+interface ActiveGoal {
+  id: string;
+  title: string;
+  pillar_name?: string;
+}
+
 interface AnalyticsResponse {
   period: { days: number; since: string };
   overview: {
@@ -220,6 +245,258 @@ export default function CreatorPage() {
 // Queue Tab
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// CW-7: Generate Content Modal (Platform Intelligence Agent)
+// ---------------------------------------------------------------------------
+
+function GenerateContentModal({
+  onClose,
+  onGenerated,
+}: {
+  onClose: () => void;
+  onGenerated: (variants: GeneratedVariant[]) => void;
+}) {
+  const [topic, setTopic] = useState("");
+  const [context, setContext] = useState("");
+  const [selectedGoalId, setSelectedGoalId] = useState("");
+  const [platforms, setPlatforms] = useState<Record<string, boolean>>({
+    tiktok: true,
+    instagram: true,
+    youtube: true,
+    threads: true,
+  });
+  const [goals, setGoals] = useState<ActiveGoal[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    // Fetch active goals for the alignment dropdown
+    api<{ goals: ActiveGoal[] }>("/api/goals")
+      .then((res) => setGoals(res.goals?.filter((g: ActiveGoal & { status?: string }) => (g as ActiveGoal & { status?: string }).status === "active") ?? []))
+      .catch(() => {});
+  }, []);
+
+  const handleGenerate = async () => {
+    if (!topic.trim()) return;
+    setGenerating(true);
+    setError("");
+
+    const idea: ContentIdea = {
+      topic: topic.trim(),
+      context: context.trim() || undefined,
+      goal_id: selectedGoalId || undefined,
+      platforms: Object.entries(platforms)
+        .filter(([, v]) => v)
+        .map(([k]) => k),
+    };
+
+    try {
+      // Try new Platform Intelligence Agent endpoint first
+      const res = await api<{ variants: GeneratedVariant[] }>("/api/content-queue/generate", {
+        method: "POST",
+        body: JSON.stringify(idea),
+      });
+      onGenerated(res.variants ?? []);
+      onClose();
+    } catch {
+      // Fall back to legacy generate endpoint
+      try {
+        await api("/api/creator/generate", { method: "POST" });
+        onClose();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Generation failed");
+      }
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const platformOptions = [
+    { id: "tiktok", label: "TikTok", icon: "♪" },
+    { id: "instagram", label: "Instagram Reels", icon: "◻" },
+    { id: "youtube", label: "YouTube Shorts", icon: "▶" },
+    { id: "threads", label: "Threads", icon: "◈" },
+  ];
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        style={{
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 12,
+          padding: "24px 28px",
+          width: 480,
+          maxHeight: "80vh",
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h3 style={{ fontFamily: C.serif, fontStyle: "italic", fontSize: 18, color: C.cream, margin: 0 }}>
+            Generate Content
+          </h3>
+          <button
+            onClick={onClose}
+            style={{ background: "none", border: "none", color: C.textFaint, fontSize: 18, cursor: "pointer" }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Topic */}
+        <label style={{ display: "block", marginBottom: 12 }}>
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Topic *
+          </span>
+          <input
+            type="text"
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="e.g., My first ultramarathon prep"
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: "8px 12px",
+              background: C.card,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              color: C.text,
+              fontFamily: C.sans,
+              fontSize: 13,
+            }}
+          />
+        </label>
+
+        {/* Context */}
+        <label style={{ display: "block", marginBottom: 12 }}>
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Context (recent win, event, etc.)
+          </span>
+          <textarea
+            value={context}
+            onChange={(e) => setContext(e.target.value)}
+            placeholder="e.g., Just hit 50 miles/week for the first time"
+            rows={3}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: "8px 12px",
+              background: C.card,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              color: C.text,
+              fontFamily: C.sans,
+              fontSize: 13,
+              resize: "vertical",
+            }}
+          />
+        </label>
+
+        {/* Goal alignment */}
+        <label style={{ display: "block", marginBottom: 12 }}>
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Goal Alignment
+          </span>
+          <select
+            value={selectedGoalId}
+            onChange={(e) => setSelectedGoalId(e.target.value)}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: "8px 12px",
+              background: C.card,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              color: C.text,
+              fontFamily: C.sans,
+              fontSize: 13,
+            }}
+          >
+            <option value="">No specific goal</option>
+            {goals.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.pillar_name ? `${g.pillar_name} — ` : ""}{g.title}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* Platforms */}
+        <div style={{ marginBottom: 16 }}>
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Platforms
+          </span>
+          <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+            {platformOptions.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setPlatforms((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
+                style={{
+                  background: platforms[p.id] ? `${C.cl}18` : C.card,
+                  border: `1px solid ${platforms[p.id] ? `${C.cl}40` : C.border}`,
+                  color: platforms[p.id] ? C.cl : C.textDim,
+                  borderRadius: 6,
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  fontFamily: C.sans,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <span>{p.icon}</span> {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div style={{ background: `${C.reminder}14`, border: `1px solid ${C.reminder}30`, borderRadius: 6, padding: "8px 12px", marginBottom: 12, color: C.reminder, fontSize: 12 }}>
+            {error}
+          </div>
+        )}
+
+        {/* Generate button */}
+        <button
+          onClick={handleGenerate}
+          disabled={generating || !topic.trim()}
+          style={{
+            width: "100%",
+            background: generating ? C.surface : C.cl,
+            border: "none",
+            color: generating ? C.textDim : "#fff",
+            padding: "10px 16px",
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 600,
+            fontFamily: C.sans,
+            cursor: generating ? "wait" : "pointer",
+            opacity: !topic.trim() ? 0.5 : 1,
+          }}
+        >
+          {generating ? "Generating platform variants..." : "Generate"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function QueueTab() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -352,6 +629,9 @@ function QueueTab() {
 
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  // CW-7: Generate Content modal state
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [generatedVariants, setGeneratedVariants] = useState<GeneratedVariant[]>([]);
 
   async function handleSync() {
     setSyncing(true);
@@ -662,8 +942,155 @@ function QueueTab() {
           >
             {saving ? "Generating..." : "Generate Posts"}
           </button>
+          {/* CW-7: New Platform Intelligence Agent generate button */}
+          <button
+            onClick={() => setShowGenerateModal(true)}
+            style={{
+              background: `${C.gem}20`,
+              border: `1px solid ${C.gem}40`,
+              color: C.gem,
+              padding: "6px 16px",
+              borderRadius: 6,
+              fontFamily: C.sans,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            ✦ Generate Content
+          </button>
         </div>
       </div>
+
+      {/* CW-7: Generate Content Modal */}
+      {showGenerateModal && (
+        <GenerateContentModal
+          onClose={() => setShowGenerateModal(false)}
+          onGenerated={(variants) => {
+            setGeneratedVariants(variants);
+            fetchQueue();
+          }}
+        />
+      )}
+
+      {/* CW-7: Show generated variants if any */}
+      {generatedVariants.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.gem, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Generated Variants ({generatedVariants.length})
+            </span>
+            <button
+              onClick={() => setGeneratedVariants([])}
+              style={{ background: "none", border: "none", color: C.textFaint, fontSize: 10, cursor: "pointer" }}
+            >
+              Clear
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {generatedVariants.map((v) => (
+              <div
+                key={v.id}
+                style={{
+                  background: C.card,
+                  border: `1px solid ${v.ai_audit_passed ? `${C.gpt}20` : `${C.task}20`}`,
+                  borderRadius: 8,
+                  padding: "10px 14px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <span style={{ fontSize: 12 }}>
+                    {v.platform === "tiktok" ? "♪" : v.platform === "instagram" ? "◻" : v.platform === "youtube" ? "▶" : "◈"}
+                  </span>
+                  <span style={{ fontFamily: C.mono, fontSize: 10, color: C.text }}>
+                    {v.platform}
+                  </span>
+                  {v.platform_format && (
+                    <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textDim }}>
+                      {v.platform_format}
+                    </span>
+                  )}
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontFamily: C.mono,
+                      fontSize: 8,
+                      color: v.ai_audit_passed ? C.gpt : C.task,
+                      background: v.ai_audit_passed ? `${C.gpt}14` : `${C.task}14`,
+                      border: `1px solid ${v.ai_audit_passed ? `${C.gpt}30` : `${C.task}30`}`,
+                      borderRadius: 3,
+                      padding: "1px 5px",
+                    }}
+                  >
+                    {v.ai_audit_passed ? "Audit passed" : "Needs review"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: C.text, lineHeight: 1.5, marginBottom: 8, whiteSpace: "pre-wrap" }}>
+                  {v.body.length > 200 ? v.body.slice(0, 200) + "..." : v.body}
+                </div>
+                {v.audit_notes && (
+                  <div style={{ fontSize: 10, color: C.textDim, fontStyle: "italic", marginBottom: 6 }}>
+                    {v.audit_notes}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    onClick={() => updateItem(v.id, { status: "queued" })}
+                    style={{
+                      background: `${C.gpt}14`,
+                      border: `1px solid ${C.gpt}30`,
+                      color: C.gpt,
+                      borderRadius: 4,
+                      padding: "4px 10px",
+                      fontSize: 10,
+                      fontFamily: C.mono,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => {
+                      const item = items.find(i => i.id === v.id);
+                      if (item) startEditing(item);
+                    }}
+                    style={{
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
+                      color: C.text,
+                      borderRadius: 4,
+                      padding: "4px 10px",
+                      fontSize: 10,
+                      fontFamily: C.mono,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => updateItem(v.id, { status: "rejected" })}
+                    style={{
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
+                      color: C.reminder,
+                      borderRadius: 4,
+                      padding: "4px 10px",
+                      fontSize: 10,
+                      fontFamily: C.mono,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Count */}
       <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginBottom: 12 }}>
