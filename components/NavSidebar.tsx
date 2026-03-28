@@ -123,23 +123,24 @@ export function NavSidebar({ userEmail, onSignOut, onOpenSettings }: NavSidebarP
           gap: 6,
         }}
       >
-        {onOpenSettings && (
-          <button
-            onClick={onOpenSettings}
-            style={{
-              background: "none",
-              border: `1px solid ${C.border}`,
-              color: C.textDim,
-              borderRadius: 6,
-              padding: "5px 10px",
-              fontFamily: C.mono,
-              fontSize: 10,
-              cursor: "pointer",
-            }}
-          >
-            Settings
-          </button>
-        )}
+        <Link
+          href="/settings"
+          style={{
+            display: "block",
+            width: "100%",
+            background: pathname.startsWith("/settings") ? C.white : "none",
+            border: `1px solid ${pathname.startsWith("/settings") ? C.white : C.border}`,
+            color: pathname.startsWith("/settings") ? C.bg : C.textDim,
+            borderRadius: 6,
+            padding: "5px 10px",
+            fontFamily: C.mono,
+            fontSize: 10,
+            textDecoration: "none",
+            textAlign: "center",
+          }}
+        >
+          Settings
+        </Link>
 
         <button
           onClick={onSignOut}
