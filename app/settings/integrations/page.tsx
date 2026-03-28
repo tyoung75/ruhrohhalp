@@ -19,7 +19,7 @@ const PLATFORMS: Omit<PlatformConnection, "connected" | "username">[] = [
   {
     id: "tiktok",
     name: "TikTok",
-    icon: "♪",
+    icon: "âª",
     color: "#ff0050",
     authPath: "/api/auth/tiktok",
     description:
@@ -38,13 +38,23 @@ const PLATFORMS: Omit<PlatformConnection, "connected" | "username">[] = [
     color: "#ffffff",
     authPath: "/api/auth/threads",
     description:
-      "Connect Threads to publish posts and view engagement analytics.",
-    scopes: ["threads_basic", "threads_content_publish"],
+      "Connect Threads to publish posts, reply chains, and view engagement analytics.",
+    scopes: ["threads_basic", "threads_content_publish", "threads_manage_insights"],
+  },
+  {
+    id: "instagram",
+    name: "Instagram",
+    icon: "â§",
+    color: "#E1306C",
+    authPath: "/api/auth/instagram",
+    description:
+      "Connect Instagram to publish images, carousels, reels, and view post analytics.",
+    scopes: ["instagram_basic", "instagram_content_publish", "instagram_manage_insights"],
   },
   {
     id: "youtube",
     name: "YouTube",
-    icon: "▶",
+    icon: "â¶",
     color: "#ff0000",
     authPath: "/api/auth/youtube",
     description:
@@ -80,7 +90,7 @@ export default function IntegrationsPage() {
   useEffect(() => {
     async function fetchConnections() {
       try {
-        const res = await fetch("/api/creator/analytics?platforms=tiktok,threads,youtube");
+        const res = await fetch("/api/creator/analytics?platforms=tiktok,threads,instagram,youtube");
         if (res.ok) {
           const data = await res.json();
           const connected: Record<string, { connected: boolean; username?: string }> = {};
@@ -92,7 +102,7 @@ export default function IntegrationsPage() {
           setConnections((prev) => ({ ...prev, ...connected }));
         }
       } catch {
-        // silent
+        // silent â just means we can't detect existing connections
       }
     }
     fetchConnections();
@@ -211,7 +221,7 @@ export default function IntegrationsPage() {
                       border: `1px solid ${C.gpt}28`,
                     }}
                   >
-                    ✓ Connected
+                    â Connected
                   </span>
                 ) : (
                   <a
@@ -229,7 +239,7 @@ export default function IntegrationsPage() {
                       transition: "all 0.15s",
                     }}
                   >
-                    Connect →
+                    Connect â
                   </a>
                 )}
               </div>
