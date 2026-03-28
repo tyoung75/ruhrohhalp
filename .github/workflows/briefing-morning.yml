@@ -1,0 +1,16 @@
+name: Morning Briefing
+on:
+  schedule:
+    - cron: '0 11 * * *' # 7 AM ET
+  workflow_dispatch:
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger morning briefing
+        run: |
+          curl -sf -X POST "${{ secrets.RUHROHHALP_URL }}/api/internal/briefing" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.RUHROHHALP_SECRET }}" \
+            -d '{"type":"morning"}'

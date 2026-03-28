@@ -30,6 +30,8 @@ export async function GET(request: NextRequest) {
   const goalIdParam = url.searchParams.get("goal_id");
   const dueBeforeParam = url.searchParams.get("due_before");
   const updatedAfterParam = url.searchParams.get("updated_after");
+  const ranked = url.searchParams.get("ranked") === "true";
+  const sourceParam = url.searchParams.get("source");
 
   const supabase = await createClient();
   let query = supabase
@@ -52,6 +54,10 @@ export async function GET(request: NextRequest) {
     query = query.eq("goal_id", goalIdParam);
   }
 
+  if (sourceParam) {
+    query = query.eq("source", sourceParam);
+  }
+
   // Exclude snoozed tasks (snoozed_until in the future)
   const now = new Date().toISOString();
   query = query.or(`snoozed_until.is.null,snoozed_until.lte.${now}`);
@@ -65,9 +71,12 @@ export async function GET(request: NextRequest) {
   }
 
   // Apply ordering and pagination
-  query = query
-    .order("created_at", { ascending: false })
-    .range(offset, offset + limit - 1);
+  if (ranked) {
+    query = query.order("priority_score", { ascending: false });
+  } else {
+    query = query.order("created_at", { ascending: false });
+  }
+  query = query.range(offset, offset + limit - 1);
 
   const { data, error, count } = await query;
 
@@ -112,6 +121,9 @@ export async function GET(request: NextRequest) {
     project_name: r.project_id ? (projectMap.get(r.project_id)?.name ?? "—") : "—",
     project_color: "#6B7280",
     source: r.source,
+    priority_score: r.priority_score ?? 0,
+    leverage_reason: r.leverage_reason ?? "",
+    ai_metadata: r.ai_metadata ?? {},
     created_at: r.created_at,
     updated_at: r.updated_at,
   }));

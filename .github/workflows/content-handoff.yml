@@ -1,0 +1,15 @@
+name: Content Handoff
+on:
+  schedule:
+    - cron: '0 */6 * * *' # every 6 hours
+  workflow_dispatch:
+
+jobs:
+  handoff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger content handoff
+        run: |
+          curl -sf -X POST "${{ secrets.RUHROHHALP_URL }}/api/internal/content-handoff" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.RUHROHHALP_SECRET }}"

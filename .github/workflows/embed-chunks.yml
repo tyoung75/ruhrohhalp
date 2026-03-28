@@ -1,0 +1,15 @@
+name: Embed Chunks
+on:
+  schedule:
+    - cron: '0 6 * * *' # 2 AM ET daily
+  workflow_dispatch:
+
+jobs:
+  embed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger embedding pipeline
+        run: |
+          curl -sf -X POST "${{ secrets.RUHROHHALP_URL }}/api/internal/embed-chunks" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.RUHROHHALP_SECRET }}"
