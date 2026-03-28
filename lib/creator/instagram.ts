@@ -1,8 +1,12 @@
 /**
- * Instagram API adapter for Creator OS.
+ * Instagram adapter for Creator OS.
  *
- * Uses Instagram Login OAuth for professional Instagram accounts and the
- * Instagram API endpoints for publishing, insights, and token management.
+ * Uses Facebook Login for Business OAuth (facebook.com/dialog/oauth) to obtain
+ * tokens, then the Instagram Graph API for publishing, insights, and analytics.
+ *
+ * Token exchange goes through graph.facebook.com. After getting the token,
+ * we look up the user's Instagram Business Account ID via their connected
+ * Facebook Page.
  *
  * Docs: https://developers.facebook.com/docs/instagram-platform
  */
@@ -10,6 +14,7 @@
 import type { PlatformAdapter, PublishResult, PostMetrics, PlatformPost, PlatformProfile } from "./platforms";
 
 const IG_GRAPH = "https://graph.instagram.com/v21.0";
+const FB_GRAPH = "https://graph.facebook.com/v21.0";
 
 export class InstagramAdapter implements PlatformAdapter {
   platform = "instagram";
@@ -243,12 +248,12 @@ export class InstagramAdapter implements PlatformAdapter {
   }
 
   async exchangeCodeForToken(code: string, redirectUri: string) {
-    const appId = process.env.INSTAGRAM_APP_ID;
-    const appSecret = process.env.INSTAGRAM_APP_SECRET;
-    if (!appId || !appSecret) throw new Error("Missing INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET");
+    const appId = process.env.META_APP_ID ?? process.env.INSTAGRAM_APP_ID;
+    const appSecret = process.env.META_APP_SECRET ?? process.env.INSTAGRAM_APP_SECRET;
+    if (!appId || !appSecret) throw new Error("Missing META_APP_ID/INSTAGRAM_APP_ID or META_APP_SECRET/INSTAGRAM_APP_SECRET");
 
-    // Step 1: Exchange code for short-lived token via Instagram API
-    const shortRes = await fetch("https://api.instagram.com/oauth/access_token", {
+    // Step 1: Exchange code for short-lived token via Facebook Graph API
+    const shortRes = await fetch(`${FB_GRAPH}/oauth/access_token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -260,39 +265,35 @@ export class InstagramAdapter implements PlatformAdapter {
       }),
     });
     const shortData = await shortRes.json();
-    if (shortData.error_type || shortData.error_message) {
-      throw new Error(shortData.error_message ?? shortData.error_type);
-    }
+    if (shortData.error) throw new Error(shortData.error.message);
 
-    const shortToken = shortData.access_token;
-    const userId = String(shortData.user_id);
-
-    // Step 2: Exchange short-lived token for long-lived token (60 days)
+    // Step 2: Exchange for long-lived token (~60 days)
     const longRes = await fetch(
-      `${IG_GRAPH}/access_token?grant_type=ig_exchange_token&client_secret=${appSecret}&access_token=${shortToken}`
+      `${FB_GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${shortData.access_token}`
     );
     const longData = await longRes.json();
     if (longData.error) throw new Error(longData.error.message);
 
-    // Step 3: Get username from profile
-    const profileRes = await fetch(
-      `${IG_GRAPH}/me?fields=user_id,username&access_token=${longData.access_token}`
+    // Step 3: Get IG Business Account ID via connected Facebook Page
+    const pagesRes = await fetch(
+      `${FB_GRAPH}/me/accounts?fields=instagram_business_account&access_token=${longData.access_token}`
     );
-    const profileData = await profileRes.json();
+    const pagesData = await pagesRes.json();
+    const igId = pagesData.data?.[0]?.instagram_business_account?.id;
 
     return {
       accessToken: longData.access_token,
       tokenType: "bearer",
       expiresIn: longData.expires_in,
-      userId: userId,
-      username: profileData.username ?? undefined,
+      userId: igId ?? "",
     };
   }
 
   async refreshLongLivedToken(token: string) {
-    // Instagram API long-lived token refresh
+    const appId = process.env.META_APP_ID ?? process.env.INSTAGRAM_APP_ID;
+    const appSecret = process.env.META_APP_SECRET ?? process.env.INSTAGRAM_APP_SECRET;
     const res = await fetch(
-      `${IG_GRAPH}/refresh_access_token?grant_type=ig_refresh_token&access_token=${token}`
+      `${FB_GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${token}`
     );
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);

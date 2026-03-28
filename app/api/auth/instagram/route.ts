@@ -1,16 +1,18 @@
 /**
- * Instagram OAuth initiation — redirects user to Instagram's authorization screen.
+ * Instagram OAuth initiation — redirects user to Facebook OAuth consent screen.
  *
- * Usage: GET /api/auth/instagram → redirects to Instagram OAuth consent
+ * Usage: GET /api/auth/instagram → redirects to Facebook OAuth consent
  *
- * Uses the Instagram API (not the legacy Facebook Login flow).
- * The Instagram app ID is separate from the Meta parent app ID.
+ * Uses Facebook Login for Business (API setup with Facebook login path).
+ * The parent Meta app ID is used as client_id, with redirect URIs
+ * configured in Facebook Login for Business > Settings.
  *
- * Required permissions (instagram_business_* scopes):
- *   instagram_business_basic              — read profile info and media
- *   instagram_business_content_publish    — publish images, carousels, reels
- *   instagram_business_manage_insights    — read post/account analytics
- *   instagram_business_manage_comments    — read/manage comments
+ * Required permissions:
+ *   instagram_basic              — read profile info
+ *   instagram_content_publishing — publish images, carousels, reels
+ *   pages_read_engagement        — read page engagement metrics
+ *   pages_show_list              — list connected Facebook pages
+ *   business_management          — manage business assets
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -28,8 +30,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Use the Instagram-specific app ID (from the Instagram API use case in Meta Developer Portal)
-  const appId = process.env.INSTAGRAM_APP_ID;
+  // Use the parent Meta app ID (Facebook Login for Business)
+  const appId = process.env.META_APP_ID ?? process.env.INSTAGRAM_APP_ID;
   if (!appId) {
     return NextResponse.redirect(
       new URL("/settings/integrations?error=instagram_not_configured", request.url)
@@ -38,10 +40,11 @@ export async function GET(request: NextRequest) {
 
   const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/instagram/callback`;
   const scopes = [
-    "instagram_business_basic",
-    "instagram_business_content_publish",
-    "instagram_business_manage_insights",
-    "instagram_business_manage_comments",
+    "instagram_basic",
+    "instagram_content_publishing",
+    "pages_read_engagement",
+    "pages_show_list",
+    "business_management",
   ].join(",");
 
   // CSRF protection: use state param with user ID hash
@@ -49,8 +52,7 @@ export async function GET(request: NextRequest) {
     JSON.stringify({ userId: user.id, ts: Date.now() })
   ).toString("base64url");
 
-  // Instagram API uses its own OAuth endpoint (not facebook.com/dialog/oauth)
-  const authUrl = new URL("https://www.instagram.com/oauth/authorize");
+  const authUrl = new URL("https://www.facebook.com/v21.0/dialog/oauth");
   authUrl.searchParams.set("client_id", appId);
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("scope", scopes);
