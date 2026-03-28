@@ -41,6 +41,8 @@ import { TodaysFocus } from "@/components/todays-focus";
 import { SignalsPanel } from "@/components/signals-panel";
 import { BrainDumpModal } from "@/components/brain-dump-modal";
 import { BriefingView } from "@/components/briefing-view";
+import { CaptureBar } from "@/components/capture-bar";
+import { Spinner } from "@/components/primitives";
 
 function healthNumberToEnum(health: number): "strong" | "stable" | "at_risk" | "critical" {
   if (health >= 75) return "strong";
@@ -55,6 +57,27 @@ export default function CommandConsolePage() {
   const [pillarsLoading, setPillarsLoading] = useState(true);
   const [showBrainDump, setShowBrainDump] = useState(false);
   const [centerTab, setCenterTab] = useState<"focus" | "briefing">("focus");
+  const [processing, setProcessing] = useState(false);
+  const [processResult, setProcessResult] = useState<{ count: number; message: string } | null>(null);
+
+  async function handleCapture(input: string) {
+    setProcessing(true);
+    setProcessResult(null);
+    try {
+      const result = await api<{ items: unknown[]; usageCount: number }>("/api/planner/process", {
+        method: "POST",
+        body: JSON.stringify({ input }),
+      });
+      const count = result.items?.length ?? 0;
+      setProcessResult({ count, message: `Created ${count} task${count !== 1 ? "s" : ""} from your input.` });
+      // Notify other components to refresh
+      window.dispatchEvent(new CustomEvent("tasks:refresh"));
+    } catch (error) {
+      setProcessResult({ count: 0, message: error instanceof Error ? error.message : "Could not process input" });
+    } finally {
+      setProcessing(false);
+    }
+  }
 
   useEffect(() => {
     async function loadPillars() {
@@ -180,6 +203,41 @@ export default function CommandConsolePage() {
             >
               ◈ Brain Dump
             </button>
+          </div>
+
+          {/* Quick Capture */}
+          <div style={{ padding: "16px 28px 0", maxWidth: 720 }}>
+            <CaptureBar onCapture={handleCapture} processing={processing} />
+            {processResult && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  background: processResult.count > 0 ? `${C.gpt}14` : `${C.reminder}14`,
+                  border: `1px solid ${processResult.count > 0 ? `${C.gpt}30` : `${C.reminder}30`}`,
+                  color: processResult.count > 0 ? C.gpt : C.reminder,
+                  fontFamily: C.mono,
+                  fontSize: 11,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span>{processResult.message}</span>
+                <button
+                  onClick={() => setProcessResult(null)}
+                  style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 14, padding: "0 4px" }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            {processing && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: C.textDim, fontFamily: C.mono, fontSize: 11 }}>
+                <Spinner size={12} /> Processing your input into tasks...
+              </div>
+            )}
           </div>
 
           {/* Tab content */}
