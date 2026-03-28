@@ -16,10 +16,9 @@ const NAV_ITEMS = [
 interface NavSidebarProps {
   userEmail?: string | null;
   onSignOut: () => void;
-  onOpenSettings?: () => void;
 }
 
-export function NavSidebar({ userEmail, onSignOut, onOpenSettings }: NavSidebarProps) {
+export function NavSidebar({ userEmail, onSignOut }: NavSidebarProps) {
   const pathname = usePathname();
 
   return (
