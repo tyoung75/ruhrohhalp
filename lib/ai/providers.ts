@@ -1,6 +1,5 @@
 import { PROVIDER_DEFAULT_MODEL } from "@/lib/ai/registry";
 import type { AIProvider } from "@/lib/types/domain";
-import { AI_MODELS } from "@/lib/ai-config";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type Message = { role: "user" | "assistant"; content: string };

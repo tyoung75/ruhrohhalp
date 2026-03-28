@@ -98,7 +98,7 @@ export async function loadPerformanceContext(userId: string): Promise<Performanc
 
   // Join with content_queue to get body text
   const queueIds = (analyticsRes.data ?? []).map(a => a.content_queue_id).filter(Boolean);
-  let bodyMap = new Map<string, string>();
+  const bodyMap = new Map<string, string>();
 
   if (queueIds.length > 0) {
     const { data: posts } = await supabase

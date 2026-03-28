@@ -89,7 +89,7 @@ async function postToInstagram(
 }
 
 async function postToTikTok(
-  item: QueueItem,
+  _item: QueueItem,
   _accessToken: string,
 ): Promise<PostResult> {
   throw new Error(
@@ -99,7 +99,7 @@ async function postToTikTok(
 }
 
 async function postToYouTube(
-  item: QueueItem,
+  _item: QueueItem,
   _accessToken: string,
 ): Promise<PostResult> {
   throw new Error(
