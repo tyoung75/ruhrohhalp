@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateInternalRequest } from "@/lib/internal-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computePriorityScore, parseWeights } from "@/lib/ai/scoring";
+import { generateLeverageReason } from "@/lib/ai/leverage-reason";
 
 type SkillAction = "create_task" | "update_task_state" | "add_goal_signal";
 
@@ -127,6 +128,20 @@ async function handleCreateTask(
     entity_id: task.id,
     payload: { source: source ?? "skill", action: "create_task" },
   });
+
+  // Fire-and-forget: enrich leverage_reason via Sonnet
+  generateLeverageReason({
+    title: title as string,
+    description: (description as string) ?? undefined,
+    priority_score: score,
+  }).then(async (reason) => {
+    if (reason) {
+      await supabase
+        .from("tasks")
+        .update({ leverage_reason: reason, ai_metadata: { leverage_reason: reason } })
+        .eq("id", task.id);
+    }
+  }).catch(() => {});
 
   return NextResponse.json(
     {
