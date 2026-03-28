@@ -31,7 +31,7 @@ jobs:
         run: |
           echo "Triggering ruhrohhalp /api/cron at $(date -u)"
           response=$(curl -s -w "\n%{http_code}" -X GET \
-            "https://ruhrohhalp.com/api/cron" \
+            "https://www.ruhrohhalp.com/api/cron" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json" \
             --max-time 300)
