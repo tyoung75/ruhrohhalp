@@ -1,15 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateInternalRequest } from "@/lib/internal-auth";
+import { runJob } from "@/lib/jobs/executor";
 
-// TODO: wrap in runJob() after Item 5
 export async function POST(request: NextRequest) {
   if (!validateInternalRequest(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json({
-    ok: true,
-    job: "content-handoff",
-    message: "stub",
-  });
+  const result = await runJob(
+    "content-handoff",
+    async () => {
+      // TODO: implement real content handoff (Item 8b)
+      return { ok: true, job: "content-handoff", message: "stub" };
+    },
+  );
+
+  return NextResponse.json(result);
 }
