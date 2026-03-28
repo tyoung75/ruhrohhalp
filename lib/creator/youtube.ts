@@ -320,6 +320,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         // Format analysis: Shorts (<60s) vs Regular vs Long-form (>20min)
         const formatBuckets: Record<string, { views: number; engagement: number; watchTime: number; count: number }> = {};
         const tagPerformance: Record<string, { views: number; engagement: number; count: number }> = {};
+        let totalAvgDuration = 0;
 
         for (const row of videoRows) {
           const videoId = row[0] as string;
@@ -328,6 +329,8 @@ export class YouTubeAdapter implements PlatformAdapter {
           const comments = row[3] as number;
           const shares = row[4] as number;
           const watchMinutes = row[5] as number;
+          const avgViewDuration = (row[6] as number) ?? 0;
+          totalAvgDuration += avgViewDuration;
 
           const detail = videoDetails[videoId];
           const dur = detail?.duration ?? 0;
