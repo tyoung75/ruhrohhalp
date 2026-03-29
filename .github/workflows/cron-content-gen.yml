@@ -1,0 +1,43 @@
+name: Overnight Content Generation
+
+# Generates a batch of Threads posts overnight so the queue is stocked
+# for tomorrow's publish windows.
+#
+# Flow: generate → safety audit → score → sit in queue → published at 12/6/9:30 PM
+#
+# Runs at 11:00 PM ET (03:00 UTC during EDT, 04:00 UTC during EST).
+
+on:
+  schedule:
+    - cron: "0 3 * * *"    # 11:00 PM ET (EDT)
+  workflow_dispatch:
+
+jobs:
+  generate:
+    name: Generate content batch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger content generation
+        run: |
+          echo "Triggering overnight content generation at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://www.ruhrohhalp.com/api/creator/generate" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            --max-time 300)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: content generation returned HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✓ Content generation completed successfully"

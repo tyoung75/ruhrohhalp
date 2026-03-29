@@ -1,0 +1,49 @@
+name: Creator Analytics Collection
+
+# Collects post engagement metrics (impressions, likes, replies, follows gained)
+# for content published in the last 30 days. Feeds into the scoring algorithm
+# and content performance brain.
+#
+# Runs every 6 hours so the scoring algorithm always has fresh data:
+#   6:00 AM ET (10:00 UTC) — morning, feeds into daily briefing
+#  12:00 PM ET (16:00 UTC) — midday, after first publish window
+#   6:00 PM ET (22:00 UTC) — evening, after peak publish window
+#  12:00 AM ET (04:00 UTC) — overnight, catches late engagement
+
+on:
+  schedule:
+    - cron: "0 10 * * *"   # 6:00 AM ET (EDT)
+    - cron: "0 16 * * *"   # 12:00 PM ET (EDT)
+    - cron: "0 22 * * *"   # 6:00 PM ET (EDT)
+    - cron: "0 4 * * *"    # 12:00 AM ET (EDT)
+  workflow_dispatch:
+
+jobs:
+  collect:
+    name: Collect post analytics
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger analytics collection
+        run: |
+          echo "Triggering analytics collection at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X GET \
+            "https://www.ruhrohhalp.com/api/cron/creator-analytics" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 120)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: analytics collection returned HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✓ Analytics collection completed successfully"

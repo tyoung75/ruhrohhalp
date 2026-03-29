@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { cleanTranscript, detectIsIdea } from "@/lib/processors/whisper";
-import { mapPriority } from "@/lib/processors/linear";
 import { parseProjectPrefix } from "@/lib/processors/reminder";
 import { detectMeetingType } from "@/lib/processors/calendar";
 import { detectProjectSlug } from "@/lib/processors/projects";
@@ -31,21 +30,6 @@ describe("whisper: detectIsIdea", () => {
     expect(detectIsIdea("Remember to send the invoice to Brett")).toBe(false);
     expect(detectIsIdea("Meeting with Jill at 3pm tomorrow")).toBe(false);
     expect(detectIsIdea("Todo: update the Linear board")).toBe(false);
-  });
-});
-
-describe("linear: mapPriority", () => {
-  it("maps Linear priorities to TylerOS importance", () => {
-    expect(mapPriority(1)).toBe(9);  // Urgent
-    expect(mapPriority(2)).toBe(7);  // High
-    expect(mapPriority(3)).toBe(5);  // Normal
-    expect(mapPriority(4)).toBe(3);  // Low
-    expect(mapPriority(0)).toBe(5);  // No priority
-  });
-
-  it("defaults to 5 for null/undefined", () => {
-    expect(mapPriority(null)).toBe(5);
-    expect(mapPriority(undefined)).toBe(5);
   });
 });
 

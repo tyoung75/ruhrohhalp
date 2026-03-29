@@ -1,0 +1,46 @@
+name: OAuth Token Health Check
+
+# Proactively refreshes platform tokens (Threads, Instagram, TikTok, YouTube)
+# before they expire. Prevents silent publish failures from expired tokens.
+#
+# Runs every 8 hours:
+#   6:00 AM ET (10:00 UTC) — morning, before briefing
+#   2:00 PM ET (18:00 UTC) — afternoon, before evening publish
+#  10:00 PM ET (02:00 UTC) — night, before overnight generation
+
+on:
+  schedule:
+    - cron: "0 10 * * *"   # 6:00 AM ET (EDT)
+    - cron: "0 18 * * *"   # 2:00 PM ET (EDT)
+    - cron: "0 2 * * *"    # 10:00 PM ET (EDT)
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    name: Refresh expiring tokens
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger token refresh
+        run: |
+          echo "Triggering token health check at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X GET \
+            "https://www.ruhrohhalp.com/api/cron/refresh-tokens" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 60)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: token refresh returned HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✓ Token health check completed successfully"

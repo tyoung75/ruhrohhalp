@@ -143,7 +143,7 @@ function selectTopPosts(
 
 export async function publishQueuedPosts(
   userId: string,
-  options: { manual?: boolean; source?: "cron" | "cowork" | "manual" } = {}
+  options: { manual?: boolean; source?: "cron" | "cowork" | "manual"; platformFilter?: string } = {}
 ): Promise<{
   published: number;
   failed: number;
@@ -205,6 +205,12 @@ export async function publishQueuedPosts(
     .eq("status", "queued")
     .order("scheduled_for", { ascending: true })
     .limit(50);
+
+  // Filter to specific platform (e.g., "threads") for automated runs
+  // Non-Threads content stays in queue as drafts for manual review
+  if (options.platformFilter) {
+    query = query.eq("platform", options.platformFilter);
+  }
 
   if (!options.manual) {
     query = query.lte("scheduled_for", now);

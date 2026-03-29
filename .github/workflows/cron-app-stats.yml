@@ -1,0 +1,42 @@
+name: App Stats Check
+
+# Monitors freshness of Motus and Iron Passport app stats.
+# If data is stale (>24h), creates an alert surfaced in the morning briefing.
+#
+# Runs at 7:00 AM ET (11:00 UTC during EDT, 12:00 UTC during EST).
+# Right before Score Tasks, so the briefing has fresh context.
+
+on:
+  schedule:
+    - cron: "0 11 * * *"   # 7:00 AM ET (EDT)
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Check app stats freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger app stats check
+        run: |
+          echo "Triggering app stats check at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://www.ruhrohhalp.com/api/internal/app-stats" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 60)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: app-stats check returned HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✓ App stats check completed successfully"

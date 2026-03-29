@@ -1,0 +1,42 @@
+name: Goal Check-in Nudge
+
+# Scans active goals for stale check-ins (no activity in 7+ days) and creates
+# nudge alerts surfaced in the evening briefing.
+#
+# Runs at 9:00 PM ET (01:00 UTC during EDT, 02:00 UTC during EST).
+# End of the BDHE block — a natural time to reflect on goal progress.
+
+on:
+  schedule:
+    - cron: "0 1 * * *"    # 9:00 PM ET (EDT)
+  workflow_dispatch:
+
+jobs:
+  nudge:
+    name: Nudge stale goals
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger goal nudge endpoint
+        run: |
+          echo "Triggering goal nudge at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://www.ruhrohhalp.com/api/internal/goal-nudge" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 60)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: goal-nudge returned HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✓ Goal nudge completed successfully"

@@ -1,7 +1,16 @@
 name: Content Handoff
+
+# Processes queued Threads content for publishing (non-Threads content stays as drafts).
+# Reduced from 4x/day to 2x/day — aligns with briefing cadence, saves API tokens.
+#
+# Times are in UTC. Currently EDT (UTC-4):
+#   10:00 UTC =  6:00 AM ET (morning, after briefing)
+#   22:00 UTC =  6:00 PM ET (evening, peak engagement)
+
 on:
   schedule:
-    - cron: '0 */6 * * *' # every 6 hours
+    - cron: '0 10 * * *'   # 6:00 AM ET (EDT)
+    - cron: '0 22 * * *'   # 6:00 PM ET (EDT)
   workflow_dispatch:
 
 jobs:

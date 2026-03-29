@@ -1,8 +1,10 @@
 name: Creator OS — Publish Queue
 
-# Hits /api/creator/publish-cowork three times daily during peak engagement windows.
+# Publishes queued THREADS posts at peak engagement windows (Threads only —
+# Instagram, TikTok, YouTube content stays as drafts for manual review).
+#
 # Each run publishes up to 2 posts (per-job cap) and respects the daily backfill cap (6/day).
-# If earlier runs were skipped (laptop closed, etc.), later runs catch up within the cap.
+# If earlier runs were skipped, later runs catch up within the cap.
 #
 # Times are in UTC. Currently EDT (UTC-4), so:
 #   16:00 UTC = 12:00 PM ET  (midday window)
