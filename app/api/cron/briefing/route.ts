@@ -152,8 +152,14 @@ function extractSection(text: string, heading: string): string[] {
   if (!match) return [];
   return match[1]
     .split("\n")
-    .map((line) => line.replace(/^[\s]*(?:[-*]|\d+[.)]\s*)\s*/, "").trim())
-    .filter((line) => line.length > 0 && !line.startsWith("##"));
+    .map((line) =>
+      line
+        .replace(/^[\s]*(?:[-*]|\d+[.)]\s*)\s*/, "")  // strip list markers
+        .replace(/^\*\*|\*\*$/g, "")                    // strip leading/trailing bold **
+        .replace(/^\*|\*$/g, "")                         // strip leading/trailing italic *
+        .trim(),
+    )
+    .filter((line) => line.length > 0 && !line.startsWith("##") && !/^-{2,}$/.test(line));
 }
 
 function parseDailySections(answer: string) {
