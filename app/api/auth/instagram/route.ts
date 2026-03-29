@@ -9,7 +9,7 @@
  *
  * Required permissions:
  *   instagram_basic              — read profile info
- *   instagram_content_publishing — publish images, carousels, reels
+ *   instagram_content_publish — publish images, carousels, reels
  *   pages_read_engagement        — read page engagement metrics
  *   pages_show_list              — list connected Facebook pages
  *   business_management          — manage business assets
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
   const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/instagram/callback`;
   const scopes = [
     "instagram_basic",
-    "instagram_content_publishing",
+    "instagram_content_publish",
     "pages_read_engagement",
     "pages_show_list",
     "business_management",
