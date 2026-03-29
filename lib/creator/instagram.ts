@@ -274,22 +274,56 @@ export class InstagramAdapter implements PlatformAdapter {
     const longData = await longRes.json();
     if (longData.error) throw new Error(longData.error.message);
 
-        // Step 3: Get IG Business Account ID via connected Facebook Page
+    // Step 3: Get IG Business Account ID via connected Facebook Page
+    // Request access_token field so we get the Page token (needed for IG Business Account queries)
     const pagesRes = await fetch(
       `${FB_GRAPH}/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${longData.access_token}`
     );
     const pagesData = await pagesRes.json();
     console.log("[instagram-oauth] Pages response:", JSON.stringify(pagesData));
 
-    // Search all pages for one with an instagram_business_account
+    // Search all pages for ones with an instagram_business_account
+    // If PREFERRED_IG_USERNAME is set, prefer that account; otherwise take the last match
+    const preferredUsername = process.env.PREFERRED_IG_USERNAME;
     let igId: string | undefined;
     let pageAccessToken: string | undefined;
+    const allMatches: Array<{ igId: string; pageName: string; pageId: string; pageToken: string }> = [];
+
     for (const page of pagesData.data ?? []) {
       if (page.instagram_business_account?.id) {
-        igId = page.instagram_business_account.id;
-        pageAccessToken = page.access_token;
-        console.log(`[instagram-oauth] Found IG Business Account ${igId} on page "${page.name}" (${page.id})`);
-        break;
+        console.log(`[instagram-oauth] Found IG Business Account ${page.instagram_business_account.id} on page "${page.name}" (${page.id})`);
+        allMatches.push({
+          igId: page.instagram_business_account.id,
+          pageName: page.name,
+          pageId: page.id,
+          pageToken: page.access_token,
+        });
+      }
+    }
+
+    if (allMatches.length > 0) {
+      // If preferred username is set, fetch each IG account's username to find the right one
+      if (preferredUsername && allMatches.length > 1) {
+        for (const match of allMatches) {
+          const checkRes = await fetch(
+            `${FB_GRAPH}/${match.igId}?fields=username&access_token=${match.pageToken}`
+          );
+          const checkData = await checkRes.json();
+          if (checkData.username === preferredUsername) {
+            igId = match.igId;
+            pageAccessToken = match.pageToken;
+            console.log(`[instagram-oauth] Matched preferred username @${preferredUsername} on page "${match.pageName}"`);
+            break;
+          }
+        }
+      }
+
+      // Fallback: use the last match (most recently created page tends to appear last)
+      if (!igId) {
+        const selected = allMatches[allMatches.length - 1];
+        igId = selected.igId;
+        pageAccessToken = selected.pageToken;
+        console.log(`[instagram-oauth] Using IG account from page "${selected.pageName}" (last of ${allMatches.length} matches)`);
       }
     }
 
