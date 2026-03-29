@@ -13,7 +13,6 @@
 
 import type { PlatformAdapter, PublishResult, PostMetrics, PlatformPost, PlatformProfile } from "./platforms";
 
-const IG_GRAPH = "https://graph.instagram.com/v21.0";
 const FB_GRAPH = "https://graph.facebook.com/v21.0";
 
 export class InstagramAdapter implements PlatformAdapter {
@@ -25,8 +24,9 @@ export class InstagramAdapter implements PlatformAdapter {
   }): Promise<PlatformProfile> {
     const { accessToken, userId } = params;
 
+    // IG Business Account fields must be queried via FB Graph API, not IG Graph API
     const res = await fetch(
-      `${IG_GRAPH}/${userId}?fields=followers_count,follows_count,media_count,username,name&access_token=${accessToken}`
+      `${FB_GRAPH}/${userId}?fields=followers_count,follows_count,media_count,username,name&access_token=${accessToken}`
     );
     const data = await res.json();
 
@@ -93,7 +93,7 @@ export class InstagramAdapter implements PlatformAdapter {
     }
 
     // Step 1: Create media container
-    const containerRes = await fetch(`${IG_GRAPH}/${userId}/media`, {
+    const containerRes = await fetch(`${FB_GRAPH}/${userId}/media`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(params),
@@ -105,7 +105,7 @@ export class InstagramAdapter implements PlatformAdapter {
     }
 
     // Step 2: Publish container
-    const publishRes = await fetch(`${IG_GRAPH}/${userId}/media_publish`, {
+    const publishRes = await fetch(`${FB_GRAPH}/${userId}/media_publish`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -142,7 +142,7 @@ export class InstagramAdapter implements PlatformAdapter {
         ...(isVideo ? { media_type: "VIDEO", video_url: url } : { image_url: url }),
       };
 
-      const res = await fetch(`${IG_GRAPH}/${userId}/media`, {
+      const res = await fetch(`${FB_GRAPH}/${userId}/media`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(params),
@@ -153,7 +153,7 @@ export class InstagramAdapter implements PlatformAdapter {
     }
 
     // Create carousel container
-    const containerRes = await fetch(`${IG_GRAPH}/${userId}/media`, {
+    const containerRes = await fetch(`${FB_GRAPH}/${userId}/media`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -169,7 +169,7 @@ export class InstagramAdapter implements PlatformAdapter {
     }
 
     // Publish
-    const publishRes = await fetch(`${IG_GRAPH}/${userId}/media_publish`, {
+    const publishRes = await fetch(`${FB_GRAPH}/${userId}/media_publish`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -191,7 +191,7 @@ export class InstagramAdapter implements PlatformAdapter {
     const { accessToken, postId } = params;
 
     const res = await fetch(
-      `${IG_GRAPH}/${postId}/insights?metric=impressions,reach,likes,comments,shares,saved&access_token=${accessToken}`
+      `${FB_GRAPH}/${postId}/insights?metric=impressions,reach,likes,comments,shares,saved&access_token=${accessToken}`
     );
     const data = await res.json();
 
@@ -227,7 +227,7 @@ export class InstagramAdapter implements PlatformAdapter {
     const { accessToken, userId, limit = 25 } = params;
 
     const res = await fetch(
-      `${IG_GRAPH}/${userId}/media?fields=id,caption,media_type,media_url,permalink,timestamp&limit=${limit}&access_token=${accessToken}`
+      `${FB_GRAPH}/${userId}/media?fields=id,caption,media_type,media_url,permalink,timestamp&limit=${limit}&access_token=${accessToken}`
     );
     const data = await res.json();
 
@@ -345,8 +345,14 @@ export class InstagramAdapter implements PlatformAdapter {
     const username = profileData.username ?? undefined;
     console.log(`[instagram-oauth] IG profile: @${username} (ID: ${igId})`);
 
+    // Store the PAGE access token (not the user token) because IG Business Account
+    // queries (getProfile, getPostMetrics, listUserPosts) require the Page token.
+    // The Page token is also a long-lived token when derived from a long-lived user token.
+    const tokenToStore = pageAccessToken ?? longData.access_token;
+    console.log(`[instagram-oauth] Storing ${pageAccessToken ? 'page' : 'user'} access token for @${username}`);
+
     return {
-      accessToken: longData.access_token,
+      accessToken: tokenToStore,
       tokenType: "bearer",
       expiresIn: longData.expires_in,
       userId: igId,
