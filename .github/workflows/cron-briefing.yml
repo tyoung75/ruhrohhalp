@@ -1,18 +1,16 @@
-name: Daily Briefing (Morning + Evening)
+name: Daily Briefing & Creator OS
 
-# Runs the unified /api/cron endpoint which handles:
-#   - Daily briefing generation (every run)
-#   - Weekly CEO synthesis + strategy refresh (Monday morning only)
-#   - Creator OS: sync external posts, expire stale drafts, publish queued posts
-#   - Analytics collection, Strava sync, follower snapshots, token refresh
-#   - AI Editor pipeline: media sync, analysis, edit plan generation + execution
+# Runs the split cron sub-routes which handle:
+#   /api/cron/briefing — daily briefing + weekly CEO synthesis (Monday only)
+#   /api/cron/sync     — creator OS sync, publish, analytics, tokens
+#   /api/cron/media    — AI editor pipeline (media → analyze → plan → execute)
+#
+# Each sub-route gets its own Vercel function invocation (60s limit each).
+# The workflow calls them sequentially to avoid overwhelming the server.
 #
 # Times are in UTC. Currently EDT (UTC-4), so:
 #   10:00 UTC = 6:00 AM ET  (morning briefing)
 #   00:05 UTC = 8:05 PM ET  (evening briefing)
-#
-# Note: During EST (Nov–Mar, UTC-5) these fire 1 hour earlier than ET.
-# Adjust the cron expressions seasonally if precision matters.
 
 on:
   schedule:
@@ -22,30 +20,71 @@ on:
 
 jobs:
   run-cron:
-    name: Run /api/cron
+    name: Run cron sub-routes
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Trigger unified cron endpoint
+      - name: Run briefing
         run: |
-          echo "Triggering ruhrohhalp /api/cron at $(date -u)"
+          echo "=== /api/cron/briefing at $(date -u) ==="
           response=$(curl -s -w "\n%{http_code}" -X GET \
-            "https://www.ruhrohhalp.com/api/cron" \
+            "https://www.ruhrohhalp.com/api/cron/briefing" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json" \
-            --max-time 300)
+            --max-time 120)
 
           http_code=$(echo "$response" | tail -n1)
           body=$(echo "$response" | sed '$d')
-
           echo "HTTP status: $http_code"
-          echo "Response body:"
           echo "$body" | jq '.' 2>/dev/null || echo "$body"
 
           if [ "$http_code" -ne 200 ]; then
-            echo "ERROR: /api/cron returned HTTP $http_code"
-            exit 1
+            echo "WARNING: /api/cron/briefing returned HTTP $http_code"
+          else
+            echo "✓ Briefing completed"
           fi
 
-          echo "✓ Cron completed successfully"
+      - name: Run sync
+        run: |
+          echo "=== /api/cron/sync at $(date -u) ==="
+          response=$(curl -s -w "\n%{http_code}" -X GET \
+            "https://www.ruhrohhalp.com/api/cron/sync" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 120)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "HTTP status: $http_code"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "WARNING: /api/cron/sync returned HTTP $http_code"
+          else
+            echo "✓ Sync completed"
+          fi
+
+      - name: Run media pipeline
+        run: |
+          echo "=== /api/cron/media at $(date -u) ==="
+          response=$(curl -s -w "\n%{http_code}" -X GET \
+            "https://www.ruhrohhalp.com/api/cron/media" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 120)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "HTTP status: $http_code"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "WARNING: /api/cron/media returned HTTP $http_code"
+          else
+            echo "✓ Media pipeline completed"
+          fi
+
+      - name: Summary
+        if: always()
+        run: echo "All cron sub-routes finished at $(date -u)"
