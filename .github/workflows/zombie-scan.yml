@@ -7,9 +7,27 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Trigger zombie scan
         run: |
-          curl -sf -X POST "${{ secrets.RUHROHHALP_URL }}/api/internal/zombie-scan" \
+          echo "Triggering zombie scan at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://www.ruhrohhalp.com/api/internal/zombie-scan" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.RUHROHHALP_SECRET }}"
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: zombie-scan returned HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✓ Zombie scan completed successfully"
