@@ -347,6 +347,25 @@ async function gatherDailyContext(
     console.error("[creator-generate] Strategy insights fetch failed (non-fatal):", err);
   }
 
+  // --- Active trend signals (from detectTrends + external analysis) ---
+  let activeTrends: string[] = [];
+  try {
+    const { data: trends } = await supabase
+      .from("trend_signals")
+      .select("topic, platform, relevance_score, context")
+      .eq("user_id", userId)
+      .gte("expires_at", new Date().toISOString())
+      .order("relevance_score", { ascending: false })
+      .limit(10);
+
+    activeTrends = (trends ?? []).map(
+      (t: { topic: string; platform: string | null; relevance_score: number; context: string | null }) =>
+        `[${t.platform ?? "general"}] (relevance: ${t.relevance_score}) ${t.topic}${t.context ? ` — ${t.context}` : ""}`
+    );
+  } catch (err) {
+    console.error("[creator-generate] Trend signals fetch failed (non-fatal):", err);
+  }
+
   // --- Creator feedback (directives, dislikes, corrections, likes) ---
   interface FeedbackRow { feedback_type: string; content: string; context: Record<string, unknown> | null }
   let creatorFeedback: {
@@ -398,6 +417,7 @@ async function gatherDailyContext(
     strava: stravaData,
     motus: motusData,
     strategyInsights,
+    activeTrends,
     creatorFeedback,
   };
 }

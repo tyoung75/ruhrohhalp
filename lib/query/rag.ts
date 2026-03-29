@@ -165,61 +165,70 @@ export async function queryBrain(
     created_at: string;
   };
 
-  let chunks: RetrievedChunk[];
+  let chunks: RetrievedChunk[] = [];
 
-  // 1. Try semantic search via embeddings; fall back to recency if unavailable
+  // 1. Try semantic search via embeddings; fall back to recency if unavailable or broken
   const canEmbed = !!process.env.HF_API_TOKEN;
+  let useRecencyFallback = !canEmbed;
 
-  if (canEmbed) {
-    // --- Semantic path: embed question → vector search → hydrate ---
-    const [embedding] = await generateEmbeddings([question]);
+  if (canEmbed && !useRecencyFallback) {
+    try {
+      // --- Semantic path: embed question → vector search → hydrate ---
+      const [embedding] = await generateEmbeddings([question]);
 
-    const fetchCount = hasFilters ? topK * FILTER_OVERFETCH : topK;
+      const fetchCount = hasFilters ? topK * FILTER_OVERFETCH : topK;
 
-    const { data: matches, error: rpcError } = await supabase.rpc("search_by_embedding", {
-      p_user_id: userId,
-      p_table_name: table,
-      p_embedding: JSON.stringify(embedding),
-      p_match_count: fetchCount,
-      p_match_threshold: threshold,
-    });
+      const { data: matches, error: rpcError } = await supabase.rpc("search_by_embedding", {
+        p_user_id: userId,
+        p_table_name: table,
+        p_embedding: JSON.stringify(embedding),
+        p_match_count: fetchCount,
+        p_match_threshold: threshold,
+      });
 
-    if (rpcError) {
-      logError("rag.search_rpc", rpcError, { userId, table });
-      throw new Error(`Vector search failed: ${rpcError.message}`);
+      if (rpcError) {
+        logError("rag.search_rpc", rpcError, { userId, table });
+        throw new Error(`Vector search failed: ${rpcError.message}`);
+      }
+
+      const matchedIds = (matches ?? []) as { id: string; similarity: number }[];
+      if (matchedIds.length === 0) {
+        const answer = await callClaude(buildContextMessage([], question));
+        return { answer, sources: [], chunks: [] };
+      }
+
+      const ids = matchedIds.map((m) => m.id);
+      const similarityMap = new Map(matchedIds.map((m) => [m.id, m.similarity]));
+
+      const { data: rows, error: fetchError } = await supabase
+        .from("memories")
+        .select("id, content, summary, source, source_id, category, created_at")
+        .in("id", ids);
+
+      if (fetchError) {
+        logError("rag.hydrate", fetchError, { userId });
+        throw new Error(`Failed to hydrate memories: ${fetchError.message}`);
+      }
+
+      chunks = ((rows ?? []) as MemoryRow[]).map((r) => ({
+        id: r.id,
+        content: r.content,
+        summary: r.summary,
+        source: r.source as MemorySource,
+        sourceId: r.source_id,
+        category: r.category as MemoryCategory,
+        similarity: similarityMap.get(r.id) ?? 0,
+        createdAt: r.created_at,
+      }));
+    } catch (semanticErr) {
+      // Embedding or vector search failed — fall back to recency
+      logError("rag.semantic_fallback", semanticErr, { userId });
+      useRecencyFallback = true;
     }
+  }
 
-    const matchedIds = (matches ?? []) as { id: string; similarity: number }[];
-    if (matchedIds.length === 0) {
-      const answer = await callClaude(buildContextMessage([], question));
-      return { answer, sources: [], chunks: [] };
-    }
-
-    const ids = matchedIds.map((m) => m.id);
-    const similarityMap = new Map(matchedIds.map((m) => [m.id, m.similarity]));
-
-    const { data: rows, error: fetchError } = await supabase
-      .from("memories")
-      .select("id, content, summary, source, source_id, category, created_at")
-      .in("id", ids);
-
-    if (fetchError) {
-      logError("rag.hydrate", fetchError, { userId });
-      throw new Error(`Failed to hydrate memories: ${fetchError.message}`);
-    }
-
-    chunks = ((rows ?? []) as MemoryRow[]).map((r) => ({
-      id: r.id,
-      content: r.content,
-      summary: r.summary,
-      source: r.source as MemorySource,
-      sourceId: r.source_id,
-      category: r.category as MemoryCategory,
-      similarity: similarityMap.get(r.id) ?? 0,
-      createdAt: r.created_at,
-    }));
-  } else {
-    // --- Recency fallback: no embeddings available, fetch recent high-importance memories ---
+  if (useRecencyFallback) {
+    // --- Recency fallback: no embeddings available or embedding failed ---
     let query = supabase
       .from("memories")
       .select("id, content, summary, source, source_id, category, created_at")
