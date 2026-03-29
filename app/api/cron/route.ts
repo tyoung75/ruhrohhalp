@@ -261,7 +261,7 @@ export async function GET(request: NextRequest) {
     };
   } catch (error) {
     logError("cron.daily", error);
-    results.daily = { error: "Daily briefing failed" };
+    results.daily = { error: "Daily briefing failed", detail: error instanceof Error ? error.message : String(error) };
   }
 
   // --- On Monday morning, also run the weekly synthesis ---
