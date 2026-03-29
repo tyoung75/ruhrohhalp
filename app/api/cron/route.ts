@@ -193,7 +193,10 @@ async function saveBriefingFromCron(
       })
       .eq("id", existing.id);
 
-    if (error) logError("cron.save.update", error, { userId, period });
+    if (error) {
+      logError("cron.save.update", error, { userId, period });
+      throw new Error(`Briefing update failed: ${error.message}`);
+    }
   } else {
     const { error } = await supabase
       .from("briefings")
@@ -207,7 +210,10 @@ async function saveBriefingFromCron(
         updated_at: new Date().toISOString(),
       });
 
-    if (error) logError("cron.save.insert", error, { userId, period });
+    if (error) {
+      logError("cron.save.insert", error, { userId, period });
+      throw new Error(`Briefing insert failed: ${error.message}`);
+    }
   }
 }
 
