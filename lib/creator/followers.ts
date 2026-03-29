@@ -63,9 +63,27 @@ export async function snapshotFollowerCounts(userId: string): Promise<{
     .select("platform, access_token, platform_user_id")
     .eq("user_id", userId);
 
-  if (!tokens?.length) return { snapshots: 0, errors: ["No platform tokens found"] };
+  // Build a unified list: platform_tokens entries + API-key-only platforms (YouTube)
+  const platformEntries: Array<{ platform: string; access_token: string; platform_user_id: string }> =
+    (tokens ?? []).map((t) => ({
+      platform: t.platform as string,
+      access_token: t.access_token as string,
+      platform_user_id: t.platform_user_id as string,
+    }));
 
-  for (const token of tokens) {
+  // Add YouTube if API key is configured and not already in platform_tokens
+  const hasYouTubeToken = platformEntries.some((t) => t.platform === "youtube");
+  if (!hasYouTubeToken && process.env.YOUTUBE_API_KEY && process.env.YOUTUBE_CHANNEL_ID) {
+    platformEntries.push({
+      platform: "youtube",
+      access_token: "", // YouTube adapter uses API key from env, not OAuth token
+      platform_user_id: process.env.YOUTUBE_CHANNEL_ID,
+    });
+  }
+
+  if (!platformEntries.length) return { snapshots: 0, errors: ["No platform tokens found"] };
+
+  for (const token of platformEntries) {
     try {
       const adapter = getPlatformAdapter(token.platform);
       const profile = await adapter.getProfile({

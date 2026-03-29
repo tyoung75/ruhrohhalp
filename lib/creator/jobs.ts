@@ -481,13 +481,32 @@ export async function syncExternalPosts(
     .select("platform, access_token, platform_user_id, expires_at")
     .eq("user_id", userId);
 
-  if (!tokens?.length) return { imported: 0, errors: 0 };
+  // Build unified list: platform_tokens + API-key-only platforms (YouTube)
+  const platformEntries: Array<{ platform: string; access_token: string; platform_user_id: string; expires_at: string | null }> =
+    (tokens ?? []).map((t) => ({
+      platform: t.platform as string,
+      access_token: t.access_token as string,
+      platform_user_id: t.platform_user_id as string,
+      expires_at: t.expires_at as string | null,
+    }));
+
+  const hasYouTubeToken = platformEntries.some((t) => t.platform === "youtube");
+  if (!hasYouTubeToken && process.env.YOUTUBE_API_KEY && process.env.YOUTUBE_CHANNEL_ID) {
+    platformEntries.push({
+      platform: "youtube",
+      access_token: "",
+      platform_user_id: process.env.YOUTUBE_CHANNEL_ID,
+      expires_at: null,
+    });
+  }
+
+  if (!platformEntries.length) return { imported: 0, errors: 0 };
 
   let imported = 0;
   let errors = 0;
 
-  for (const token of tokens) {
-    if (token.expires_at && new Date(token.expires_at as string) < new Date()) {
+  for (const token of platformEntries) {
+    if (token.expires_at && new Date(token.expires_at) < new Date()) {
       continue; // skip expired tokens
     }
 
@@ -680,6 +699,11 @@ export async function collectAnalytics(
       { accessToken: t.access_token as string, platformUserId: t.platform_user_id as string },
     ])
   );
+
+  // Ensure YouTube is in tokenMap even without a platform_tokens entry (API-key-only)
+  if (!tokenMap.has("youtube") && process.env.YOUTUBE_API_KEY && process.env.YOUTUBE_CHANNEL_ID) {
+    tokenMap.set("youtube", { accessToken: "", platformUserId: process.env.YOUTUBE_CHANNEL_ID });
+  }
 
   let processed = 0;
   let errors = 0;

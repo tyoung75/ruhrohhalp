@@ -222,6 +222,11 @@ export async function POST() {
       ])
     );
 
+    // Ensure YouTube is in tokenMap even without a platform_tokens entry (API-key-only)
+    if (!tokenMap.has("youtube") && process.env.YOUTUBE_API_KEY && process.env.YOUTUBE_CHANNEL_ID) {
+      tokenMap.set("youtube", { accessToken: "", platformUserId: process.env.YOUTUBE_CHANNEL_ID });
+    }
+
     let processed = 0;
     let errors = 0;
 
