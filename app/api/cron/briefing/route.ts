@@ -142,8 +142,10 @@ function isMondayMorningRun(): boolean {
 }
 
 function extractSection(text: string, heading: string): string[] {
+  // Match "## <optional emoji/bold/etc> Heading Text" — Claude sometimes adds emoji before headings
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(
-    `##\\s*${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`,
+    `##[^\\n]*?${escapedHeading}[^\\n]*\\n([\\s\\S]*?)(?=\\n##|$)`,
     "i",
   );
   const match = text.match(pattern);
