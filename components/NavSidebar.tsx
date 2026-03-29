@@ -65,6 +65,7 @@ export function NavSidebar({ userEmail, onSignOut }: NavSidebarProps) {
           return (
             <Link
               key={item.href}
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               href={item.href as any}
               style={{
                 display: "flex",

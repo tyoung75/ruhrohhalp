@@ -1,13 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import {
   formatCurrency,
-  formatCurrencyExact,
   formatDelta,
-  formatPercent,
   calculateRaiseImpact,
   resolveAllContributions,
   projectDebtPayoff,
@@ -17,9 +15,7 @@ import type {
   Owner,
   RaiseImpact,
   FinancialAccount,
-  FinancialDebt,
-  FinancialContribution,
-  RSUVest,
+  FinancialHolding,
 } from "@/lib/types/finance";
 import { Spinner } from "@/components/primitives";
 
@@ -144,7 +140,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AccountCard({ account, holdings }: { account: FinancialAccount; holdings: any[] }) {
+function AccountCard({ account, holdings }: { account: FinancialAccount; holdings: FinancialHolding[] }) {
   const accountHoldings = holdings.filter((h) => h.accountId === account.id);
   const investmentValue = accountHoldings.reduce((sum, h) => sum + h.currentValue, 0);
 
@@ -997,7 +993,7 @@ export default function FinancePage() {
     );
 
     setRaiseImpact(impact);
-  }, [newSalary, data]);
+  }, [newSalary, data, currentSalary]);
 
   if (loading) {
     return <LoadingPage />;

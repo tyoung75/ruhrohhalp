@@ -210,10 +210,12 @@ export function calculateRaiseImpact(
   newSalary: number,
   currentBiweeklyNet: number,
   contributions: FinancialContribution[],
-  taxRate: number = 0.30,
+  _taxRate: number = 0.30,
   currentMonthlySurplus: number = 0,
   totalDebt: number = 0
 ): RaiseImpact {
+  void _taxRate;
+
   const raiseAmount = newSalary - currentSalary;
   const raisePercent = currentSalary > 0 ? (raiseAmount / currentSalary) * 100 : 0;
 
