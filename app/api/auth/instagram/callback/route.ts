@@ -47,6 +47,8 @@ export async function GET(request: NextRequest) {
       ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
       : null;
 
+    console.log(`[instagram-oauth] Storing token for IG user: ${tokenData.userId} (@${tokenData.username})`);
+
     // Upsert the token (replace if platform already connected)
     const { error: upsertError } = await supabase
       .from("platform_tokens")
@@ -58,6 +60,7 @@ export async function GET(request: NextRequest) {
           token_type: tokenData.tokenType,
           expires_at: expiresAt,
           platform_user_id: tokenData.userId,
+          platform_username: tokenData.username,
           scopes: [
             "instagram_basic",
             "instagram_content_publish",
@@ -79,7 +82,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.redirect(
       new URL(
-        `/settings/integrations?success=instagram`,
+        `/settings/integrations?success=instagram&username=${encodeURIComponent(tokenData.username ?? "")}`,
         request.url
       )
     );
