@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
           platform_user_id: tokenData.userId,
           scopes: [
             "instagram_basic",
-            "instagram_content_publishing",
+            "instagram_content_publish",
             "pages_read_engagement",
             "pages_show_list",
             "business_management",
