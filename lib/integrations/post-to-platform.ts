@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPlatformAdapter } from "@/lib/creator/platforms";
 
 type PostResult = {
   success: boolean;
@@ -46,19 +47,23 @@ export async function postToPlatform(item: QueueItem): Promise<PostResult> {
     return { success: false, error: `${item.platform} platform_user_id not set. Re-authenticate.` };
   }
 
-  // Platform posting stubs — throw with clear credential requirements.
-  // Actual implementations live in lib/creator/{platform}.ts
-  const stubs: Record<string, string> = {
-    threads: "Threads posting requires THREADS_APP_ID and THREADS_APP_SECRET. Use lib/creator/threads.ts publishThread().",
-    instagram: "Instagram posting requires Instagram Graph API credentials. Use lib/creator/instagram.ts.",
-    tiktok: "TikTok posting requires TIKTOK_CLIENT_KEY and approved app. Use lib/creator/tiktok.ts.",
-    youtube: "YouTube posting requires Google OAuth + YouTube Data API. Use lib/creator/youtube.ts.",
+  const adapter = getPlatformAdapter(item.platform);
+
+  // Determine content type from platform_spec or default to "text"
+  const contentType = (item.platform_spec?.content_type as string) ?? (item.media_urls?.length ? "image" : "text");
+
+  const result = await adapter.publish({
+    accessToken: token.access_token,
+    userId: token.platform_user_id,
+    body: item.body,
+    mediaUrls: item.media_urls,
+    contentType: contentType as "text" | "image" | "carousel" | "reel" | "thread",
+  });
+
+  return {
+    success: result.success,
+    external_id: result.postId,
+    post_url: result.postUrl,
+    error: result.error,
   };
-
-  const stubMessage = stubs[item.platform];
-  if (stubMessage) {
-    throw new Error(stubMessage);
-  }
-
-  return { success: false, error: `Unsupported platform: ${item.platform}` };
 }
