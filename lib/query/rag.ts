@@ -25,7 +25,7 @@ import type { MemoryCategory, MemorySource } from "@/lib/types/domain";
 
 const CLAUDE_MODEL = AI_MODELS.PRIMARY;
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
-const CLAUDE_MAX_TOKENS = 2048;
+const CLAUDE_MAX_TOKENS_DEFAULT = 2048;
 
 /** Default number of chunks to retrieve from the vector store. */
 const DEFAULT_TOP_K = 8;
@@ -57,6 +57,8 @@ export interface QueryOptions {
   source?: MemorySource;
   /** Which table to search (default "memories"). */
   table?: string;
+  /** Max tokens for Claude response (default 2048). Use higher values for long-form output like briefings. */
+  maxTokens?: number;
 }
 
 export interface RetrievedChunk {
@@ -149,6 +151,7 @@ export async function queryBrain(
     category,
     source,
     table = "memories",
+    maxTokens = CLAUDE_MAX_TOKENS_DEFAULT,
   } = options;
 
   const hasFilters = !!(projectId || category || source);
@@ -193,7 +196,7 @@ export async function queryBrain(
 
       const matchedIds = (matches ?? []) as { id: string; similarity: number }[];
       if (matchedIds.length === 0) {
-        const answer = await callClaude(buildContextMessage([], question));
+        const answer = await callClaude(buildContextMessage([], question), maxTokens);
         return { answer, sources: [], chunks: [] };
       }
 
@@ -277,7 +280,7 @@ export async function queryBrain(
 
   // 5. Assemble context + call Claude
   const userMessage = buildContextMessage(chunks, question);
-  const answer = await callClaude(userMessage);
+  const answer = await callClaude(userMessage, maxTokens);
 
   // 6. Return structured result
   const sources = chunks.map((c) => ({
@@ -293,7 +296,7 @@ export async function queryBrain(
 // Claude API call (raw fetch, consistent with lib/ai/providers.ts)
 // ---------------------------------------------------------------------------
 
-async function callClaude(userMessage: string): Promise<string> {
+async function callClaude(userMessage: string, maxTokens = CLAUDE_MAX_TOKENS_DEFAULT): Promise<string> {
   const apiKey = getAnthropicKey();
 
   const res = await fetch(CLAUDE_API_URL, {
@@ -305,7 +308,7 @@ async function callClaude(userMessage: string): Promise<string> {
     },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
-      max_tokens: CLAUDE_MAX_TOKENS,
+      max_tokens: maxTokens,
       system: BRAIN_SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }],
     }),

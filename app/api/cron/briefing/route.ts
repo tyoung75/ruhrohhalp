@@ -263,13 +263,13 @@ export async function GET(request: NextRequest) {
     .then((r) => { results.daily_trends = { detected: r.detected }; })
     .catch((e) => { logError("cron.daily-trends", e); results.daily_trends = { error: "Trend detection failed" }; });
 
-  // 2. Daily briefing
-  const briefingPromise = queryBrain(buildDailyPrompt(), { userId: TYLER_USER_ID, topK: 12, threshold: 0.55 })
+  // 2. Daily briefing (4096 tokens for structured multi-section output)
+  const briefingPromise = queryBrain(buildDailyPrompt(), { userId: TYLER_USER_ID, topK: 12, threshold: 0.55, maxTokens: 4096 })
     .then(async (dailyResult) => {
       const dailySections = parseDailySections(dailyResult.answer);
       const dailyContentJson = dailySectionsToContentJson(dailySections);
       await saveBriefingFromCron(TYLER_USER_ID, dailyResult.answer, dailyContentJson, "daily");
-      results.daily = { type: "daily_briefing", ...dailySections, sources: dailyResult.sources };
+      results.daily = { type: "daily_briefing", ...dailySections, sources: dailyResult.sources, raw: dailyResult.answer };
     })
     .catch((e) => {
       logError("cron.daily", e);
@@ -306,7 +306,7 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-      const weeklyResult = await queryBrain(buildWeeklyPrompt(strategyContext, trendingContext), { userId: TYLER_USER_ID, topK: 20, threshold: 0.50 });
+      const weeklyResult = await queryBrain(buildWeeklyPrompt(strategyContext, trendingContext), { userId: TYLER_USER_ID, topK: 20, threshold: 0.50, maxTokens: 4096 });
       const weeklySections = parseWeeklySections(weeklyResult.answer);
       const weeklyContentJson = weeklySectionsToContentJson(weeklySections);
       await saveBriefingFromCron(TYLER_USER_ID, weeklyResult.answer, weeklyContentJson, "weekly");
