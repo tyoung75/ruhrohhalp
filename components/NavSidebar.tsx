@@ -4,14 +4,15 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { C } from "@/lib/ui";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: { href: string; label: string; icon: string; shortcut: string }[] = [
   { href: "/", label: "Command Center", icon: "◈", shortcut: "1" },
   { href: "/tasks", label: "Tasks", icon: "☐", shortcut: "2" },
   { href: "/brain", label: "Brain", icon: "◇", shortcut: "3" },
   { href: "/knowledge", label: "Knowledge", icon: "▣", shortcut: "4" },
   { href: "/creator", label: "Creator", icon: "✧", shortcut: "5" },
   { href: "/settings/ingestion", label: "Ingestion", icon: "⟳", shortcut: "6" },
-] as const;
+  { href: "/finance", label: "Finance", icon: "◆", shortcut: "7" },
+];
 
 interface NavSidebarProps {
   userEmail?: string | null;
@@ -64,7 +65,7 @@ export function NavSidebar({ userEmail, onSignOut }: NavSidebarProps) {
           return (
             <Link
               key={item.href}
-              href={item.href}
+              href={item.href as any}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -127,8 +128,8 @@ export function NavSidebar({ userEmail, onSignOut }: NavSidebarProps) {
           style={{
             display: "block",
             width: "100%",
-            background: pathname.startsWith("/settings") ? C.white : "none",
-            border: `1px solid ${pathname.startsWith("/settings") ? C.white : C.border}`,
+            background: pathname.startsWith("/settings") ? C.cream : "none",
+            border: `1px solid ${pathname.startsWith("/settings") ? C.cream : C.border}`,
             color: pathname.startsWith("/settings") ? C.bg : C.textDim,
             borderRadius: 6,
             padding: "5px 10px",
