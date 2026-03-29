@@ -276,16 +276,18 @@ export class InstagramAdapter implements PlatformAdapter {
 
         // Step 3: Get IG Business Account ID via connected Facebook Page
     const pagesRes = await fetch(
-      `${FB_GRAPH}/me/accounts?fields=id,name,instagram_business_account&access_token=${longData.access_token}`
+      `${FB_GRAPH}/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${longData.access_token}`
     );
     const pagesData = await pagesRes.json();
     console.log("[instagram-oauth] Pages response:", JSON.stringify(pagesData));
 
     // Search all pages for one with an instagram_business_account
     let igId: string | undefined;
+    let pageAccessToken: string | undefined;
     for (const page of pagesData.data ?? []) {
       if (page.instagram_business_account?.id) {
         igId = page.instagram_business_account.id;
+        pageAccessToken = page.access_token;
         console.log(`[instagram-oauth] Found IG Business Account ${igId} on page "${page.name}" (${page.id})`);
         break;
       }
@@ -298,11 +300,14 @@ export class InstagramAdapter implements PlatformAdapter {
       );
     }
 
-    // Step 4: Fetch the Instagram username
+    // Step 4: Fetch the Instagram username using the Page access token
+    // The IG Business Account fields require the Page token, not the user token
+    const igToken = pageAccessToken ?? longData.access_token;
     const profileRes = await fetch(
-      `${IG_GRAPH}/${igId}?fields=username,name&access_token=${longData.access_token}`
+      `${FB_GRAPH}/${igId}?fields=username,name&access_token=${igToken}`
     );
     const profileData = await profileRes.json();
+    console.log("[instagram-oauth] IG profile response:", JSON.stringify(profileData));
     const username = profileData.username ?? undefined;
     console.log(`[instagram-oauth] IG profile: @${username} (ID: ${igId})`);
 
