@@ -185,31 +185,9 @@ export function BriefingView() {
 
     try {
       // 1. Store the context as a high-importance memory
-      // Fetch existing brain dump first to preserve goals and weekly context
-      let existingGoals: { pillar: string; text: string }[] = [];
-      let existingWeeklyContext = "";
-      try {
-        const existing = await api<{
-          dump: { goals: string; weekly_context: string } | null;
-          pinnedGoals: { pillar: string; text: string }[] | null;
-        }>("/api/brain/dump");
-        if (existing.pinnedGoals && existing.pinnedGoals.length > 0) {
-          existingGoals = existing.pinnedGoals;
-        }
-        if (existing.dump?.weekly_context) {
-          existingWeeklyContext = existing.dump.weekly_context;
-        }
-      } catch {
-        // Continue with empty defaults if fetch fails
-      }
-
       await api("/api/brain/dump", {
         method: "POST",
-        body: JSON.stringify({
-          goals: existingGoals,
-          weeklyContext: existingWeeklyContext,
-          topOfMind: input,
-        }),
+        body: JSON.stringify({ goals: [], weeklyContext: "", topOfMind: input }),
       });
 
       // 2. Re-generate the briefing so it incorporates the new context

@@ -76,35 +76,13 @@ export async function POST(request: NextRequest) {
 
   const supabase = await createClient();
 
-  // Carry forward goals from previous dump if incoming goals are empty
-  // This prevents briefing adjustments from wiping out pinned goals
-  let goalsToSave = goals;
-  if (goals.length === 0) {
-    const { data: prevDump } = await supabase
-      .from("brain_dumps")
-      .select("goals")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (prevDump?.goals) {
-      try {
-        const parsed = typeof prevDump.goals === "string" ? JSON.parse(prevDump.goals) : prevDump.goals;
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          goalsToSave = parsed;
-        }
-      } catch { /* ignore parse error */ }
-    }
-  }
-
   // Save the brain dump record — goals are always persisted alongside weekly data
   // so the latest record always has the current pinned goals
   const { data: dump, error } = await supabase
     .from("brain_dumps")
     .insert({
       user_id: user.id,
-      goals: JSON.stringify(goalsToSave),
+      goals: JSON.stringify(goals),
       weekly_context: weeklyContext,
       top_of_mind: topOfMind,
     })
