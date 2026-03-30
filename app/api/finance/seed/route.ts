@@ -47,14 +47,13 @@ export async function POST() {
     // Tyler — Investments
     { owner: "tyler", account_name: "Individual Brokerage", institution: "E*Trade", account_type: "brokerage", balance: 367441.93 },
     { owner: "tyler", account_name: "Roth IRA (...9794)", institution: "E*Trade", account_type: "roth_ira", balance: 28171.42 },
-    { owner: "tyler", account_name: "Individual Brokerage", institution: "Morgan Stanley", account_type: "brokerage", balance: 553649.60 },
-    { owner: "tyler", account_name: "Equity Awards (Options)", institution: "Schwab", account_type: "equity_awards", balance: 112211.18 },
+{ owner: "tyler", account_name: "Equity Awards (Options)", institution: "Schwab", account_type: "equity_awards", balance: 112211.18 },
     { owner: "tyler", account_name: "401(k)", institution: "Fidelity", account_type: "401k", balance: 196115.92 },
     { owner: "tyler", account_name: "Crypto Portfolio", institution: "Coinbase", account_type: "crypto", balance: 38237.85 },
     // Business — BearDuckHornEmpire LLC
     { owner: "business", account_name: "General Operations (...0616)", institution: "American Express", account_type: "checking", balance: 127.79 },
-    // Spouse (placeholder — will be filled when wife's E*Trade is accessed)
-    { owner: "spouse", account_name: "Backdoor Roth IRA", institution: "E*Trade", account_type: "roth_ira", balance: 0 },
+    // Spouse — confirmed 03/29/2026
+    { owner: "spouse", account_name: "Roth IRA (...4281)", institution: "E*Trade", account_type: "roth_ira", balance: 13444.52 },
   ];
 
   const { data: insertedAccounts } = await supabase
@@ -103,12 +102,22 @@ export async function POST() {
     { symbol: "SPY", name: "SPDR S&P 500 ETF", shares: 3, current_price: 634.18, current_value: 1902.54, cost_basis: 2067.90, holding_type: "etf" },
     { symbol: "VTI", name: "Vanguard Total Stock Market ETF", shares: 22, current_price: 313.04, current_value: 6886.88, cost_basis: 7444.79, holding_type: "etf" },
     { symbol: "VXUS", name: "Vanguard Total International Stock ETF", shares: 33, current_price: 74.69, current_value: 2464.77, cost_basis: 2646.17, holding_type: "etf" },
+    { symbol: "CASH", name: "Cash", shares: 1, current_price: 42.21, current_value: 42.21, cost_basis: 42.21, holding_type: "cash" },
   ];
 
   if (etradeIraId) {
     await supabase.from("financial_holdings").insert(
       etradeIraHoldings.map((h) => ({ ...h, user_id: uid, account_id: etradeIraId }))
     );
+  }
+
+  // ── Holdings (Wife's E*Trade Roth IRA) ─────────────────────
+  const spouseIraId = findAcct("E*Trade", "roth_ira", "spouse");
+  // Positions TBD — only have total $13,444.52 and $53.53 cash for now
+  if (spouseIraId) {
+    await supabase.from("financial_holdings").insert([
+      { symbol: "CASH", name: "Cash", shares: 1, current_price: 53.53, current_value: 53.53, cost_basis: 53.53, holding_type: "cash", user_id: uid, account_id: spouseIraId },
+    ]);
   }
 
   // ── Holdings (Fidelity 401k — all pre-tax) ──────────────────
@@ -141,7 +150,7 @@ export async function POST() {
   // ── Income Sources ────────────────────────────────────────
   const income = [
     { owner: "tyler", source: "salary", label: "Base Salary (Instacart)", amount: 232800, frequency: "annual", is_active: true },
-    { owner: "spouse", source: "salary", label: "Wife's Income", amount: 2100, frequency: "weekly", is_active: true },
+    { owner: "spouse", source: "salary", label: "Wife's Salary (Dexian LLC)", amount: 142576.75, frequency: "annual", is_active: true },
   ];
 
   await supabase.from("financial_income").insert(income.map((i) => ({ ...i, user_id: uid })));
@@ -159,8 +168,6 @@ export async function POST() {
     { owner: "tyler", name: "Reflect Visa (...2469)", institution: "Wells Fargo", balance: 0, apr: 20.99, min_payment: 0, debt_type: "credit_card", status: "active" },
     { owner: "tyler", name: "Active Cash Visa (...8224)", institution: "Wells Fargo", balance: 0, apr: 20.99, min_payment: 0, debt_type: "credit_card", status: "active" },
     { owner: "tyler", name: "Platinum Card (...7901)", institution: "Wells Fargo", balance: 54.42, apr: 20.99, min_payment: 0, debt_type: "credit_card", status: "active" },
-    // Morgan Stanley margin loan
-    { owner: "tyler", name: "Loan Against Liquidity (LAL)", institution: "Morgan Stanley", balance: 80284.15, apr: 6.5, min_payment: 0, debt_type: "margin_loan", status: "active" },
     // Business — BEARDUCKHORNEMPIRE LLC, confirmed 03/29/2026
     { owner: "business", name: "Ink Preferred (...8707)", institution: "Chase", balance: 185.57, apr: 18.99, min_payment: 40, debt_type: "credit_card", status: "active", notes: "BDHE LLC — auto-pay scheduled, statement closing alert active" },
   ];
@@ -171,12 +178,13 @@ export async function POST() {
   const contributions = [
     // E*Trade brokerage
     { owner: "tyler", destination: "E*Trade Brokerage", account_id: etradeAcctId, amount: 1000, is_percentage: false, frequency: "biweekly", contribution_type: "investment", is_active: true },
-    // Morgan Stanley brokerage
-    { owner: "tyler", destination: "Morgan Stanley Brokerage", account_id: findAcct("Morgan Stanley", "brokerage"), amount: 780, is_percentage: false, frequency: "biweekly", contribution_type: "investment", is_active: true },
     // 401(k) — percentage-based, dynamic with salary
     { owner: "tyler", destination: "Fidelity 401(k) Pre-Tax", account_id: findAcct("Fidelity", "401k"), amount: 10, is_percentage: true, frequency: "biweekly", contribution_type: "pre_tax_401k", is_active: true, notes: "10% of salary pre-tax" },
     { owner: "tyler", destination: "Fidelity 401(k) After-Tax (Mega Backdoor)", account_id: findAcct("Fidelity", "401k"), amount: 15, is_percentage: true, frequency: "biweekly", contribution_type: "after_tax_401k", is_active: true, notes: "15% after-tax for mega backdoor Roth conversion" },
     { owner: "tyler", destination: "Instacart 401(k) Employer Match", account_id: findAcct("Fidelity", "401k"), amount: 4, is_percentage: true, frequency: "biweekly", contribution_type: "employer_match", is_active: true, notes: "4% employer match" },
+    // Backdoor Roth IRA — both Tyler & wife, maxed 2025+2026, first biz day of year going forward
+    { owner: "tyler", destination: "E*Trade Roth IRA (Backdoor)", account_id: etradeIraId, amount: 7000, is_percentage: false, frequency: "annual", contribution_type: "roth_ira", is_active: true, notes: "Backdoor Roth — maxed 2025 & 2026, first biz day of each year" },
+    { owner: "spouse", destination: "E*Trade Roth IRA (Backdoor)", account_id: spouseIraId, amount: 7000, is_percentage: false, frequency: "annual", contribution_type: "roth_ira", is_active: true, notes: "Wife's backdoor Roth — maxed 2025 & 2026, first biz day of each year" },
     // Coinbase crypto — confirmed: monthly on the 4th, $500/mo total
     { owner: "tyler", destination: "Coinbase BTC", account_id: findAcct("Coinbase", "crypto"), amount: 200, is_percentage: false, frequency: "monthly", contribution_type: "crypto", is_active: true, day_of_month: 4, notes: "$200/mo on the 4th — Bitcoin" },
     { owner: "tyler", destination: "Coinbase ETH", account_id: findAcct("Coinbase", "crypto"), amount: 200, is_percentage: false, frequency: "monthly", contribution_type: "crypto", is_active: true, day_of_month: 4, notes: "$200/mo on the 4th — Ethereum" },
