@@ -30,8 +30,8 @@ export async function generateBlogPost(activity: WeeklyActivity, styleMemory: St
   });
 
   const text = message.content
-    .filter((c: any) => c.type === "text")
-    .map((c: any) => c.text)
+    .filter((c: { type: string }) => c.type === "text")
+    .map((c: { type: string; text: string }) => c.text)
     .join("\n")
     .trim();
 
