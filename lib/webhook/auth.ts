@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
  * Returns null if valid, or a 401 NextResponse if invalid.
  */
 export function validateWebhookSecret(headerValue: string | null): NextResponse | null {
-  const expected = process.env.WEBHOOK_SECRET;
+  const expected = process.env.WEBHOOK_SECRET ?? process.env.RUHROHHALP_SECRET;
   if (!expected) {
     return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 });
   }
