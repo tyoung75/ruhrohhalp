@@ -10,8 +10,9 @@ const NAV_ITEMS: { href: string; label: string; icon: string; shortcut: string }
   { href: "/brain", label: "Brain", icon: "◇", shortcut: "3" },
   { href: "/knowledge", label: "Knowledge", icon: "▣", shortcut: "4" },
   { href: "/creator", label: "Creator", icon: "✧", shortcut: "5" },
-  { href: "/settings/ingestion", label: "Ingestion", icon: "⟳", shortcut: "6" },
-  { href: "/finance", label: "Finance", icon: "◆", shortcut: "7" },
+  { href: "/workouts", label: "Workouts", icon: "◉", shortcut: "6" },
+  { href: "/settings/ingestion", label: "Ingestion", icon: "⟳", shortcut: "7" },
+  { href: "/finance", label: "Finance", icon: "◆", shortcut: "8" },
 ];
 
 interface NavSidebarProps {

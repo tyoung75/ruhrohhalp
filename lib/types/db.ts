@@ -14,6 +14,7 @@ import type {
   ProjectStatus,
   Relationship,
   TaskType,
+  WorkoutType,
 } from "@/lib/types/domain";
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
@@ -440,6 +441,36 @@ export interface Database {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["documents"]["Insert"]>;
+        Relationships: [];
+      };
+      scheduled_workouts: {
+        Row: {
+          id: string;
+          user_id: string;
+          goal_id: string | null;
+          title: string;
+          workout_type: WorkoutType;
+          scheduled_date: string;
+          sort_order: number;
+          notes: string;
+          completed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          goal_id?: string | null;
+          title: string;
+          workout_type?: WorkoutType;
+          scheduled_date: string;
+          sort_order?: number;
+          notes?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["scheduled_workouts"]["Insert"]>;
         Relationships: [];
       };
     };
