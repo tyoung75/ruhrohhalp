@@ -41,7 +41,7 @@ export async function GET() {
 
   const taxRate = Number(config.find((c) => c.key === "tax_rate")?.value ?? "0.30");
   const monthlyExpenses = Number(config.find((c) => c.key === "monthly_expenses")?.value ?? "0");
-  const annualSalary = Number(config.find((c) => c.key === "annual_salary")?.value ?? "232800");
+  const annualSalary = Number(config.find((c) => c.key === "annual_salary")?.value ?? "247800");
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const mapAccount = (a: any) => ({

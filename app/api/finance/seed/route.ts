@@ -18,6 +18,7 @@ import { createClient } from "@/lib/supabase/server";
  *  - Wells Fargo: confirmed Reflect $0, Active Cash $0, Platinum $54.42
  *  - Fidelity 401(k): confirmed $196,115.92 — 100% FUIPX (all pre-tax)
  *  - Income, debts, contributions: from Tyler's snapshot + corrections
+ *  - AN26 Compensation: $247,800 salary (6.44% raise eff 4/1/2026), $114K refresh RSU, $50K discretionary RSU
  */
 export async function POST() {
   const { user, response } = await requireUser();
@@ -83,6 +84,7 @@ export async function POST() {
     { symbol: "UBER", name: "Uber Technologies", shares: 95, current_price: 69.18, current_value: 6572.10, cost_basis: 6216.51, holding_type: "stock" },
     { symbol: "VO", name: "Vanguard Mid-Cap ETF", shares: 39.629, current_price: 282.77, current_value: 11205.89, cost_basis: 4845.12, holding_type: "etf" },
     { symbol: "XAR", name: "SPDR S&P Aerospace & Defense ETF", shares: 17, current_price: 250.73, current_value: 4262.41, cost_basis: 4750.99, holding_type: "etf" },
+    { symbol: "CASH", name: "Cash", shares: 1, current_price: 12995.90, current_value: 12995.90, cost_basis: 12995.90, holding_type: "cash" },
   ];
 
   if (etradeAcctId) {
@@ -149,7 +151,7 @@ export async function POST() {
 
   // ── Income Sources ────────────────────────────────────────
   const income = [
-    { owner: "tyler", source: "salary", label: "Base Salary (Instacart)", amount: 232800, frequency: "annual", is_active: true },
+    { owner: "tyler", source: "salary", label: "Base Salary (Instacart)", amount: 247800, frequency: "annual", is_active: true, effective_date: "2026-04-01", notes: "AN26 raise: 6.44% ($232,800 → $247,800), performance: Exceeded Expectations" },
     { owner: "spouse", source: "salary", label: "Wife's Salary (Dexian LLC)", amount: 142576.75, frequency: "annual", is_active: true },
   ];
 
@@ -196,7 +198,17 @@ export async function POST() {
 
   // ── RSU Vests (CART @ $35.21) ─────────────────────────────
   const CART_PRICE = 35.21;
+
+  // AN26 new grants — share counts estimated from grant value / avg CART price in March 2026
+  // Refresh RSU: $114,000 / ~$35.21 ≈ 3,238 shares, 12.5% per quarter over 2 years
+  const REFRESH_TOTAL = Math.round(114000 / CART_PRICE);
+  const REFRESH_PER_VEST = Math.round(REFRESH_TOTAL * 0.125);
+  // Discretionary RSU: $50,000 / ~$35.21 ≈ 1,420 shares, 50/50 over 2 years
+  const DISC_TOTAL = Math.round(50000 / CART_PRICE);
+  const DISC_PER_VEST = Math.round(DISC_TOTAL / 2);
+
   const rsuVests = [
+    // ── Existing grants ──────────────────────────────────────
     // May 2026
     { owner: "tyler", symbol: "CART", shares: 279, vest_date: "2026-05-15", grant_id: "201814056", award_date: "2023-03-14", current_price: CART_PRICE, estimated_value: 9823.59, status: "pending" },
     { owner: "tyler", symbol: "CART", shares: 254, vest_date: "2026-05-15", grant_id: "201830785", award_date: "2025-04-16", current_price: CART_PRICE, estimated_value: 8943.34, status: "pending" },
@@ -212,6 +224,22 @@ export async function POST() {
     { owner: "tyler", symbol: "CART", shares: 207, vest_date: "2026-11-15", grant_id: "201829894", award_date: "2025-04-16", current_price: CART_PRICE, estimated_value: 7288.47, status: "pending" },
     // February 2027
     { owner: "tyler", symbol: "CART", shares: 206, vest_date: "2027-02-15", grant_id: "201829894", award_date: "2025-04-16", current_price: CART_PRICE, estimated_value: 7253.26, status: "pending" },
+
+    // ── AN26 Refresh RSU ($114,000 grant, 12.5%/quarter over 2 years) ──
+    // Awarded 2026-03-24, share count estimated — will be finalized by board
+    { owner: "tyler", symbol: "CART", shares: REFRESH_PER_VEST, vest_date: "2026-05-15", grant_id: "AN26-REFRESH", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: REFRESH_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Refresh RSU — $114K grant, 12.5%/qtr, shares estimated" },
+    { owner: "tyler", symbol: "CART", shares: REFRESH_PER_VEST, vest_date: "2026-08-15", grant_id: "AN26-REFRESH", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: REFRESH_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Refresh RSU — $114K grant, 12.5%/qtr" },
+    { owner: "tyler", symbol: "CART", shares: REFRESH_PER_VEST, vest_date: "2026-11-15", grant_id: "AN26-REFRESH", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: REFRESH_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Refresh RSU — $114K grant, 12.5%/qtr" },
+    { owner: "tyler", symbol: "CART", shares: REFRESH_PER_VEST, vest_date: "2027-02-15", grant_id: "AN26-REFRESH", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: REFRESH_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Refresh RSU — $114K grant, 12.5%/qtr" },
+    { owner: "tyler", symbol: "CART", shares: REFRESH_PER_VEST, vest_date: "2027-05-15", grant_id: "AN26-REFRESH", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: REFRESH_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Refresh RSU — $114K grant, 12.5%/qtr" },
+    { owner: "tyler", symbol: "CART", shares: REFRESH_PER_VEST, vest_date: "2027-08-15", grant_id: "AN26-REFRESH", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: REFRESH_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Refresh RSU — $114K grant, 12.5%/qtr" },
+    { owner: "tyler", symbol: "CART", shares: REFRESH_PER_VEST, vest_date: "2027-11-15", grant_id: "AN26-REFRESH", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: REFRESH_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Refresh RSU — $114K grant, 12.5%/qtr" },
+    { owner: "tyler", symbol: "CART", shares: REFRESH_PER_VEST, vest_date: "2028-02-15", grant_id: "AN26-REFRESH", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: REFRESH_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Refresh RSU — $114K grant, 12.5%/qtr (final vest)" },
+
+    // ── AN26 Discretionary RSU ($50,000 grant, 50/50 over 2 years) ──
+    // Special equity grant from Instacart leadership
+    { owner: "tyler", symbol: "CART", shares: DISC_PER_VEST, vest_date: "2026-11-15", grant_id: "AN26-DISCRETIONARY", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: DISC_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Discretionary RSU — $50K special grant, 50% vest 1 of 2" },
+    { owner: "tyler", symbol: "CART", shares: DISC_PER_VEST, vest_date: "2027-11-15", grant_id: "AN26-DISCRETIONARY", award_date: "2026-03-24", current_price: CART_PRICE, estimated_value: DISC_PER_VEST * CART_PRICE, status: "pending", notes: "AN26 Discretionary RSU — $50K special grant, 50% vest 2 of 2" },
   ];
 
   await supabase.from("financial_rsu_vests").insert(rsuVests.map((r) => ({ ...r, user_id: uid })));
@@ -234,8 +262,13 @@ export async function POST() {
   const config = [
     { key: "tax_rate", value: "0.30" },
     { key: "monthly_expenses", value: "12000" },
-    { key: "biweekly_net", value: "5217.81" },
-    { key: "annual_salary", value: "232800" },
+    { key: "biweekly_net", value: "5554.11" },
+    { key: "annual_salary", value: "247800" },
+    { key: "previous_salary", value: "232800" },
+    { key: "raise_effective_date", value: "2026-04-01" },
+    { key: "raise_pct", value: "6.44" },
+    { key: "an26_refresh_rsu_value", value: "114000" },
+    { key: "an26_discretionary_rsu_value", value: "50000" },
     { key: "cart_stock_price", value: String(CART_PRICE) },
     { key: "pretax_401k_pct", value: "10" },
     { key: "aftertax_401k_pct", value: "15" },

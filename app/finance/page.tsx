@@ -348,7 +348,7 @@ function RaiseAdjusterSection({
   setNewSalary: (n: number) => void;
   raiseImpact: RaiseImpact | null;
 }) {
-  const currentSalary = parseInt(data.config?.annual_salary ?? "232800", 10);
+  const currentSalary = parseInt(data.config?.annual_salary ?? "247800", 10);
 
   return (
     <div>
@@ -958,14 +958,14 @@ export default function FinancePage() {
   const [newSalary, setNewSalary] = useState(0);
   const [raiseImpact, setRaiseImpact] = useState<RaiseImpact | null>(null);
 
-  const currentSalary = data ? parseInt(data.config?.annual_salary ?? "232800", 10) : 232800;
+  const currentSalary = data ? parseInt(data.config?.annual_salary ?? "247800", 10) : 247800;
 
   useEffect(() => {
     async function fetchData() {
       try {
         const result = await api<FinancialDashboardData>("/api/finance");
         setData(result);
-        setNewSalary(parseInt(result.config?.annual_salary ?? "232800", 10));
+        setNewSalary(parseInt(result.config?.annual_salary ?? "247800", 10));
       } catch (err) {
         console.error("Failed to load financial data:", err);
       } finally {
