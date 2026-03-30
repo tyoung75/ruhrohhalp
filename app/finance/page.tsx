@@ -349,6 +349,9 @@ function RaiseAdjusterSection({
   raiseImpact: RaiseImpact | null;
 }) {
   const currentSalary = parseInt(data.config?.annual_salary ?? "247800", 10);
+  const previousSalary = data.config?.previous_salary ? parseInt(data.config.previous_salary, 10) : null;
+  const raiseEffectiveDate = data.config?.raise_effective_date ?? null;
+  const raisePct = data.config?.raise_pct ? parseFloat(data.config.raise_pct) : null;
 
   return (
     <div>
@@ -361,6 +364,42 @@ function RaiseAdjusterSection({
           padding: 24,
         }}
       >
+        {/* Raise banner — show if we have raise metadata in config */}
+        {previousSalary && raiseEffectiveDate && (
+          <div
+            style={{
+              background: `${C.todo}12`,
+              border: `1px solid ${C.todo}30`,
+              borderRadius: 6,
+              padding: "12px 16px",
+              marginBottom: 24,
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ color: C.todo, fontSize: 13, fontWeight: 600, fontFamily: C.sans }}>
+              AN26 Raise
+            </div>
+            <div style={{ color: C.textDim, fontSize: 12, fontFamily: C.mono }}>
+              {formatCurrency(previousSalary)} → {formatCurrency(currentSalary)}
+            </div>
+            {raisePct && (
+              <div style={{ color: C.todo, fontSize: 12, fontFamily: C.mono }}>
+                +{raisePct}%
+              </div>
+            )}
+            <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.sans }}>
+              Effective {new Date(raiseEffectiveDate + "T00:00:00").toLocaleDateString("en-US", {
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </div>
+          </div>
+        )}
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, marginBottom: 32 }}>
           <div>
             <label style={{ color: C.text, fontSize: 13, fontFamily: C.sans, display: "block", marginBottom: 8 }}>
@@ -780,6 +819,15 @@ function ContributionsSection({ data, currentSalary }: { data: FinancialDashboar
   );
 }
 
+interface AggregatedVest {
+  vestDate: string;
+  symbol: string;
+  owner: Owner;
+  totalShares: number;
+  totalValue: number;
+  grantIds: string[];
+}
+
 function RSUVestingSection({ data }: { data: FinancialDashboardData }) {
   const pendingVests = data.rsuVests.filter((v) => v.status === "pending");
 
@@ -794,8 +842,32 @@ function RSUVestingSection({ data }: { data: FinancialDashboardData }) {
     );
   }
 
-  // Sort by vest date
-  const sorted = [...pendingVests].sort((a, b) => new Date(a.vestDate).getTime() - new Date(b.vestDate).getTime());
+  // Aggregate vests by date + symbol + owner
+  const aggregated = new Map<string, AggregatedVest>();
+  for (const vest of pendingVests) {
+    const key = `${vest.vestDate}|${vest.symbol}|${vest.owner}`;
+    const existing = aggregated.get(key);
+    if (existing) {
+      existing.totalShares += vest.shares;
+      existing.totalValue += vest.estimatedValue ?? 0;
+      if (vest.grantId && !existing.grantIds.includes(vest.grantId)) {
+        existing.grantIds.push(vest.grantId);
+      }
+    } else {
+      aggregated.set(key, {
+        vestDate: vest.vestDate,
+        symbol: vest.symbol,
+        owner: vest.owner,
+        totalShares: vest.shares,
+        totalValue: vest.estimatedValue ?? 0,
+        grantIds: vest.grantId ? [vest.grantId] : [],
+      });
+    }
+  }
+
+  const sorted = [...aggregated.values()].sort(
+    (a, b) => new Date(a.vestDate).getTime() - new Date(b.vestDate).getTime()
+  );
 
   return (
     <div>
@@ -813,10 +885,11 @@ function RSUVestingSection({ data }: { data: FinancialDashboardData }) {
           {sorted.map((vest) => {
             const vestDate = new Date(vest.vestDate);
             const isUpcoming = vestDate > new Date();
+            const grantCount = vest.grantIds.length;
 
             return (
               <div
-                key={vest.id}
+                key={`${vest.vestDate}-${vest.symbol}-${vest.owner}`}
                 style={{
                   flex: "0 0 auto",
                   background: isUpcoming ? C.surface : `${C.gold}15`,
@@ -838,21 +911,27 @@ function RSUVestingSection({ data }: { data: FinancialDashboardData }) {
                     marginBottom: 8,
                   }}
                 >
-                  {Math.floor(vest.shares)} shares
+                  {Math.floor(vest.totalShares)} shares
                 </div>
-                <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.sans, marginBottom: 8 }}>
+                <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.sans, marginBottom: 4 }}>
                   {vest.symbol}
+                  {grantCount > 1 && (
+                    <span style={{ color: C.textFaint, marginLeft: 6, fontSize: 10 }}>
+                      ({grantCount} grants)
+                    </span>
+                  )}
                 </div>
-                {vest.estimatedValue && (
+                {vest.totalValue > 0 && (
                   <div
                     style={{
                       color: isUpcoming ? C.gold : C.cream,
                       fontSize: 13,
                       fontWeight: 600,
                       fontFamily: C.mono,
+                      marginBottom: 4,
                     }}
                   >
-                    {formatCurrency(vest.estimatedValue)}
+                    {formatCurrency(vest.totalValue)}
                   </div>
                 )}
                 <OwnerBadge owner={vest.owner} />
@@ -957,6 +1036,8 @@ export default function FinancePage() {
   const [loading, setLoading] = useState(true);
   const [newSalary, setNewSalary] = useState(0);
   const [raiseImpact, setRaiseImpact] = useState<RaiseImpact | null>(null);
+  const [seeding, setSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const currentSalary = data ? parseInt(data.config?.annual_salary ?? "247800", 10) : 247800;
 
@@ -1010,20 +1091,78 @@ export default function FinancePage() {
   return (
     <div style={{ background: C.bg, minHeight: "100vh", padding: "40px 60px", fontFamily: C.sans }}>
       <div style={{ maxWidth: 1400, margin: "0 auto" }}>
-        <h1
-          style={{
-            fontFamily: C.serif,
-            fontSize: 44,
-            fontWeight: 600,
-            color: C.cream,
-            marginBottom: 8,
-          }}
-        >
-          Financial OS
-        </h1>
-        <div style={{ color: C.textDim, fontSize: 14, marginBottom: 40 }}>
-          Comprehensive household financial overview and projections
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <h1
+              style={{
+                fontFamily: C.serif,
+                fontSize: 44,
+                fontWeight: 600,
+                color: C.cream,
+                marginBottom: 8,
+              }}
+            >
+              Financial OS
+            </h1>
+            <div style={{ color: C.textDim, fontSize: 14, marginBottom: 40 }}>
+              Comprehensive household financial overview and projections
+            </div>
+          </div>
+          <button
+            disabled={seeding}
+            onClick={async () => {
+              setSeeding(true);
+              setSeedResult(null);
+              try {
+                const res = await fetch("/api/finance/seed", { method: "POST" });
+                const json = await res.json();
+                if (res.ok) {
+                  setSeedResult({ ok: true, message: json.message ?? "Seed complete" });
+                  // Refresh dashboard data
+                  const fresh = await api<FinancialDashboardData>("/api/finance");
+                  setData(fresh);
+                  setNewSalary(parseInt(fresh.config?.annual_salary ?? "247800", 10));
+                } else {
+                  setSeedResult({ ok: false, message: json.error ?? "Seed failed" });
+                }
+              } catch (err) {
+                setSeedResult({ ok: false, message: String(err) });
+              } finally {
+                setSeeding(false);
+              }
+            }}
+            style={{
+              padding: "8px 16px",
+              fontSize: 12,
+              fontFamily: C.mono,
+              background: seeding ? C.surface : C.card,
+              color: seeding ? C.textDim : C.gold,
+              border: `1px solid ${C.gold}40`,
+              borderRadius: 6,
+              cursor: seeding ? "not-allowed" : "pointer",
+              opacity: seeding ? 0.6 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {seeding ? "Seeding..." : "Re-seed Data"}
+          </button>
         </div>
+        {seedResult && (
+          <div
+            style={{
+              padding: "8px 14px",
+              marginBottom: 16,
+              borderRadius: 6,
+              fontSize: 12,
+              fontFamily: C.mono,
+              background: seedResult.ok ? `${C.todo}15` : `${C.reminder}15`,
+              color: seedResult.ok ? C.todo : C.reminder,
+              border: `1px solid ${seedResult.ok ? C.todo : C.reminder}30`,
+            }}
+          >
+            {seedResult.message}
+          </div>
+        )}
 
         {/* Net Worth Banner */}
         <NetWorthBanner data={data} />

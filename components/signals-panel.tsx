@@ -939,7 +939,7 @@ export function SignalsPanel() {
   const [activeFilter, setActiveFilter] = useState<SignalCategory | "all">("all");
   const [error, setError] = useState("");
   // Dismissals: persistent set of fingerprints to suppress
-  const [_dismissedFingerprints, setDismissedFingerprints] = useState<Set<string>>(new Set());
+  const [, setDismissedFingerprints] = useState<Set<string>>(new Set());
   // CW-3/4/5/6: New right-panel section state
   const [blockedTasks, setBlockedTasks] = useState<BlockedTask[]>([]);
   const [zombieAlerts, setZombieAlerts] = useState<ZombieAlert[]>([]);

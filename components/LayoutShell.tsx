@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import type { Session, User } from "@supabase/supabase-js";
 import { createClient as createSupabaseClient } from "@/lib/supabase/client";
 import { api } from "@/lib/client-api";
@@ -11,6 +12,9 @@ import { Spinner } from "@/components/primitives";
 import { NavSidebar } from "@/components/NavSidebar";
 import { PricingModal } from "@/components/pricing-modal";
 import { SettingsPanel } from "@/components/settings-panel";
+
+/** Routes that should be publicly accessible without auth */
+const PUBLIC_ROUTES = ["/terms", "/privacy", "/home"];
 
 type MeResponse = {
   user: { id: string; email: string | null };
@@ -27,6 +31,7 @@ function localModeEnabled() {
 }
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const supabase = useMemo(() => createSupabaseClient(), []);
 
   const [session, setSession] = useState<Session | null>(null);
@@ -129,6 +134,11 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   }
 
   const authed = localMode || (!!session && !!user);
+
+  // Public routes bypass auth entirely (ToS, Privacy, Homepage)
+  if (PUBLIC_ROUTES.includes(pathname)) {
+    return <>{children}</>;
+  }
 
   // Loading state
   if (loading) {
@@ -242,6 +252,11 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
           {authMsg && (
             <p style={{ color: C.textDim, marginTop: 10, fontSize: 13 }}>{authMsg}</p>
           )}
+
+          <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+            <a href="/terms" style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, textDecoration: "none" }}>Terms of Service</a>
+            <a href="/privacy" style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, textDecoration: "none" }}>Privacy Policy</a>
+          </div>
         </div>
       </div>
     );
