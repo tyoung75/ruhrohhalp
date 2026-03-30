@@ -238,6 +238,17 @@ export async function PATCH(
       }
     }
 
+    // If nothing actually changed, return the current goal as-is
+    if (Object.keys(changedFields).length === 0) {
+      const { data: unchanged } = await supabase
+        .from('goals')
+        .select(PILLAR_SELECT)
+        .eq('id', goalId)
+        .eq('user_id', user.id)
+        .single();
+      return NextResponse.json(attachPillarColor(unchanged));
+    }
+
     // Update goal
     const { data: updated, error: updateError } = await supabase
       .from('goals')
