@@ -1,5 +1,4 @@
 export type TaskType = "task" | "note" | "todo" | "reminder";
-export type WorkoutType = "strength" | "run" | "cross_training" | "recovery" | "other";
 export type Priority = "high" | "medium" | "low";
 export type PlanTier = "free" | "starter" | "pro" | "byok";
 export type AIProvider = "claude" | "chatgpt" | "gemini";
