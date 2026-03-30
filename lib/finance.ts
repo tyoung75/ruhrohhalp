@@ -58,7 +58,8 @@ export function resolveContribution(
     // amount is a percentage (e.g., 10 = 10%)
     const annualAmount = (c.amount / 100) * annualSalary;
     // Convert annual to per-period based on frequency
-    const periodsPerYear = 12 / FREQ_TO_MONTHLY[c.frequency];
+    // FREQ_TO_MONTHLY[freq] * 12 gives periods-per-year (e.g. biweekly → 26/12 * 12 = 26)
+    const periodsPerYear = FREQ_TO_MONTHLY[c.frequency] * 12;
     resolvedAmount = periodsPerYear > 0 ? annualAmount / periodsPerYear : annualAmount;
   } else {
     resolvedAmount = c.amount;
@@ -181,8 +182,13 @@ export function calculateCashFlow(
 
   const { totalMonthly: monthlyContributions } = resolveAllContributions(contributions, annualSalary);
 
-  const activeDebts = debts.filter((d) => d.status === "active");
-  const monthlyDebtPayments = activeDebts.reduce(
+  // Only count non-credit-card debt for cash flow purposes.
+  // Credit card spending is already captured in estimatedMonthlyExpenses
+  // since statements are paid in full each month.
+  const revolvingDebts = debts.filter(
+    (d) => d.status === "active" && d.debtType !== "credit_card"
+  );
+  const monthlyDebtPayments = revolvingDebts.reduce(
     (sum, d) => sum + Number(d.minPayment),
     0
   );
