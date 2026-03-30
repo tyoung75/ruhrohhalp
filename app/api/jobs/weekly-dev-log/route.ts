@@ -1,0 +1,93 @@
+import { NextRequest, NextResponse } from "next/server";
+import { validateWebhookSecret } from "@/lib/webhook/auth";
+import { runJob } from "@/lib/jobs/executor";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { gatherWeeklyActivity } from "@/lib/blog/gather-activity";
+import { loadStyleMemory } from "@/lib/blog/learning";
+import { generateBlogPost } from "@/lib/blog/generate";
+import { createBlogPR } from "@/lib/blog/github-pr";
+import { createBlogDraftEmail } from "@/lib/blog/gmail-draft";
+
+export async function POST(request: NextRequest) {
+  const authError = validateWebhookSecret(request.headers.get("x-webhook-secret"));
+  if (authError) return authError;
+
+  const body = await request.json().catch(() => ({}));
+  const lookbackDays = Number(body.lookback_days ?? 7);
+  const dryRun = Boolean(body.dry_run ?? false);
+
+  const idempotencyKey = `weekly-dev-log:${new Date().toISOString().slice(0, 10)}:${lookbackDays}:${dryRun}`;
+
+  const result = await runJob(
+    "weekly-dev-log",
+    async () => {
+      const supabase = createAdminClient();
+
+      const activity = await gatherWeeklyActivity(lookbackDays);
+      const styleMemory = await loadStyleMemory();
+      const post = await generateBlogPost(activity, styleMemory);
+
+      const { data: draft, error: draftError } = await supabase
+        .from("blog_drafts")
+        .insert({
+          week_start: activity.weekStartIso.slice(0, 10),
+          week_end: activity.weekEndIso.slice(0, 10),
+          status: dryRun ? "draft" : "pending_review",
+          title: post.title,
+          slug: post.slug,
+          markdown: post.markdown,
+          teaser: post.teaser,
+          metadata: {
+            tags: post.tags,
+            metaDescription: post.metaDescription,
+            dryRun,
+          },
+          source_activity: activity,
+          expires_at: new Date(Date.now() + 1000 * 60 * 60 * 72).toISOString(),
+        })
+        .select("id, slug")
+        .single();
+
+      if (draftError || !draft) throw new Error(draftError?.message ?? "Failed to save blog_draft");
+
+      let prResult: Awaited<ReturnType<typeof createBlogPR>> | null = null;
+      let gmailResult: Awaited<ReturnType<typeof createBlogDraftEmail>> | null = null;
+
+      if (!dryRun) {
+        try {
+          prResult = await createBlogPR(post.slug, post.markdown, post.title);
+        } catch {
+          prResult = null;
+        }
+
+        try {
+          gmailResult = await createBlogDraftEmail(post, draft.id, activity.weekStartIso);
+        } catch {
+          gmailResult = null;
+        }
+      }
+
+      await supabase
+        .from("blog_drafts")
+        .update({
+          github_pr_url: prResult && prResult.ok ? prResult.url : null,
+          github_pr_number: prResult && prResult.ok ? prResult.number : null,
+          gmail_draft_id: gmailResult && gmailResult.ok ? gmailResult.draftId : null,
+          gmail_message_id: gmailResult && gmailResult.ok ? gmailResult.messageId : null,
+        })
+        .eq("id", draft.id);
+
+      return {
+        ok: true,
+        dryRun,
+        draftId: draft.id,
+        pr: prResult,
+        gmail: gmailResult,
+        stats: activity.stats,
+      };
+    },
+    { idempotencyKey },
+  );
+
+  return NextResponse.json(result);
+}

@@ -1,0 +1,44 @@
+name: Blog Weekly Dev Log
+
+on:
+  schedule:
+    - cron: "0 12 * * 1" # Monday 8:00 AM ET (12:00 UTC)
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "How many days of activity to include"
+        required: false
+        default: "7"
+      dry_run:
+        description: "Generate draft only (no PR/Gmail)"
+        required: false
+        default: "false"
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger weekly dev log pipeline
+        run: |
+          LOOKBACK_DAYS="${{ github.event.inputs.lookback_days || '7' }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.RUHROHHALP_URL }}/api/jobs/weekly-dev-log" \
+            -H "Content-Type: application/json" \
+            -H "x-webhook-secret: ${{ secrets.RUHROHHALP_SECRET }}" \
+            --data "{\"lookback_days\": ${LOOKBACK_DAYS}, \"dry_run\": ${DRY_RUN}}" \
+            --max-time 300)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: weekly-dev-log returned HTTP $http_code"
+            exit 1
+          fi

@@ -154,6 +154,7 @@ export async function GET(request: NextRequest) {
   const limit = parseInt(url.searchParams.get("limit") ?? "30", 10);
   const activeOnly = url.searchParams.get("active") !== "false";
   const typeFilter = url.searchParams.get("type"); // optional: "directive", "dislike", etc.
+  const contentQueueId = url.searchParams.get("content_queue_id"); // filter to specific post
 
   let query = supabase
     .from("content_feedback")
@@ -164,6 +165,7 @@ export async function GET(request: NextRequest) {
 
   if (activeOnly) query = query.eq("active", true);
   if (typeFilter) query = query.eq("feedback_type", typeFilter);
+  if (contentQueueId) query = query.eq("content_queue_id", contentQueueId);
 
   const { data, error } = await query;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
@@ -497,6 +497,408 @@ function GenerateContentModal({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Content Strategy Directives — broad steering box at top of Creator tab
+// ---------------------------------------------------------------------------
+
+interface ContentDirective {
+  id: string;
+  directive: string;
+  platforms: string[] | null;
+  active: boolean;
+  expires_at: string | null;
+  created_at: string;
+}
+
+function ContentDirectivesBox() {
+  const [directives, setDirectives] = useState<ContentDirective[]>([]);
+  const [input, setInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api<{ directives: ContentDirective[] }>("/api/creator/directives?active=true")
+      .then((res) => setDirectives(res.directives ?? []))
+      .catch(() => {});
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!input.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await api<{ directive: ContentDirective }>("/api/creator/directives", {
+        method: "POST",
+        body: JSON.stringify({ directive: input.trim() }),
+      });
+      setDirectives((prev) => [res.directive, ...prev]);
+      setInput("");
+    } catch (e) {
+      console.error("Failed to save directive:", e);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeactivate = async (id: string) => {
+    try {
+      await api("/api/creator/directives", {
+        method: "DELETE",
+        body: JSON.stringify({ id }),
+      });
+      setDirectives((prev) => prev.filter((d) => d.id !== id));
+    } catch (e) {
+      console.error("Failed to deactivate directive:", e);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        background: `${C.gem}06`,
+        border: `1px solid ${C.gem}20`,
+        borderRadius: 8,
+        padding: "10px 14px",
+        marginBottom: 12,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          cursor: "pointer",
+          marginBottom: expanded || directives.length === 0 ? 8 : 0,
+        }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span style={{ fontSize: 12 }}>◈</span>
+        <span
+          style={{
+            fontFamily: C.mono,
+            fontSize: 10,
+            fontWeight: 600,
+            color: C.gem,
+            letterSpacing: 0.4,
+            textTransform: "uppercase",
+          }}
+        >
+          Content Strategy Directives
+        </span>
+        {directives.length > 0 && (
+          <span
+            style={{
+              fontFamily: C.mono,
+              fontSize: 8,
+              color: C.textFaint,
+              background: C.surface,
+              padding: "1px 5px",
+              borderRadius: 3,
+            }}
+          >
+            {directives.length} active
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 9, color: C.textFaint, transform: expanded ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.2s" }}>▼</span>
+      </div>
+
+      {/* Input — always visible */}
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleSubmit();
+            }
+          }}
+          placeholder='e.g. "Shift away from gym selfie content" or "More race prep and training BTS"'
+          disabled={submitting}
+          style={{
+            flex: 1,
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            borderRadius: 6,
+            padding: "8px 10px",
+            fontSize: 11,
+            color: C.text,
+            fontFamily: C.sans,
+            outline: "none",
+          }}
+        />
+        <button
+          onClick={handleSubmit}
+          disabled={submitting || !input.trim()}
+          style={{
+            background: submitting ? C.surface : `${C.gem}14`,
+            border: `1px solid ${submitting ? C.border : `${C.gem}30`}`,
+            color: submitting ? C.textDim : C.gem,
+            borderRadius: 6,
+            padding: "6px 12px",
+            fontSize: 10,
+            fontFamily: C.mono,
+            cursor: submitting ? "default" : "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {submitting ? "Saving..." : "Add Directive"}
+        </button>
+      </div>
+      <div style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint, marginTop: 4, lineHeight: 1.4 }}>
+        Standing instructions that shape all future content generation across every platform.
+      </div>
+
+      {/* Active directives list */}
+      {expanded && directives.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+          {directives.map((d) => (
+            <div
+              key={d.id}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 8,
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 6,
+                padding: "6px 10px",
+              }}
+            >
+              <div style={{ flex: 1, fontSize: 11, color: C.text, lineHeight: 1.5 }}>
+                {d.directive}
+                {d.platforms && (
+                  <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint, marginLeft: 6 }}>
+                    [{d.platforms.join(", ")}]
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => handleDeactivate(d.id)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: C.textFaint,
+                  cursor: "pointer",
+                  fontSize: 10,
+                  padding: "0 2px",
+                  flexShrink: 0,
+                }}
+                title="Remove directive"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Content Reply Panel — inline feedback on individual queue items
+// ---------------------------------------------------------------------------
+
+interface ContentFeedback {
+  id: string;
+  content: string;
+  feedback_type: string;
+  created_at: string;
+}
+
+function ContentReplyPanel({
+  itemId,
+  itemBody,
+  platform,
+}: {
+  itemId: string;
+  itemBody: string;
+  platform: string;
+}) {
+  const [feedbacks, setFeedbacks] = useState<ContentFeedback[]>([]);
+  const [replyText, setReplyText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api<{ feedback: ContentFeedback[] }>(`/api/creator/feedback?content_queue_id=${itemId}&limit=10`)
+      .then((res) => setFeedbacks(res.feedback ?? []))
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }, [itemId]);
+
+  const submitFeedback = async (feedbackType: string, content: string) => {
+    setSubmitting(true);
+    try {
+      const res = await api<{ feedback: ContentFeedback }>("/api/creator/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          contentQueueId: itemId,
+          feedbackType,
+          content,
+          context: { platform, body_preview: itemBody.slice(0, 200) },
+        }),
+      });
+      setFeedbacks((prev) => [res.feedback, ...prev]);
+      setReplyText("");
+    } catch (e) {
+      console.error("Failed to submit feedback:", e);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const formatTime = (iso: string) => {
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMin = Math.floor((now.getTime() - d.getTime()) / 60000);
+    if (diffMin < 1) return "now";
+    if (diffMin < 60) return `${diffMin}m`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h`;
+    return `${Math.floor(diffHr / 24)}d`;
+  };
+
+  const FEEDBACK_TYPE_META: Record<string, { icon: string; color: string }> = {
+    like: { icon: "👍", color: C.gpt },
+    dislike: { icon: "👎", color: C.reminder },
+    correction: { icon: "✏️", color: C.gold },
+    directive: { icon: "◈", color: C.gem },
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        paddingTop: 8,
+        borderTop: `1px solid ${C.border}`,
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Quick reactions */}
+      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint, marginRight: 4 }}>Quick:</span>
+        {(["like", "dislike"] as const).map((type) => {
+          const meta = FEEDBACK_TYPE_META[type];
+          return (
+            <button
+              key={type}
+              onClick={() => submitFeedback(type, type === "like" ? "Good content" : "Not the right direction")}
+              disabled={submitting}
+              style={{
+                background: `${meta.color}10`,
+                border: `1px solid ${meta.color}25`,
+                borderRadius: 4,
+                padding: "3px 8px",
+                fontSize: 10,
+                cursor: submitting ? "default" : "pointer",
+              }}
+            >
+              {meta.icon}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Previous feedback */}
+      {loaded && feedbacks.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          {feedbacks.slice(0, 3).map((fb) => {
+            const meta = FEEDBACK_TYPE_META[fb.feedback_type] ?? { icon: "●", color: C.textDim };
+            return (
+              <div
+                key={fb.id}
+                style={{
+                  background: `${meta.color}08`,
+                  border: `1px solid ${meta.color}15`,
+                  borderRadius: 4,
+                  padding: "4px 8px",
+                  fontSize: 10,
+                  color: C.text,
+                  lineHeight: 1.4,
+                  display: "flex",
+                  gap: 6,
+                  alignItems: "flex-start",
+                }}
+              >
+                <span style={{ flexShrink: 0 }}>{meta.icon}</span>
+                <div style={{ flex: 1 }}>
+                  {fb.content}
+                  <span style={{ fontFamily: C.mono, fontSize: 7, color: C.textFaint, marginLeft: 6 }}>
+                    {formatTime(fb.created_at)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Free-text reply */}
+      <div style={{ display: "flex", gap: 4 }}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={replyText}
+          onChange={(e) => setReplyText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submitFeedback("correction", replyText.trim());
+            }
+          }}
+          placeholder="Feedback on this post..."
+          disabled={submitting}
+          style={{
+            flex: 1,
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            borderRadius: 4,
+            padding: "5px 8px",
+            fontSize: 10,
+            color: C.text,
+            fontFamily: C.sans,
+            outline: "none",
+          }}
+        />
+        <button
+          onClick={() => submitFeedback("correction", replyText.trim())}
+          disabled={submitting || !replyText.trim()}
+          style={{
+            background: submitting ? C.surface : `${C.cl}14`,
+            border: `1px solid ${submitting ? C.border : `${C.cl}30`}`,
+            color: submitting ? C.textDim : C.cl,
+            borderRadius: 4,
+            padding: "4px 8px",
+            fontSize: 9,
+            fontFamily: C.mono,
+            cursor: submitting ? "default" : "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {submitting ? "..." : "Send"}
+        </button>
+      </div>
+      <div style={{ fontFamily: C.mono, fontSize: 7, color: C.textFaint }}>
+        Feedback trains the content agent for future drafts.
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Queue Tab
+// ---------------------------------------------------------------------------
+
 function QueueTab() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -508,6 +910,7 @@ function QueueTab() {
   const [saving, setSaving] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [replyOpenId, setReplyOpenId] = useState<string | null>(null);
   const [postsPerJob, setPostsPerJob] = useState(2);
   const [savingPostsPerJob, setSavingPostsPerJob] = useState(false);
   const [postsPerJobMessage, setPostsPerJobMessage] = useState<string | null>(null);
@@ -727,6 +1130,9 @@ function QueueTab() {
 
   return (
     <div>
+      {/* Broad content strategy directives */}
+      <ContentDirectivesBox />
+
       {/* Toolbar */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -1457,10 +1863,39 @@ function QueueTab() {
                         </div>
                       </div>
                     )}
-                    <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
-                      Type: {item.content_type} &middot; Attempts: {item.attempts} &middot; Created:{" "}
-                      {new Date(item.created_at).toLocaleDateString()}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
+                        Type: {item.content_type} &middot; Attempts: {item.attempts} &middot; Created:{" "}
+                        {new Date(item.created_at).toLocaleDateString()}
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReplyOpenId(replyOpenId === item.id ? null : item.id);
+                        }}
+                        style={{
+                          background: replyOpenId === item.id ? `${C.cl}14` : `${C.surface}`,
+                          border: `1px solid ${replyOpenId === item.id ? `${C.cl}30` : C.border}`,
+                          color: replyOpenId === item.id ? C.cl : C.textDim,
+                          borderRadius: 4,
+                          padding: "3px 8px",
+                          fontSize: 9,
+                          fontFamily: C.mono,
+                          cursor: "pointer",
+                        }}
+                      >
+                        ↩ Feedback
+                      </button>
                     </div>
+
+                    {/* Inline feedback panel */}
+                    {replyOpenId === item.id && (
+                      <ContentReplyPanel
+                        itemId={item.id}
+                        itemBody={item.body}
+                        platform={item.platform}
+                      />
+                    )}
                   </div>
                 )}
               </div>

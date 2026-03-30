@@ -1,0 +1,31 @@
+name: Blog Publish Watcher
+
+on:
+  schedule:
+    - cron: "*/30 * * * 1-2" # Every 30 mins Monday-Tuesday
+  workflow_dispatch:
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger publish watcher
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.RUHROHHALP_URL }}/api/jobs/blog-publish-check" \
+            -H "Content-Type: application/json" \
+            -H "x-webhook-secret: ${{ secrets.RUHROHHALP_SECRET }}" \
+            --max-time 180)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: blog-publish-check returned HTTP $http_code"
+            exit 1
+          fi

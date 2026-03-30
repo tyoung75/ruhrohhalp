@@ -1,9 +1,165 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
+
+// ---------------------------------------------------------------------------
+// Task Reply Panel — inline reply for individual task cards
+// ---------------------------------------------------------------------------
+
+interface TaskReply {
+  id: string;
+  reply: string;
+  applied: boolean;
+  created_at: string;
+}
+
+function TaskReplyPanel({
+  taskId,
+  onClose,
+}: {
+  taskId: string;
+  onClose: () => void;
+}) {
+  const [replies, setReplies] = useState<TaskReply[]>([]);
+  const [replyText, setReplyText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await api<{ replies: TaskReply[] }>(`/api/tasks/${taskId}/replies`);
+        setReplies(res.replies ?? []);
+      } catch {
+        // Silent
+      } finally {
+        setLoaded(true);
+      }
+    }
+    load();
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }, [taskId]);
+
+  const handleSubmit = async () => {
+    if (!replyText.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await api<{ reply: TaskReply }>(`/api/tasks/${taskId}/replies`, {
+        method: "POST",
+        body: JSON.stringify({ reply: replyText.trim() }),
+      });
+      setReplies((prev) => [res.reply, ...prev]);
+      setReplyText("");
+    } catch (e) {
+      console.error("Failed to submit task reply:", e);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const formatTime = (iso: string) => {
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMin = Math.floor((now.getTime() - d.getTime()) / 60000);
+    if (diffMin < 1) return "now";
+    if (diffMin < 60) return `${diffMin}m`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h`;
+    return `${Math.floor(diffHr / 24)}d`;
+  };
+
+  return (
+    <div
+      style={{
+        borderTop: `1px solid ${C.border}`,
+        padding: "6px 0 2px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Existing replies */}
+      {loaded && replies.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          {replies.slice(0, 3).map((r) => (
+            <div
+              key={r.id}
+              style={{
+                background: `${C.cl}08`,
+                border: `1px solid ${C.cl}15`,
+                borderRadius: 4,
+                padding: "4px 6px",
+                fontSize: 9,
+                color: C.text,
+                lineHeight: 1.4,
+              }}
+            >
+              {r.reply}
+              <span style={{ fontFamily: C.mono, fontSize: 7, color: C.textFaint, marginLeft: 6 }}>
+                {formatTime(r.created_at)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Input */}
+      <div style={{ display: "flex", gap: 3 }}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={replyText}
+          onChange={(e) => setReplyText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit();
+            }
+            if (e.key === "Escape") onClose();
+          }}
+          placeholder="Reply to this task..."
+          disabled={submitting}
+          style={{
+            flex: 1,
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            borderRadius: 3,
+            padding: "4px 6px",
+            fontSize: 9,
+            color: C.text,
+            fontFamily: C.sans,
+            outline: "none",
+          }}
+        />
+        <button
+          onClick={handleSubmit}
+          disabled={submitting || !replyText.trim()}
+          style={{
+            background: submitting ? C.surface : `${C.cl}14`,
+            border: `1px solid ${submitting ? C.border : `${C.cl}30`}`,
+            color: submitting ? C.textDim : C.cl,
+            borderRadius: 3,
+            padding: "3px 6px",
+            fontSize: 8,
+            fontFamily: C.mono,
+            cursor: submitting ? "default" : "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {submitting ? "…" : "Send"}
+        </button>
+      </div>
+      <div style={{ fontFamily: C.mono, fontSize: 7, color: C.textFaint }}>
+        Feedback shapes task prioritization. Esc to close.
+      </div>
+    </div>
+  );
+}
 
 interface Task {
   id: string;
@@ -33,6 +189,7 @@ export function TaskRail() {
   const [error, setError] = useState("");
   const [expandedPriorities, setExpandedPriorities] = useState<Set<number>>(new Set([1, 2, 3]));
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
+  const [replyOpenTaskId, setReplyOpenTaskId] = useState<string | null>(null);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -308,6 +465,25 @@ export function TaskRail() {
                           {hoveredTaskId === task.id && (
                             <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
                               <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setReplyOpenTaskId(replyOpenTaskId === task.id ? null : task.id);
+                                }}
+                                style={{
+                                  padding: "2px 6px",
+                                  borderRadius: 3,
+                                  background: replyOpenTaskId === task.id ? `${C.cl}14` : C.surface,
+                                  border: `1px solid ${replyOpenTaskId === task.id ? `${C.cl}35` : C.border}`,
+                                  color: replyOpenTaskId === task.id ? C.cl : C.textDim,
+                                  fontFamily: C.mono,
+                                  fontSize: 8,
+                                  cursor: "pointer",
+                                }}
+                                title="Reply to this task"
+                              >
+                                ↩
+                              </button>
+                              <button
                                 onClick={() => handleTaskAction(task.id, "done")}
                                 style={{
                                   padding: "2px 6px",
@@ -340,6 +516,14 @@ export function TaskRail() {
                             </div>
                           )}
                         </div>
+
+                        {/* Inline reply panel */}
+                        {replyOpenTaskId === task.id && (
+                          <TaskReplyPanel
+                            taskId={task.id}
+                            onClose={() => setReplyOpenTaskId(null)}
+                          />
+                        )}
                       </div>
                     ))}
                   </div>

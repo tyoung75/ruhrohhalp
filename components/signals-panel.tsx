@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { Spinner } from "@/components/primitives";
 import { api } from "@/lib/client-api";
 import { OneTapAction, type ActionType } from "@/components/one-tap-action";
+import { buildFingerprint, isSignalDismissed } from "@/lib/signal-fingerprint";
 
 // ---------------------------------------------------------------------------
 // CW-3/4/5/6: New right-panel section types
@@ -96,11 +97,94 @@ const CATEGORY_META: Record<SignalCategory, { icon: string; color: string; label
 // Signal card
 // ---------------------------------------------------------------------------
 
-function SignalCard({ signal, index }: { signal: Signal; index: number }) {
-  const meta = CATEGORY_META[signal.category] ?? CATEGORY_META.insight;
-  const [dismissed, setDismissed] = useState(false);
+interface SignalReply {
+  id: string;
+  reply: string;
+  created_at: string;
+  scope: "specific" | "broad";
+}
 
-  if (dismissed) return null;
+function SignalCard({
+  signal,
+  index,
+  onDismiss,
+}: {
+  signal: Signal;
+  index: number;
+  onDismiss: (signal: Signal) => void;
+}) {
+  const meta = CATEGORY_META[signal.category] ?? CATEGORY_META.insight;
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [replies, setReplies] = useState<SignalReply[]>([]);
+  const [repliesLoaded, setRepliesLoaded] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Load existing replies when the reply panel is opened
+  const loadReplies = useCallback(async () => {
+    if (repliesLoaded) return;
+    try {
+      const fp = buildFingerprint(signal.text);
+      const res = await api<{ replies: SignalReply[] }>(
+        `/api/signals/reply?fingerprint=${encodeURIComponent(fp)}&limit=10`
+      );
+      setReplies(res.replies ?? []);
+    } catch {
+      // Silent fail — replies are supplementary
+    } finally {
+      setRepliesLoaded(true);
+    }
+  }, [signal.text, repliesLoaded]);
+
+  const handleOpenReply = () => {
+    setReplyOpen(true);
+    loadReplies();
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const handleSubmitReply = async () => {
+    if (!replyText.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await api<{ reply: SignalReply }>("/api/signals/reply", {
+        method: "POST",
+        body: JSON.stringify({
+          signal_text: signal.text,
+          reply: replyText.trim(),
+          signal_category: signal.category,
+          scope: "specific",
+        }),
+      });
+      setReplies((prev) => [res.reply, ...prev]);
+      setReplyText("");
+    } catch (e) {
+      console.error("Failed to submit reply:", e);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDismiss = async () => {
+    setDismissing(true);
+    try {
+      await api("/api/signals/dismiss", {
+        method: "POST",
+        body: JSON.stringify({
+          text: signal.text,
+          category: signal.category,
+          source: signal.source,
+        }),
+      });
+      onDismiss(signal);
+    } catch (e) {
+      console.error("Failed to dismiss signal:", e);
+      setDismissing(false);
+    }
+  };
+
+  if (dismissing) return null;
 
   return (
     <div
@@ -153,9 +237,27 @@ function SignalCard({ signal, index }: { signal: Signal; index: number }) {
           {formatTime(signal.timestamp)}
         </span>
 
-        {/* Dismiss */}
+        {/* Reply toggle */}
         <button
-          onClick={() => setDismissed(true)}
+          onClick={handleOpenReply}
+          style={{
+            background: "none",
+            border: "none",
+            color: replyOpen ? C.cl : C.textFaint,
+            cursor: "pointer",
+            fontSize: 10,
+            padding: "0 2px",
+            lineHeight: 1,
+            transition: "color 0.15s",
+          }}
+          title="Reply to this insight"
+        >
+          ↩
+        </button>
+
+        {/* Dismiss — persisted */}
+        <button
+          onClick={handleDismiss}
           style={{
             background: "none",
             border: "none",
@@ -165,7 +267,7 @@ function SignalCard({ signal, index }: { signal: Signal; index: number }) {
             padding: "0 2px",
             lineHeight: 1,
           }}
-          title="Dismiss"
+          title="Dismiss (won't come back)"
         >
           ✕
         </button>
@@ -201,6 +303,98 @@ function SignalCard({ signal, index }: { signal: Signal; index: number }) {
           />
         )}
       </div>
+
+      {/* Reply section */}
+      {replyOpen && (
+        <div
+          style={{
+            borderTop: `1px solid ${C.border}`,
+            paddingTop: 8,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          {/* Previous replies */}
+          {replies.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {replies.map((r) => (
+                <div
+                  key={r.id}
+                  style={{
+                    background: `${C.cl}08`,
+                    border: `1px solid ${C.cl}15`,
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    fontSize: 10,
+                    color: C.textDim,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <div style={{ color: C.text, marginBottom: 2 }}>{r.reply}</div>
+                  <div style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint }}>
+                    {formatTime(r.created_at)}
+                    {r.scope === "broad" && (
+                      <span style={{ marginLeft: 4, color: C.gold }}>broad</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Input field */}
+          <div style={{ display: "flex", gap: 4 }}>
+            <input
+              ref={inputRef}
+              type="text"
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmitReply();
+                }
+                if (e.key === "Escape") setReplyOpen(false);
+              }}
+              placeholder="Reply to this insight..."
+              disabled={submitting}
+              style={{
+                flex: 1,
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 4,
+                padding: "5px 8px",
+                fontSize: 10,
+                color: C.text,
+                fontFamily: C.sans,
+                outline: "none",
+              }}
+            />
+            <button
+              onClick={handleSubmitReply}
+              disabled={submitting || !replyText.trim()}
+              style={{
+                background: submitting ? C.surface : `${C.cl}14`,
+                border: `1px solid ${submitting ? C.border : `${C.cl}30`}`,
+                color: submitting ? C.textDim : C.cl,
+                borderRadius: 4,
+                padding: "4px 8px",
+                fontSize: 9,
+                fontFamily: C.mono,
+                cursor: submitting ? "default" : "pointer",
+                transition: "all 0.15s",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {submitting ? "..." : "Send"}
+            </button>
+          </div>
+          <div style={{ fontFamily: C.mono, fontSize: 7, color: C.textFaint, lineHeight: 1.4 }}>
+            Your feedback shapes future briefings. Press Esc to close.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -744,6 +938,8 @@ export function SignalsPanel() {
   const [generating, setGenerating] = useState(false);
   const [activeFilter, setActiveFilter] = useState<SignalCategory | "all">("all");
   const [error, setError] = useState("");
+  // Dismissals: persistent set of fingerprints to suppress
+  const [dismissedFingerprints, setDismissedFingerprints] = useState<Set<string>>(new Set());
   // CW-3/4/5/6: New right-panel section state
   const [blockedTasks, setBlockedTasks] = useState<BlockedTask[]>([]);
   const [zombieAlerts, setZombieAlerts] = useState<ZombieAlert[]>([]);
@@ -766,13 +962,33 @@ export function SignalsPanel() {
     }
   }, []);
 
+  // Handler when a signal is dismissed from a card
+  const handleSignalDismissed = useCallback((signal: Signal) => {
+    const fp = buildFingerprint(signal.text);
+    setDismissedFingerprints((prev) => new Set([...prev, fp]));
+    setSignals((prev) => prev.filter((s) => s.id !== signal.id));
+  }, []);
+
   const loadSignals = useCallback(async () => {
     try {
+      // Load dismissals in parallel with signals
+      const dismissalsPromise = api<{ dismissals: Array<{ fingerprint: string }> }>("/api/signals/dismiss").catch(() => ({ dismissals: [] }));
+
       // Pull from briefing content + activity feed
-      const [briefingRes, activityRes] = await Promise.allSettled([
+      const [briefingRes, activityRes, dismissalsRes] = await Promise.allSettled([
         api<{ briefing: { content_json?: Array<{ title: string; color: string; items: Array<{ id?: string; text: string; type?: string }> }> } | null }>("/api/briefings"),
         api<{ entries: Array<{ id: string; type: string; description: string; created_at: string; metadata?: Record<string, unknown> }> }>("/api/activity?limit=20"),
+        dismissalsPromise,
       ]);
+
+      // Build dismissal set
+      const dismissedFps = new Set<string>();
+      if (dismissalsRes.status === "fulfilled" && dismissalsRes.value.dismissals) {
+        for (const d of dismissalsRes.value.dismissals) {
+          dismissedFps.add(d.fingerprint);
+        }
+      }
+      setDismissedFingerprints(dismissedFps);
 
       const sigs: Signal[] = [];
 
@@ -812,7 +1028,9 @@ export function SignalsPanel() {
         }
       }
 
-      setSignals(sigs);
+      // Filter out dismissed signals using fuzzy fingerprint matching
+      const filteredSigs = sigs.filter((s) => !isSignalDismissed(s.text, dismissedFps));
+      setSignals(filteredSigs);
 
       // CW-3/4/5/6: Fetch new right-panel section data in parallel (silent fail if endpoints not deployed)
       const [blockedRes, zombieRes, deadLetterRes, contentRes] = await Promise.allSettled([
@@ -982,7 +1200,7 @@ export function SignalsPanel() {
       {!loading && (
         <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
           {filteredSignals.map((signal, i) => (
-            <SignalCard key={signal.id} signal={signal} index={i} />
+            <SignalCard key={signal.id} signal={signal} index={i} onDismiss={handleSignalDismissed} />
           ))}
 
           {filteredSignals.length === 0 && (
