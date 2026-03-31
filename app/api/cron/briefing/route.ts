@@ -21,6 +21,161 @@ export const maxDuration = 60;
 const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
 
 // ---------------------------------------------------------------------------
+// Timezone helpers — all briefing dates should be in ET (America/New_York)
+// ---------------------------------------------------------------------------
+
+/** Get current date string in ET (handles EDT/EST automatically) */
+function getTodayET(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
+
+/** Determine if this is a morning or evening cron run based on ET hour */
+function getBriefingPeriod(): "morning" | "evening" {
+  const etHour = Number(
+    new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }),
+  );
+  // Morning cron runs at ~6 AM ET, evening at ~8 PM ET
+  return etHour < 12 ? "morning" : "evening";
+}
+
+// ---------------------------------------------------------------------------
+// Direct DB context — supplement RAG with real task/goal/brain-dump data
+// ---------------------------------------------------------------------------
+
+interface DirectContext {
+  openTasks: { title: string; description: string | null; priority_num: number | null; due_date: string | null; state: string | null }[];
+  activeGoals: { title: string; description: string | null; pillar_name: string | null; progress_current: string | null; progress_target: string | null; target_date: string | null }[];
+  recentFeedback: { action: string; note: string; created_at: string }[];
+  brainDump: { goals: string | null; weekly_context: string | null; top_of_mind: string | null } | null;
+}
+
+async function fetchDirectContext(userId: string): Promise<DirectContext> {
+  const supabase = createAdminClient();
+
+  const [tasksRes, goalsRes, feedbackRes, brainDumpRes] = await Promise.all([
+    supabase
+      .from("tasks")
+      .select("title, description, priority_num, due_date, state")
+      .eq("user_id", userId)
+      .not("state", "in", '("done","cancelled")')
+      .order("priority_num", { ascending: true, nullsFirst: false })
+      .limit(15),
+    supabase
+      .from("goals")
+      .select("title, description, progress_current, progress_target, target_date, pillars(name)")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .limit(10),
+    supabase
+      .from("feedback")
+      .select("action, note, created_at")
+      .eq("user_id", userId)
+      .eq("section", "leverage_tasks")
+      .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("brain_dumps")
+      .select("goals, weekly_context, top_of_mind")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  return {
+    openTasks: (tasksRes.data ?? []).map((t) => ({
+      title: t.title,
+      description: t.description,
+      priority_num: t.priority_num,
+      due_date: t.due_date,
+      state: t.state,
+    })),
+    activeGoals: (goalsRes.data ?? []).map((g) => ({
+      title: g.title,
+      description: g.description,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pillar_name: (g as any).pillars?.name ?? null,
+      progress_current: g.progress_current,
+      progress_target: g.progress_target,
+      target_date: g.target_date,
+    })),
+    recentFeedback: (feedbackRes.data ?? []).map((f) => ({
+      action: f.action,
+      note: f.note,
+      created_at: f.created_at,
+    })),
+    brainDump: brainDumpRes.data ?? null,
+  };
+}
+
+function formatDirectContext(ctx: DirectContext): string {
+  const parts: string[] = [];
+
+  if (ctx.openTasks.length > 0) {
+    const taskLines = ctx.openTasks.map((t) => {
+      const meta = [
+        t.priority_num ? `P${t.priority_num}` : null,
+        t.state ?? null,
+        t.due_date ? `due ${t.due_date}` : null,
+      ].filter(Boolean).join(", ");
+      return `- ${t.title}${meta ? ` (${meta})` : ""}${t.description ? `: ${t.description.slice(0, 120)}` : ""}`;
+    });
+    parts.push(`## Current Open Tasks (${ctx.openTasks.length} total)\n${taskLines.join("\n")}`);
+  }
+
+  if (ctx.activeGoals.length > 0) {
+    const goalLines = ctx.activeGoals.map((g) => {
+      const meta = [
+        g.pillar_name ?? null,
+        g.progress_current && g.progress_target ? `${g.progress_current} → ${g.progress_target}` : null,
+        g.target_date ? `target ${g.target_date}` : null,
+      ].filter(Boolean).join(", ");
+      return `- ${g.title}${meta ? ` (${meta})` : ""}`;
+    });
+    parts.push(`## Active Goals (${ctx.activeGoals.length} total)\n${goalLines.join("\n")}`);
+  }
+
+  if (ctx.recentFeedback.length > 0) {
+    const thumbsUp = ctx.recentFeedback.filter((f) => f.action === "thumbs_up");
+    const thumbsDown = ctx.recentFeedback.filter((f) => f.action === "thumbs_down");
+    const feedbackLines: string[] = [];
+    if (thumbsDown.length > 0) {
+      feedbackLines.push("Tyler marked these as NOT high-leverage (avoid suggesting similar tasks):");
+      thumbsDown.forEach((f) => feedbackLines.push(`  - ${f.note}`));
+    }
+    if (thumbsUp.length > 0) {
+      feedbackLines.push("Tyler confirmed these as high-leverage (suggest more like these):");
+      thumbsUp.forEach((f) => feedbackLines.push(`  - ${f.note}`));
+    }
+    parts.push(`## Recent Leverage Feedback\n${feedbackLines.join("\n")}`);
+  }
+
+  if (ctx.brainDump) {
+    const dumpLines: string[] = [];
+    if (ctx.brainDump.top_of_mind) {
+      dumpLines.push(`Top of mind: ${ctx.brainDump.top_of_mind}`);
+    }
+    if (ctx.brainDump.weekly_context) {
+      dumpLines.push(`This week: ${ctx.brainDump.weekly_context}`);
+    }
+    if (ctx.brainDump.goals) {
+      try {
+        const goals = JSON.parse(ctx.brainDump.goals);
+        if (Array.isArray(goals) && goals.length > 0) {
+          dumpLines.push(`Pinned goals: ${goals.map((g: { pillar?: string; text: string }) => g.text).join("; ")}`);
+        }
+      } catch { /* ignore parse errors */ }
+    }
+    if (dumpLines.length > 0) {
+      parts.push(`## Tyler's Brain Dump (manual context)\n${dumpLines.join("\n")}`);
+    }
+  }
+
+  return parts.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
 // Auth helper
 // ---------------------------------------------------------------------------
 
@@ -36,25 +191,35 @@ function checkAuth(request: NextRequest): NextResponse | null {
 // Prompts
 // ---------------------------------------------------------------------------
 
-function buildDailyPrompt(): string {
-  const today = new Date().toISOString().slice(0, 10);
-  return `You are generating Tyler Young's daily briefing. Review all stored memories, tasks, calendar events, emails, and project context across every venture (Motus, RuhrohHalp, Iron Passport, Caliber, thestayed).
+function buildDailyPrompt(directContext: string, period: "morning" | "evening"): string {
+  const today = getTodayET();
+  const periodLabel = period === "morning" ? "morning" : "evening";
+  const periodGuidance = period === "morning"
+    ? "This is the MORNING briefing. Focus on what Tyler should tackle today — prioritize by urgency and impact."
+    : "This is the EVENING briefing. Focus on reflecting on today's progress, what shifted, and what needs attention tomorrow.";
+
+  return `You are generating Tyler Young's ${periodLabel} briefing. Review all stored memories, tasks, calendar events, emails, and project context across every venture (Motus, RuhrohHalp, Iron Passport, Caliber, thestayed).
 
 Today's date: ${today}
+${periodGuidance}
 
-Return a structured daily briefing with exactly these four sections. Be specific — reference real items, people, deadlines, and context from the memories.
+Here is Tyler's current task and goal state pulled directly from the database:
+
+${directContext || "(No open tasks or active goals found in database.)"}
+
+Using the above data AND the retrieved memories, return a structured daily briefing with EXACTLY these four markdown sections. You MUST use ## headings exactly as shown. Each section MUST have at least one bullet point. Be specific — reference real items, people, deadlines, and context.
 
 ## Leverage Tasks
-The top 3-5 highest-leverage tasks Tyler should tackle TODAY. Prioritize by urgency and impact. Include why each matters and any deadlines.
+The top 3-5 highest-leverage tasks Tyler should tackle ${period === "morning" ? "TODAY" : "TOMORROW based on today's progress"}. Prioritize by urgency and impact. Include why each matters and any deadlines. Pull from the open tasks above. IMPORTANT: If "Recent Leverage Feedback" is provided, use it to calibrate — avoid suggesting tasks similar to ones Tyler marked as not high-leverage, and favor patterns matching tasks he confirmed as high-leverage. If "Tyler's Brain Dump" is provided, incorporate that manual context (e.g., if Tyler says he already submitted something, don't suggest it as a task).
 
 ## Open Decisions
-Decisions pending Tyler's input. Include context on what's blocking each decision and who is waiting.
+Decisions pending Tyler's input. Include context on what's blocking each decision and who is waiting. If none are clear from context, surface the most ambiguous open items that need Tyler's judgment call.
 
 ## Upcoming
-Calendar events, deadlines, and time-sensitive items for today and the next 48 hours. Include meeting prep notes if relevant context exists.
+Calendar events, deadlines, and time-sensitive items for ${period === "morning" ? "today and the next 48 hours" : "tomorrow and the next 48 hours"}. Include any due dates from the tasks above. If no calendar data is available, list the nearest deadlines from goals and tasks.
 
 ## Insights
-Patterns, risks, or opportunities Tyler should be aware of. Surface anything that connects across ventures or that might be falling through the cracks.`;
+Patterns, risks, or opportunities Tyler should be aware of. Surface anything that connects across ventures or that might be falling through the cracks. At minimum, note the health of active goals.`;
 }
 
 function buildWeeklyPrompt(strategyContext: string, trendingContext: string): string {
@@ -224,10 +389,10 @@ async function saveBriefingFromCron(
   userId: string,
   rawMd: string,
   contentJson: unknown,
-  period: "daily" | "weekly",
+  period: "morning" | "evening" | "weekly",
 ) {
   const supabase = createAdminClient();
-  const today = new Date().toISOString().split("T")[0];
+  const today = getTodayET();
   const { data: existing } = await supabase
     .from("briefings")
     .select("id")
@@ -264,27 +429,37 @@ export async function GET(request: NextRequest) {
   const authError = checkAuth(request);
   if (authError) return authError;
 
-  const results: Record<string, unknown> = { ok: true, timestamp: new Date().toISOString() };
+  const period = getBriefingPeriod();
+  const results: Record<string, unknown> = { ok: true, timestamp: new Date().toISOString(), period, dateET: getTodayET() };
+
+  // 0. Fetch direct DB context (tasks, goals, feedback, brain dumps)
+  let directContextStr = "";
+  try {
+    const directCtx = await fetchDirectContext(TYLER_USER_ID);
+    directContextStr = formatDirectContext(directCtx);
+  } catch (e) {
+    logError("cron.direct-context", e);
+  }
 
   // 1. Daily trend detection (runs in parallel with briefing query)
   const trendPromise = detectTrends()
     .then((r) => { results.daily_trends = { detected: r.detected }; })
     .catch((e) => { logError("cron.daily-trends", e); results.daily_trends = { error: "Trend detection failed" }; });
 
-  // 2. Daily briefing (4096 tokens for structured multi-section output)
-  const briefingPromise = queryBrain(buildDailyPrompt(), { userId: TYLER_USER_ID, topK: 12, threshold: 0.55, maxTokens: 4096 })
+  // 2. Morning/evening briefing (4096 tokens for structured multi-section output)
+  const briefingPromise = queryBrain(buildDailyPrompt(directContextStr, period), { userId: TYLER_USER_ID, topK: 12, threshold: 0.55, maxTokens: 4096 })
     .then(async (dailyResult) => {
       const dailySections = parseDailySections(dailyResult.answer);
       const dailyContentJson = dailySectionsToContentJson(dailySections);
-      await saveBriefingFromCron(TYLER_USER_ID, dailyResult.answer, dailyContentJson, "daily");
-      results.daily = { type: "daily_briefing", ...dailySections, sources: dailyResult.sources, raw: dailyResult.answer };
+      await saveBriefingFromCron(TYLER_USER_ID, dailyResult.answer, dailyContentJson, period);
+      results.daily = { type: `${period}_briefing`, ...dailySections, sources: dailyResult.sources, raw: dailyResult.answer };
     })
     .catch((e) => {
       logError("cron.daily", e);
-      results.daily = { error: "Daily briefing failed", detail: e instanceof Error ? e.message : String(e) };
+      results.daily = { error: `${period} briefing failed`, detail: e instanceof Error ? e.message : String(e) };
     });
 
-  // Run trend detection + daily briefing in parallel
+  // Run trend detection + briefing in parallel
   await Promise.allSettled([trendPromise, briefingPromise]);
 
   // 3. Weekly synthesis (Monday morning only)

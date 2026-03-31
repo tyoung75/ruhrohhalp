@@ -52,6 +52,8 @@ function renderMarkdown(text: string): React.ReactNode {
 
 export function BriefingView() {
   const [briefing, setBriefing] = useState<Briefing | null>(null);
+  const [allBriefings, setAllBriefings] = useState<Briefing[]>([]);
+  const [activePeriod, setActivePeriod] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
@@ -61,9 +63,13 @@ export function BriefingView() {
   // Load the latest persisted briefing on mount
   const loadBriefing = useCallback(async () => {
     try {
-      const data = await api<{ briefing: Briefing | null }>("/api/briefings");
+      const data = await api<{ briefing: Briefing | null; briefings?: Briefing[] }>("/api/briefings");
+      const briefings = data.briefings ?? (data.briefing ? [data.briefing] : []);
+      setAllBriefings(briefings);
+
       if (data.briefing && data.briefing.content_json) {
         setBriefing(data.briefing);
+        setActivePeriod(data.briefing.period ?? null);
         const titles = data.briefing.content_json.map((s) => s.title);
         setExpandedSections(new Set(titles));
       }
@@ -249,6 +255,21 @@ export function BriefingView() {
     setExpandedSections(next);
   }
 
+  function switchPeriod(period: string) {
+    const target = allBriefings.find((b) => b.period === period);
+    if (target) {
+      setBriefing(target);
+      setActivePeriod(period);
+      const titles = target.content_json?.map((s) => s.title) ?? [];
+      setExpandedSections(new Set(titles));
+    }
+  }
+
+  const periodLabel = activePeriod === "morning" ? "Morning" : activePeriod === "evening" ? "Evening" : activePeriod === "weekly" ? "Weekly" : "";
+  const availablePeriods = allBriefings
+    .map((b) => b.period)
+    .filter((p): p is string => !!p && p !== "weekly");
+
   const lastUpdated = briefing?.updated_at
     ? new Date(briefing.updated_at).toLocaleString("en-US", {
         hour: "numeric",
@@ -273,13 +294,37 @@ export function BriefingView() {
               fontWeight: 400,
             }}
           >
-            Briefing
+            {periodLabel ? `${periodLabel} Briefing` : "Briefing"}
           </h2>
-          {lastUpdated && (
-            <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginTop: 4 }}>
-              Updated {lastUpdated}
-            </div>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+            {lastUpdated && (
+              <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint }}>
+                Updated {lastUpdated}
+              </span>
+            )}
+            {availablePeriods.length > 1 && (
+              <div style={{ display: "flex", gap: 4 }}>
+                {availablePeriods.map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => switchPeriod(p)}
+                    style={{
+                      padding: "1px 6px",
+                      borderRadius: 4,
+                      border: `1px solid ${activePeriod === p ? C.cl : C.border}`,
+                      background: activePeriod === p ? `${C.cl}20` : "transparent",
+                      color: activePeriod === p ? C.cl : C.textFaint,
+                      fontFamily: C.mono,
+                      fontSize: 9,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {p === "morning" ? "AM" : p === "evening" ? "PM" : p}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <button
           onClick={() => generateBriefing()}
@@ -343,7 +388,7 @@ export function BriefingView() {
           </div>
           <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginBottom: 16 }}>
             Click &quot;Generate Briefing&quot; above, or your next briefing will
-            generate automatically at 6 AM ET via the daily cron.
+            generate automatically at 6 AM / 8 PM ET.
           </div>
           <button
             onClick={() => generateBriefing()}

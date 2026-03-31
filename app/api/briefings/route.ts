@@ -6,11 +6,16 @@ import { createClient } from "@/lib/supabase/server";
 /**
  * GET /api/briefings
  *
- * Returns the latest briefing or briefing by date query param
+ * Returns the latest briefing(s) for the current day.
  *
  * Query params:
- * - date=2026-03-20 (ISO date, defaults to today)
- * - period=daily|weekly (filter by period)
+ * - date=2026-03-20 (ISO date, defaults to today in ET)
+ * - period=morning|evening|daily|weekly (filter by specific period)
+ *
+ * When no period is specified, returns the most relevant briefing for the
+ * current time of day: evening briefing in PM, morning briefing in AM,
+ * falling back to whatever exists. Also includes both morning and evening
+ * in a `briefings` array so the UI can show both.
  */
 export async function GET(request: NextRequest) {
   const { user, response } = await requireUser();
@@ -20,31 +25,65 @@ export async function GET(request: NextRequest) {
   const dateParam = url.searchParams.get("date");
   const periodParam = url.searchParams.get("period");
 
+  // Use ET date by default so evening briefings match the correct calendar day
+  const todayET = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const targetDate = dateParam ?? todayET;
+
   const supabase = await createClient();
-  let query = supabase
+
+  if (periodParam) {
+    // Specific period requested — return single briefing
+    const { data, error } = await supabase
+      .from("briefings")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("date", targetDate)
+      .eq("period", periodParam)
+      .maybeSingle();
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ briefing: data ?? null });
+  }
+
+  // No period specified — fetch all briefings for the target date
+  const { data: allBriefings, error } = await supabase
     .from("briefings")
     .select("*")
     .eq("user_id", user.id)
-    .order("date", { ascending: false })
-    .limit(1);
-
-  if (dateParam) {
-    query = query.eq("date", dateParam);
-  }
-
-  if (periodParam) {
-    query = query.eq("period", periodParam);
-  }
-
-  const { data, error } = await query.maybeSingle();
+    .eq("date", targetDate)
+    .order("updated_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  if (!data) {
-    return NextResponse.json({ briefing: null });
+  if (!allBriefings || allBriefings.length === 0) {
+    // Fall back to the most recent briefing of any date
+    const { data: latest, error: latestErr } = await supabase
+      .from("briefings")
+      .select("*")
+      .eq("user_id", user.id)
+      .in("period", ["morning", "evening", "daily"])
+      .order("date", { ascending: false })
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestErr) return NextResponse.json({ error: latestErr.message }, { status: 500 });
+    return NextResponse.json({ briefing: latest ?? null, briefings: latest ? [latest] : [] });
   }
 
-  return NextResponse.json({ briefing: data });
+  // Determine which briefing to show as primary based on time of day
+  const etHour = Number(
+    new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }),
+  );
+  const preferredPeriod = etHour >= 12 ? "evening" : "morning";
+
+  // Find the best match: preferred period > daily > most recent
+  const primary =
+    allBriefings.find((b) => b.period === preferredPeriod) ??
+    allBriefings.find((b) => b.period === "daily") ??
+    allBriefings[0];
+
+  return NextResponse.json({ briefing: primary, briefings: allBriefings });
 }
 
 /**
