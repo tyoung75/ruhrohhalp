@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import {
@@ -17,8 +17,74 @@ import type {
   FinancialAccount,
   FinancialHolding,
 } from "@/lib/types/finance";
+import type { StockQuote } from "@/app/api/finance/quotes/route";
 import { Spinner } from "@/components/primitives";
 import { useMobile } from "@/lib/useMobile";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REAL-TIME STOCK QUOTES HOOK
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REFRESH_INTERVAL_MS = 30_000; // 30 seconds
+
+interface QuotesState {
+  quotes: Record<string, StockQuote>;
+  loading: boolean;
+  error: string | null;
+  fetchedAt: string | null;
+  marketState: string | null;
+}
+
+function useStockQuotes(symbols: string[]) {
+  const [state, setState] = useState<QuotesState>({
+    quotes: {},
+    loading: false,
+    error: null,
+    fetchedAt: null,
+    marketState: null,
+  });
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchQuotes = useCallback(async () => {
+    if (symbols.length === 0) return;
+
+    setState((prev) => ({ ...prev, loading: true, error: null }));
+    try {
+      const uniqueSymbols = [...new Set(symbols)].filter(Boolean);
+      const res = await api<{ quotes: StockQuote[]; fetchedAt: string }>(
+        `/api/finance/quotes?symbols=${uniqueSymbols.join(",")}`
+      );
+      const quotesMap: Record<string, StockQuote> = {};
+      for (const q of res.quotes) {
+        quotesMap[q.symbol] = q;
+      }
+      const firstQuote = res.quotes[0];
+      setState({
+        quotes: quotesMap,
+        loading: false,
+        error: null,
+        fetchedAt: res.fetchedAt,
+        marketState: firstQuote?.marketState ?? null,
+      });
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        loading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch quotes",
+      }));
+    }
+  }, [symbols.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    fetchQuotes();
+    intervalRef.current = setInterval(fetchQuotes, REFRESH_INTERVAL_MS);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [fetchQuotes]);
+
+  return { ...state, refetch: fetchQuotes };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS & HELPERS
@@ -949,6 +1015,271 @@ function RSUVestingSection({ data }: { data: FinancialDashboardData }) {
   );
 }
 
+function MarketStatusBadge({ marketState, fetchedAt, loading, onRefresh }: {
+  marketState: string | null;
+  fetchedAt: string | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const isOpen = marketState === "REGULAR";
+  const isPre = marketState === "PRE";
+  const isPost = marketState === "POST" || marketState === "POSTPOST";
+  const statusColor = isOpen ? C.todo : isPre || isPost ? C.task : C.textDim;
+  const statusLabel = isOpen ? "Market Open" : isPre ? "Pre-Market" : isPost ? "After Hours" : "Market Closed";
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: statusColor,
+            boxShadow: isOpen ? `0 0 6px ${statusColor}` : "none",
+            animation: isOpen ? "pulse 2s infinite" : "none",
+          }}
+        />
+        <span style={{ color: statusColor, fontSize: 11, fontFamily: C.mono, fontWeight: 600 }}>
+          {statusLabel}
+        </span>
+      </div>
+      {fetchedAt && (
+        <span style={{ color: C.textFaint, fontSize: 10, fontFamily: C.mono }}>
+          Updated {new Date(fetchedAt).toLocaleTimeString()}
+        </span>
+      )}
+      <button
+        onClick={onRefresh}
+        disabled={loading}
+        style={{
+          background: "none",
+          border: `1px solid ${C.border}`,
+          borderRadius: 4,
+          padding: "2px 8px",
+          color: loading ? C.textFaint : C.textDim,
+          fontSize: 10,
+          fontFamily: C.mono,
+          cursor: loading ? "not-allowed" : "pointer",
+        }}
+      >
+        {loading ? "..." : "Refresh"}
+      </button>
+    </div>
+  );
+}
+
+function LiveHoldingsSection({
+  data,
+  quotes,
+  quotesLoading,
+  quotesError,
+  fetchedAt,
+  marketState,
+  onRefresh,
+}: {
+  data: FinancialDashboardData;
+  quotes: Record<string, StockQuote>;
+  quotesLoading: boolean;
+  quotesError: string | null;
+  fetchedAt: string | null;
+  marketState: string | null;
+  onRefresh: () => void;
+}) {
+  const isMobile = useMobile();
+  const [expandedAccount, setExpandedAccount] = useState<string | null>(null);
+
+  // Group holdings by account
+  const accountMap = new Map<string, FinancialAccount>();
+  for (const acct of data.accounts) accountMap.set(acct.id, acct);
+
+  const holdingsByAccount = new Map<string, FinancialHolding[]>();
+  for (const h of data.holdings) {
+    const list = holdingsByAccount.get(h.accountId) || [];
+    list.push(h);
+    holdingsByAccount.set(h.accountId, list);
+  }
+
+  // Compute total portfolio value with live prices
+  let totalPortfolioValue = 0;
+  let totalDayChange = 0;
+  for (const h of data.holdings) {
+    const quote = quotes[h.symbol];
+    if (quote) {
+      totalPortfolioValue += quote.price * h.shares;
+      totalDayChange += quote.change * h.shares;
+    } else {
+      totalPortfolioValue += h.currentValue;
+    }
+  }
+
+  const hasQuotes = Object.keys(quotes).length > 0;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", flexDirection: isMobile ? "column" : "row", gap: 8, marginTop: 32, marginBottom: 16, paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+        <h2 style={{ fontFamily: C.serif, fontSize: 22, fontWeight: 600, color: C.cream, margin: 0 }}>
+          Live Holdings
+        </h2>
+        <MarketStatusBadge marketState={marketState} fetchedAt={fetchedAt} loading={quotesLoading} onRefresh={onRefresh} />
+      </div>
+
+      {quotesError && (
+        <div style={{ padding: "8px 14px", marginBottom: 16, borderRadius: 6, fontSize: 12, fontFamily: C.mono, background: `${C.reminder}15`, color: C.reminder, border: `1px solid ${C.reminder}30` }}>
+          {quotesError}
+        </div>
+      )}
+
+      {/* Portfolio summary bar */}
+      {hasQuotes && (
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: isMobile ? 16 : 20, marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+          <div>
+            <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>TOTAL HOLDINGS VALUE</div>
+            <div style={{ color: C.gold, fontSize: 28, fontWeight: 600, fontFamily: C.mono }}>
+              {formatCurrency(totalPortfolioValue)}
+            </div>
+          </div>
+          <div style={{ textAlign: isMobile ? "left" : "right" }}>
+            <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>DAY CHANGE</div>
+            <div style={{ color: totalDayChange >= 0 ? C.todo : C.reminder, fontSize: 22, fontWeight: 600, fontFamily: C.mono }}>
+              {totalDayChange >= 0 ? "+" : ""}{formatCurrency(totalDayChange)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Holdings by account */}
+      {[...holdingsByAccount.entries()].map(([accountId, holdings]) => {
+        const account = accountMap.get(accountId);
+        if (!account) return null;
+
+        const isExpanded = expandedAccount === accountId;
+        const sorted = [...holdings].sort((a, b) => {
+          const aVal = quotes[a.symbol] ? quotes[a.symbol].price * a.shares : a.currentValue;
+          const bVal = quotes[b.symbol] ? quotes[b.symbol].price * b.shares : b.currentValue;
+          return bVal - aVal;
+        });
+
+        let accountLiveTotal = 0;
+        let accountDayChange = 0;
+        for (const h of holdings) {
+          const q = quotes[h.symbol];
+          if (q) {
+            accountLiveTotal += q.price * h.shares;
+            accountDayChange += q.change * h.shares;
+          } else {
+            accountLiveTotal += h.currentValue;
+          }
+        }
+
+        return (
+          <div key={accountId} style={{ marginBottom: 12 }}>
+            <div
+              onClick={() => setExpandedAccount(isExpanded ? null : accountId)}
+              style={{
+                background: C.card,
+                border: `1px solid ${C.border}`,
+                borderRadius: isExpanded ? "8px 8px 0 0" : 8,
+                padding: "12px 16px",
+                cursor: "pointer",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                transition: "background 0.15s",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = C.cardHov; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = C.card; }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ color: C.textFaint, fontSize: 14, fontFamily: C.mono, transition: "transform 0.2s", transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}>
+                  ▶
+                </span>
+                <div>
+                  <div style={{ color: C.cream, fontSize: 14, fontFamily: C.sans, fontWeight: 500 }}>
+                    {account.accountName}
+                  </div>
+                  <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.sans }}>
+                    {account.institution} · {holdings.length} holding{holdings.length !== 1 ? "s" : ""}
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ color: C.cream, fontSize: 16, fontWeight: 600, fontFamily: C.mono }}>
+                  {formatCurrency(accountLiveTotal)}
+                </div>
+                {hasQuotes && (
+                  <div style={{ color: accountDayChange >= 0 ? C.todo : C.reminder, fontSize: 11, fontFamily: C.mono }}>
+                    {accountDayChange >= 0 ? "+" : ""}{formatCurrency(accountDayChange)}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {isExpanded && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: isMobile ? 8 : 0 }}>
+                {/* Header row */}
+                {!isMobile && (
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${C.border}` }}>
+                    {["Symbol", "Shares", "Price", "Change", "Value", "Day P&L"].map((h) => (
+                      <div key={h} style={{ color: C.textFaint, fontSize: 10, fontFamily: C.mono, textTransform: "uppercase", textAlign: h === "Symbol" ? "left" : "right" }}>{h}</div>
+                    ))}
+                  </div>
+                )}
+                {sorted.map((holding) => {
+                  const quote = quotes[holding.symbol];
+                  const livePrice = quote?.price ?? holding.currentPrice ?? 0;
+                  const liveValue = livePrice * holding.shares;
+                  const dayChange = quote ? quote.change * holding.shares : 0;
+                  const changePct = quote?.changePercent ?? 0;
+                  const isUp = (quote?.change ?? 0) >= 0;
+
+                  if (isMobile) {
+                    return (
+                      <div key={holding.id} style={{ padding: "10px 12px", borderBottom: `1px solid ${C.border}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <div>
+                            <span style={{ color: C.cream, fontSize: 13, fontWeight: 600, fontFamily: C.mono }}>{holding.symbol}</span>
+                            {holding.name && <span style={{ color: C.textDim, fontSize: 11, fontFamily: C.sans, marginLeft: 6 }}>{holding.name}</span>}
+                          </div>
+                          <div style={{ color: C.cream, fontSize: 13, fontWeight: 600, fontFamily: C.mono }}>{formatCurrency(liveValue)}</div>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono }}>{holding.shares.toLocaleString()} @ {formatCurrency(livePrice)}</span>
+                          <span style={{ color: isUp ? C.todo : C.reminder, fontSize: 11, fontFamily: C.mono }}>
+                            {isUp ? "+" : ""}{formatCurrency(dayChange)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={holding.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", gap: 8, padding: "10px 16px", borderBottom: `1px solid ${C.border}`, alignItems: "center" }}>
+                      <div>
+                        <span style={{ color: C.cream, fontSize: 13, fontWeight: 600, fontFamily: C.mono }}>{holding.symbol}</span>
+                        {holding.name && <span style={{ color: C.textDim, fontSize: 11, fontFamily: C.sans, marginLeft: 8 }}>{holding.name}</span>}
+                      </div>
+                      <div style={{ textAlign: "right", color: C.text, fontSize: 13, fontFamily: C.mono }}>{holding.shares.toLocaleString()}</div>
+                      <div style={{ textAlign: "right", color: C.cream, fontSize: 13, fontFamily: C.mono }}>{formatCurrency(livePrice)}</div>
+                      <div style={{ textAlign: "right", color: isUp ? C.todo : C.reminder, fontSize: 13, fontFamily: C.mono }}>
+                        {isUp ? "+" : ""}{changePct.toFixed(2)}%
+                      </div>
+                      <div style={{ textAlign: "right", color: C.cream, fontSize: 13, fontWeight: 600, fontFamily: C.mono }}>{formatCurrency(liveValue)}</div>
+                      <div style={{ textAlign: "right", color: isUp ? C.todo : C.reminder, fontSize: 13, fontFamily: C.mono }}>
+                        {isUp ? "+" : ""}{formatCurrency(dayChange)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CashFlowSection({ data }: { data: FinancialDashboardData }) {
   const isMobile = useMobile();
   const cf = data.cashFlow;
@@ -1047,6 +1378,18 @@ export default function FinancePage() {
   const [seedResult, setSeedResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const currentSalary = data ? parseInt(data.config?.annual_salary ?? "247800", 10) : 247800;
+
+  // Collect unique symbols from holdings and RSU vests for live quotes
+  const symbols = data
+    ? [
+        ...new Set([
+          ...data.holdings.map((h) => h.symbol),
+          ...data.rsuVests.filter((v) => v.status === "pending").map((v) => v.symbol),
+        ]),
+      ].filter(Boolean)
+    : [];
+
+  const { quotes, loading: quotesLoading, error: quotesError, fetchedAt, marketState, refetch: refetchQuotes } = useStockQuotes(symbols);
 
   useEffect(() => {
     async function fetchData() {
@@ -1185,6 +1528,17 @@ export default function FinancePage() {
           </div>
         </div>
 
+        {/* Live Holdings */}
+        <LiveHoldingsSection
+          data={data}
+          quotes={quotes}
+          quotesLoading={quotesLoading}
+          quotesError={quotesError}
+          fetchedAt={fetchedAt}
+          marketState={marketState}
+          onRefresh={refetchQuotes}
+        />
+
         {/* Raise Adjuster */}
         <RaiseAdjusterSection data={data} newSalary={newSalary} setNewSalary={setNewSalary} raiseImpact={raiseImpact} />
 
@@ -1207,6 +1561,10 @@ export default function FinancePage() {
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
         }
       `}</style>
     </div>
