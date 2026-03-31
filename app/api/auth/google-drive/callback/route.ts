@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getGoogleOauthCredentials } from "@/lib/google/oauth";
 
 type GoogleOauthState = {
   userId?: string;
@@ -224,14 +225,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const clientId =
-      process.env.GOOGLE_CLIENT_ID ?? process.env.YOUTUBE_CLIENT_ID;
-    const clientSecret =
-      process.env.GOOGLE_CLIENT_SECRET ?? process.env.YOUTUBE_CLIENT_SECRET;
+    const oauth = getGoogleOauthCredentials();
     const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/google-drive/callback`;
     const purpose = state?.purpose ?? "google_drive";
 
-    if (!clientId || !clientSecret) {
+    if (!oauth) {
       throw new Error("Google OAuth credentials not configured");
     }
 
@@ -241,8 +239,8 @@ export async function GET(request: NextRequest) {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
-        client_id: clientId,
-        client_secret: clientSecret,
+        client_id: oauth.clientId,
+        client_secret: oauth.clientSecret,
         redirect_uri: redirectUri,
         grant_type: "authorization_code",
       }),
@@ -251,7 +249,7 @@ export async function GET(request: NextRequest) {
     if (!tokenRes.ok) {
       const errBody = await tokenRes.text();
       console.error("[google-drive-oauth] Token exchange failed:", errBody);
-      throw new Error(`Token exchange failed: ${tokenRes.status}`);
+      throw new Error(`Token exchange failed: ${tokenRes.status} ${errBody}`);
     }
 
     const tokens = await tokenRes.json();

@@ -13,6 +13,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getGoogleOauthCredentials } from "@/lib/google/oauth";
 import { detectScreenshot } from "@/lib/creator/screenshot-filter";
 import { logInfo, logError } from "@/lib/logger";
 
@@ -157,17 +158,16 @@ export async function syncMediaFromDrive(
     new Date(tokenRow.expires_at).getTime() - Date.now() < 5 * 60 * 1000;
 
   if (isExpired && tokenRow.refresh_token) {
-    const clientId = process.env.GOOGLE_CLIENT_ID ?? process.env.YOUTUBE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET ?? process.env.YOUTUBE_CLIENT_SECRET;
+    const oauth = getGoogleOauthCredentials();
 
-    if (clientId && clientSecret) {
+    if (oauth) {
       try {
         const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
-            client_id: clientId,
-            client_secret: clientSecret,
+            client_id: oauth.clientId,
+            client_secret: oauth.clientSecret,
             refresh_token: tokenRow.refresh_token,
             grant_type: "refresh_token",
           }),

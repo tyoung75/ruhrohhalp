@@ -1,16 +1,16 @@
 import { google } from "googleapis";
 import type { BlogPost } from "@/lib/blog/types";
+import { getGoogleOauthCredentials } from "@/lib/google/oauth";
 
 function getGmailClient() {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const oauth = getGoogleOauthCredentials();
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
+  if (!oauth || !refreshToken) {
     return null;
   }
 
-  const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+  const oauth2Client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
   oauth2Client.setCredentials({ refresh_token: refreshToken });
 
   return google.gmail({ version: "v1", auth: oauth2Client });

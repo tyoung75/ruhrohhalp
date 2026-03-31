@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getGoogleOauthCredentials } from "@/lib/google/oauth";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -23,9 +24,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const clientId =
-    process.env.GOOGLE_CLIENT_ID ?? process.env.YOUTUBE_CLIENT_ID;
-  if (!clientId) {
+  const oauth = getGoogleOauthCredentials();
+  if (!oauth) {
     return NextResponse.redirect(
       new URL(
         "/settings/integrations?error=google_drive_not_configured",
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
   ).toString("base64url");
 
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  authUrl.searchParams.set("client_id", clientId);
+  authUrl.searchParams.set("client_id", oauth.clientId);
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("scope", scopes);
   authUrl.searchParams.set("response_type", "code");
