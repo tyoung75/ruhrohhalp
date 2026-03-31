@@ -6,7 +6,10 @@ import { api } from "@/lib/client-api";
 import {
   formatCurrency,
   formatDelta,
+  formatPercent,
   calculateRaiseImpact,
+  calculateHoldingPerformance,
+  calculatePortfolioPerformance,
   resolveAllContributions,
   projectDebtPayoff,
 } from "@/lib/finance";
@@ -16,10 +19,22 @@ import type {
   RaiseImpact,
   FinancialAccount,
   FinancialHolding,
+  HistoricalPrices,
 } from "@/lib/types/finance";
 import type { StockQuote } from "@/app/api/finance/quotes/route";
+import type { HistoricalPriceData } from "@/app/api/finance/quotes/historical/route";
+import { runNetWorthForecast, rsuVestsToMonthOffsets } from "@/lib/forecast";
+import type { ForecastInput } from "@/lib/forecast";
 import { Spinner } from "@/components/primitives";
 import { useMobile } from "@/lib/useMobile";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REAL-TIME STOCK QUOTES HOOK
@@ -84,6 +99,54 @@ function useStockQuotes(symbols: string[]) {
   }, [fetchQuotes]);
 
   return { ...state, refetch: fetchQuotes };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HISTORICAL QUOTES HOOK (for performance metrics)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HISTORICAL_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
+
+function useHistoricalQuotes(symbols: string[]) {
+  const [data, setData] = useState<Record<string, HistoricalPrices>>({});
+  const [loading, setLoading] = useState(false);
+
+  const fetchHistorical = useCallback(async () => {
+    const filteredSymbols = symbols.filter((s) => s !== "CASH" && s !== "FUIPX");
+    if (filteredSymbols.length === 0) return;
+
+    setLoading(true);
+    try {
+      const res = await api<{ historical: Record<string, HistoricalPriceData> }>(
+        `/api/finance/quotes/historical?symbols=${filteredSymbols.join(",")}`
+      );
+      // Map to HistoricalPrices type
+      const mapped: Record<string, HistoricalPrices> = {};
+      for (const [sym, d] of Object.entries(res.historical)) {
+        mapped[sym] = {
+          symbol: d.symbol,
+          price1dAgo: d.price1dAgo,
+          price1wAgo: d.price1wAgo,
+          price1mAgo: d.price1mAgo,
+          priceYtdStart: d.priceYtdStart,
+          price1yAgo: d.price1yAgo,
+        };
+      }
+      setData(mapped);
+    } catch (err) {
+      console.warn("Failed to fetch historical quotes:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [symbols.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    fetchHistorical();
+    const interval = setInterval(fetchHistorical, HISTORICAL_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [fetchHistorical]);
+
+  return { historical: data, historicalLoading: loading };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1069,6 +1132,31 @@ function MarketStatusBadge({ marketState, fetchedAt, loading, onRefresh }: {
   );
 }
 
+// ── Performance Metric Pill ──────────────────────────────────
+
+function MetricPill({ label, value, pct }: { label: string; value: number; pct: number }) {
+  const isUp = value >= 0;
+  const color = isUp ? C.todo : C.reminder;
+  return (
+    <div style={{
+      background: `${color}10`,
+      border: `1px solid ${color}25`,
+      borderRadius: 6,
+      padding: "6px 10px",
+      minWidth: 90,
+      textAlign: "center",
+    }}>
+      <div style={{ color: C.textDim, fontSize: 9, fontFamily: C.mono, marginBottom: 2 }}>{label}</div>
+      <div style={{ color, fontSize: 12, fontWeight: 600, fontFamily: C.mono }}>
+        {isUp ? "+" : ""}{formatCurrency(value)}
+      </div>
+      <div style={{ color, fontSize: 10, fontFamily: C.mono }}>
+        {formatPercent(pct)}
+      </div>
+    </div>
+  );
+}
+
 function LiveHoldingsSection({
   data,
   quotes,
@@ -1077,6 +1165,7 @@ function LiveHoldingsSection({
   fetchedAt,
   marketState,
   onRefresh,
+  historicalData,
 }: {
   data: FinancialDashboardData;
   quotes: Record<string, StockQuote>;
@@ -1085,6 +1174,7 @@ function LiveHoldingsSection({
   fetchedAt: string | null;
   marketState: string | null;
   onRefresh: () => void;
+  historicalData: Record<string, HistoricalPrices>;
 }) {
   const isMobile = useMobile();
   const [expandedAccount, setExpandedAccount] = useState<string | null>(null);
@@ -1103,17 +1193,26 @@ function LiveHoldingsSection({
   // Compute total portfolio value with live prices
   let totalPortfolioValue = 0;
   let totalDayChange = 0;
+  const currentPrices: Record<string, number> = {};
   for (const h of data.holdings) {
     const quote = quotes[h.symbol];
     if (quote) {
       totalPortfolioValue += quote.price * h.shares;
       totalDayChange += quote.change * h.shares;
+      currentPrices[h.symbol] = quote.price;
     } else {
       totalPortfolioValue += h.currentValue;
+      if (h.currentPrice) currentPrices[h.symbol] = h.currentPrice;
     }
   }
 
   const hasQuotes = Object.keys(quotes).length > 0;
+  const hasHistorical = Object.keys(historicalData).length > 0;
+
+  // Portfolio-level performance
+  const portfolioPerf = hasHistorical
+    ? calculatePortfolioPerformance(data.holdings, currentPrices, historicalData)
+    : null;
 
   return (
     <div>
@@ -1132,19 +1231,33 @@ function LiveHoldingsSection({
 
       {/* Portfolio summary bar */}
       {hasQuotes && (
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: isMobile ? 16 : 20, marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
-          <div>
-            <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>TOTAL HOLDINGS VALUE</div>
-            <div style={{ color: C.gold, fontSize: 28, fontWeight: 600, fontFamily: C.mono }}>
-              {formatCurrency(totalPortfolioValue)}
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: isMobile ? 16 : 20, marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16, marginBottom: portfolioPerf ? 16 : 0 }}>
+            <div>
+              <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>TOTAL HOLDINGS VALUE</div>
+              <div style={{ color: C.gold, fontSize: 28, fontWeight: 600, fontFamily: C.mono }}>
+                {formatCurrency(totalPortfolioValue)}
+              </div>
+            </div>
+            <div style={{ textAlign: isMobile ? "left" : "right" }}>
+              <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>DAY CHANGE</div>
+              <div style={{ color: totalDayChange >= 0 ? C.todo : C.reminder, fontSize: 22, fontWeight: 600, fontFamily: C.mono }}>
+                {totalDayChange >= 0 ? "+" : ""}{formatCurrency(totalDayChange)}
+              </div>
             </div>
           </div>
-          <div style={{ textAlign: isMobile ? "left" : "right" }}>
-            <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>DAY CHANGE</div>
-            <div style={{ color: totalDayChange >= 0 ? C.todo : C.reminder, fontSize: 22, fontWeight: 600, fontFamily: C.mono }}>
-              {totalDayChange >= 0 ? "+" : ""}{formatCurrency(totalDayChange)}
+
+          {/* Performance metrics row */}
+          {portfolioPerf && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+              <MetricPill label="1D" value={portfolioPerf.dailyChange} pct={portfolioPerf.dailyChangePct} />
+              <MetricPill label="1W" value={portfolioPerf.weekChange} pct={portfolioPerf.weekChangePct} />
+              <MetricPill label="1M" value={portfolioPerf.monthChange} pct={portfolioPerf.monthChangePct} />
+              <MetricPill label="YTD" value={portfolioPerf.ytdChange} pct={portfolioPerf.ytdChangePct} />
+              <MetricPill label="1Y" value={portfolioPerf.yearChange} pct={portfolioPerf.yearChangePct} />
+              <MetricPill label="TOTAL" value={portfolioPerf.totalReturn} pct={portfolioPerf.totalReturnPct} />
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -1219,8 +1332,8 @@ function LiveHoldingsSection({
               <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", padding: isMobile ? 8 : 0 }}>
                 {/* Header row */}
                 {!isMobile && (
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${C.border}` }}>
-                    {["Symbol", "Shares", "Price", "Change", "Value", "Day P&L"].map((h) => (
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: 4, padding: "8px 16px", borderBottom: `1px solid ${C.border}` }}>
+                    {["Symbol", "Shares", "Price", "Day", "1W", "1M", "YTD", "Total", "Value"].map((h) => (
                       <div key={h} style={{ color: C.textFaint, fontSize: 10, fontFamily: C.mono, textTransform: "uppercase", textAlign: h === "Symbol" ? "left" : "right" }}>{h}</div>
                     ))}
                   </div>
@@ -1233,6 +1346,10 @@ function LiveHoldingsSection({
                   const changePct = quote?.changePercent ?? 0;
                   const isUp = (quote?.change ?? 0) >= 0;
 
+                  const holdingPerf = hasHistorical && holding.holdingType !== "cash"
+                    ? calculateHoldingPerformance(holding, livePrice, historicalData[holding.symbol])
+                    : null;
+
                   if (isMobile) {
                     return (
                       <div key={holding.id} style={{ padding: "10px 12px", borderBottom: `1px solid ${C.border}` }}>
@@ -1243,31 +1360,61 @@ function LiveHoldingsSection({
                           </div>
                           <div style={{ color: C.cream, fontSize: 13, fontWeight: 600, fontFamily: C.mono }}>{formatCurrency(liveValue)}</div>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: holdingPerf ? 6 : 0 }}>
                           <span style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono }}>{holding.shares.toLocaleString()} @ {formatCurrency(livePrice)}</span>
                           <span style={{ color: isUp ? C.todo : C.reminder, fontSize: 11, fontFamily: C.mono }}>
                             {isUp ? "+" : ""}{formatCurrency(dayChange)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
                           </span>
                         </div>
+                        {holdingPerf && (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {[
+                              { l: "1W", v: holdingPerf.weekChangePct },
+                              { l: "1M", v: holdingPerf.monthChangePct },
+                              { l: "YTD", v: holdingPerf.ytdChangePct },
+                              { l: "Tot", v: holdingPerf.totalReturnPct },
+                            ].map((m) => (
+                              <span key={m.l} style={{
+                                fontSize: 10,
+                                fontFamily: C.mono,
+                                color: m.v >= 0 ? C.todo : C.reminder,
+                                background: `${m.v >= 0 ? C.todo : C.reminder}10`,
+                                padding: "1px 5px",
+                                borderRadius: 3,
+                              }}>
+                                {m.l}: {formatPercent(m.v)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   }
 
                   return (
-                    <div key={holding.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", gap: 8, padding: "10px 16px", borderBottom: `1px solid ${C.border}`, alignItems: "center" }}>
+                    <div key={holding.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: 4, padding: "10px 16px", borderBottom: `1px solid ${C.border}`, alignItems: "center" }}>
                       <div>
                         <span style={{ color: C.cream, fontSize: 13, fontWeight: 600, fontFamily: C.mono }}>{holding.symbol}</span>
                         {holding.name && <span style={{ color: C.textDim, fontSize: 11, fontFamily: C.sans, marginLeft: 8 }}>{holding.name}</span>}
                       </div>
                       <div style={{ textAlign: "right", color: C.text, fontSize: 13, fontFamily: C.mono }}>{holding.shares.toLocaleString()}</div>
                       <div style={{ textAlign: "right", color: C.cream, fontSize: 13, fontFamily: C.mono }}>{formatCurrency(livePrice)}</div>
-                      <div style={{ textAlign: "right", color: isUp ? C.todo : C.reminder, fontSize: 13, fontFamily: C.mono }}>
-                        {isUp ? "+" : ""}{changePct.toFixed(2)}%
+                      <div style={{ textAlign: "right", color: isUp ? C.todo : C.reminder, fontSize: 12, fontFamily: C.mono }}>
+                        {formatPercent(changePct)}
+                      </div>
+                      <div style={{ textAlign: "right", color: (holdingPerf?.weekChangePct ?? 0) >= 0 ? C.todo : C.reminder, fontSize: 12, fontFamily: C.mono }}>
+                        {holdingPerf ? formatPercent(holdingPerf.weekChangePct) : "—"}
+                      </div>
+                      <div style={{ textAlign: "right", color: (holdingPerf?.monthChangePct ?? 0) >= 0 ? C.todo : C.reminder, fontSize: 12, fontFamily: C.mono }}>
+                        {holdingPerf ? formatPercent(holdingPerf.monthChangePct) : "—"}
+                      </div>
+                      <div style={{ textAlign: "right", color: (holdingPerf?.ytdChangePct ?? 0) >= 0 ? C.todo : C.reminder, fontSize: 12, fontFamily: C.mono }}>
+                        {holdingPerf ? formatPercent(holdingPerf.ytdChangePct) : "—"}
+                      </div>
+                      <div style={{ textAlign: "right", color: (holdingPerf?.totalReturnPct ?? 0) >= 0 ? C.todo : C.reminder, fontSize: 12, fontFamily: C.mono }}>
+                        {holdingPerf ? formatPercent(holdingPerf.totalReturnPct) : "—"}
                       </div>
                       <div style={{ textAlign: "right", color: C.cream, fontSize: 13, fontWeight: 600, fontFamily: C.mono }}>{formatCurrency(liveValue)}</div>
-                      <div style={{ textAlign: "right", color: isUp ? C.todo : C.reminder, fontSize: 13, fontFamily: C.mono }}>
-                        {isUp ? "+" : ""}{formatCurrency(dayChange)}
-                      </div>
                     </div>
                   );
                 })}
@@ -1365,6 +1512,315 @@ function CashFlowSection({ data }: { data: FinancialDashboardData }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NET WORTH FORECAST SECTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HORIZON_OPTIONS = [
+  { label: "1Y", months: 12 },
+  { label: "3Y", months: 36 },
+  { label: "5Y", months: 60 },
+  { label: "10Y", months: 120 },
+];
+
+const DEFAULT_ASSUMPTIONS = {
+  equityReturnAnnual: 0.10,
+  equityVolAnnual: 0.156,
+  cryptoReturnAnnual: 0.18,
+  cryptoVolAnnual: 0.52,
+  salaryGrowthAnnual: 0.04,
+  expenseInflationAnnual: 0.03,
+};
+
+function ForecastSection({ data }: { data: FinancialDashboardData }) {
+  const isMobile = useMobile();
+  const [horizon, setHorizon] = useState(60);
+  const [showSettings, setShowSettings] = useState(false);
+  const [assumptions, setAssumptions] = useState(DEFAULT_ASSUMPTIONS);
+
+  const summary = data.summary;
+  const monthlyExpenses = parseFloat(data.config?.monthly_expenses ?? "12000");
+  const rsuOffsets = rsuVestsToMonthOffsets(data.rsuVests);
+
+  const forecastInput: ForecastInput = {
+    portfolioValue: summary.investedAssets,
+    cryptoValue: summary.cryptoAssets,
+    retirementValue: summary.retirementAssets,
+    equityAwardsValue: summary.equityAwards,
+    cashPosition: summary.cashPosition,
+    totalDebt: summary.totalDebt,
+    monthlyNetIncome: data.cashFlow.monthlyNetIncome,
+    monthlyContributions: data.cashFlow.monthlyContributions,
+    monthlyExpenses,
+    rsuVests: rsuOffsets,
+    ...assumptions,
+  };
+
+  const forecast = runNetWorthForecast(forecastInput, horizon, 1000);
+
+  // Build chart data
+  const chartData = forecast.months.map((m, i) => ({
+    month: m,
+    label: forecast.labels[i],
+    p10: Math.round(forecast.p10[i]),
+    p25: Math.round(forecast.p25[i]),
+    p50: Math.round(forecast.p50[i]),
+    p75: Math.round(forecast.p75[i]),
+    p90: Math.round(forecast.p90[i]),
+    // For area bands
+    band_outer_low: Math.round(forecast.p10[i]),
+    band_outer_high: Math.round(forecast.p90[i] - forecast.p10[i]),
+    band_inner_low: Math.round(forecast.p25[i]),
+    band_inner_high: Math.round(forecast.p75[i] - forecast.p25[i]),
+  }));
+
+  // Find milestone crossings on P50
+  const milestones: Array<{ value: number; label: string; month: number; date: string }> = [];
+  const milestoneTargets = [500000, 750000, 1000000, 1500000, 2000000, 3000000, 5000000];
+  for (const target of milestoneTargets) {
+    if (forecast.p50[0] >= target) continue; // already past it
+    const idx = forecast.p50.findIndex((v) => v >= target);
+    if (idx > 0 && idx < forecast.p50.length) {
+      milestones.push({
+        value: target,
+        label: target >= 1000000 ? `$${(target / 1000000).toFixed(target % 1000000 === 0 ? 0 : 1)}M` : `$${(target / 1000).toFixed(0)}K`,
+        month: idx,
+        date: forecast.labels[idx],
+      });
+    }
+  }
+
+  const formatYAxis = (v: number) => {
+    if (v >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
+    if (v >= 1000) return `$${(v / 1000).toFixed(0)}K`;
+    return `$${v}`;
+  };
+
+  const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: { label: string; p10: number; p25: number; p50: number; p75: number; p90: number } }>; label?: string }) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0].payload;
+    return (
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: 12, fontFamily: C.mono, fontSize: 11 }}>
+        <div style={{ color: C.cream, fontWeight: 600, marginBottom: 6 }}>{d.label}</div>
+        <div style={{ color: C.textDim }}>P90: <span style={{ color: C.todo }}>{formatCurrency(d.p90)}</span></div>
+        <div style={{ color: C.textDim }}>P75: <span style={{ color: C.todo }}>{formatCurrency(d.p75)}</span></div>
+        <div style={{ color: C.gold, fontWeight: 600 }}>P50: {formatCurrency(d.p50)}</div>
+        <div style={{ color: C.textDim }}>P25: <span style={{ color: C.reminder }}>{formatCurrency(d.p25)}</span></div>
+        <div style={{ color: C.textDim }}>P10: <span style={{ color: C.reminder }}>{formatCurrency(d.p10)}</span></div>
+      </div>
+    );
+  };
+
+  const sliderStyle: React.CSSProperties = {
+    width: "100%",
+    accentColor: C.gold,
+    cursor: "pointer",
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", flexDirection: isMobile ? "column" : "row", gap: 8, marginTop: 32, marginBottom: 16, paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+        <h2 style={{ fontFamily: C.serif, fontSize: 22, fontWeight: 600, color: C.cream, margin: 0 }}>
+          Net Worth Forecast
+        </h2>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {/* Horizon toggle */}
+          <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 6, padding: 2 }}>
+            {HORIZON_OPTIONS.map((opt) => (
+              <button
+                key={opt.label}
+                onClick={() => setHorizon(opt.months)}
+                style={{
+                  padding: "4px 10px",
+                  fontSize: 11,
+                  fontFamily: C.mono,
+                  background: horizon === opt.months ? C.gold : "transparent",
+                  color: horizon === opt.months ? C.bg : C.textDim,
+                  border: "none",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  fontWeight: horizon === opt.months ? 700 : 400,
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            style={{
+              padding: "4px 10px",
+              fontSize: 11,
+              fontFamily: C.mono,
+              background: showSettings ? C.cardHov : C.card,
+              color: C.textDim,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            Settings
+          </button>
+        </div>
+      </div>
+
+      {/* Settings panel */}
+      {showSettings && (
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 20 }}>
+            <div>
+              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>EQUITY RETURN (ANNUAL)</div>
+              <input type="range" min="0" max="20" step="0.5" value={assumptions.equityReturnAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, equityReturnAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
+              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.equityReturnAnnual * 100).toFixed(1)}%</div>
+            </div>
+            <div>
+              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>EQUITY VOLATILITY</div>
+              <input type="range" min="5" max="40" step="0.5" value={assumptions.equityVolAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, equityVolAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
+              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.equityVolAnnual * 100).toFixed(1)}%</div>
+            </div>
+            <div>
+              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>CRYPTO RETURN (ANNUAL)</div>
+              <input type="range" min="0" max="50" step="1" value={assumptions.cryptoReturnAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, cryptoReturnAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
+              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.cryptoReturnAnnual * 100).toFixed(0)}%</div>
+            </div>
+            <div>
+              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>CRYPTO VOLATILITY</div>
+              <input type="range" min="10" max="80" step="1" value={assumptions.cryptoVolAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, cryptoVolAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
+              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.cryptoVolAnnual * 100).toFixed(0)}%</div>
+            </div>
+            <div>
+              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>SALARY GROWTH (ANNUAL)</div>
+              <input type="range" min="0" max="10" step="0.5" value={assumptions.salaryGrowthAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, salaryGrowthAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
+              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.salaryGrowthAnnual * 100).toFixed(1)}%</div>
+            </div>
+            <div>
+              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>EXPENSE INFLATION</div>
+              <input type="range" min="0" max="10" step="0.5" value={assumptions.expenseInflationAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, expenseInflationAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
+              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.expenseInflationAnnual * 100).toFixed(1)}%</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 12, textAlign: "right" }}>
+            <button
+              onClick={() => setAssumptions(DEFAULT_ASSUMPTIONS)}
+              style={{ padding: "4px 12px", fontSize: 11, fontFamily: C.mono, background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 4, cursor: "pointer" }}
+            >
+              Reset Defaults
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Chart */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: isMobile ? "12px 4px" : "20px 20px 20px 0" }}>
+        <ResponsiveContainer width="100%" height={isMobile ? 300 : 400}>
+          <AreaChart data={chartData} margin={{ top: 10, right: 20, left: isMobile ? 10 : 20, bottom: 10 }}>
+            <defs>
+              <linearGradient id="bandOuter" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={C.gold} stopOpacity={0.08} />
+                <stop offset="100%" stopColor={C.gold} stopOpacity={0.02} />
+              </linearGradient>
+              <linearGradient id="bandInner" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={C.gold} stopOpacity={0.15} />
+                <stop offset="100%" stopColor={C.gold} stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey="label"
+              tick={{ fill: C.textDim, fontSize: 10, fontFamily: "JetBrains Mono, monospace" }}
+              tickLine={false}
+              axisLine={{ stroke: C.border }}
+              interval={Math.max(1, Math.floor(chartData.length / (isMobile ? 4 : 8)))}
+            />
+            <YAxis
+              tickFormatter={formatYAxis}
+              tick={{ fill: C.textDim, fontSize: 10, fontFamily: "JetBrains Mono, monospace" }}
+              tickLine={false}
+              axisLine={false}
+              width={isMobile ? 45 : 65}
+            />
+            <Tooltip content={<CustomTooltip />} />
+            {/* P10-P90 band */}
+            <Area type="monotone" dataKey="p90" stroke="none" fill="none" />
+            <Area type="monotone" dataKey="p10" stroke="none" fill="url(#bandOuter)" fillOpacity={1}
+              stackId="outer" />
+            <Area type="monotone" dataKey="p90" stroke="none" fill="url(#bandOuter)" fillOpacity={1} />
+            {/* P25-P75 band */}
+            <Area type="monotone" dataKey="p75" stroke="none" fill="none" />
+            <Area type="monotone" dataKey="p25" stroke="none" fill="url(#bandInner)" fillOpacity={1} />
+            <Area type="monotone" dataKey="p75" stroke="none" fill="url(#bandInner)" fillOpacity={1} />
+            {/* P50 median line */}
+            <Area
+              type="monotone"
+              dataKey="p50"
+              stroke={C.gold}
+              strokeWidth={2}
+              fill="none"
+              dot={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+
+        {/* Legend */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 20, height: 2, background: C.gold }} />
+            <span style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono }}>Median (P50)</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 20, height: 10, background: `${C.gold}25`, borderRadius: 2 }} />
+            <span style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono }}>P25-P75</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 20, height: 10, background: `${C.gold}10`, borderRadius: 2 }} />
+            <span style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono }}>P10-P90</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Milestones */}
+      {milestones.length > 0 && (
+        <div style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {milestones.map((m) => (
+            <div key={m.value} style={{
+              background: C.card,
+              border: `1px solid ${C.gold}30`,
+              borderRadius: 6,
+              padding: "8px 14px",
+              textAlign: "center",
+            }}>
+              <div style={{ color: C.gold, fontSize: 16, fontWeight: 700, fontFamily: C.mono }}>{m.label}</div>
+              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono }}>{m.date}</div>
+              <div style={{ color: C.textFaint, fontSize: 9, fontFamily: C.mono }}>~{m.month} months</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Assumptions summary */}
+      <div style={{ marginTop: 16, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
+        <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Assumptions</div>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 8 }}>
+          {[
+            { l: "Equity Return", v: `${(assumptions.equityReturnAnnual * 100).toFixed(1)}%/yr` },
+            { l: "Equity Vol", v: `${(assumptions.equityVolAnnual * 100).toFixed(1)}%` },
+            { l: "Crypto Return", v: `${(assumptions.cryptoReturnAnnual * 100).toFixed(0)}%/yr` },
+            { l: "Crypto Vol", v: `${(assumptions.cryptoVolAnnual * 100).toFixed(0)}%` },
+            { l: "Salary Growth", v: `${(assumptions.salaryGrowthAnnual * 100).toFixed(1)}%/yr` },
+            { l: "Expense Inflation", v: `${(assumptions.expenseInflationAnnual * 100).toFixed(1)}%/yr` },
+            { l: "Monthly Expenses", v: formatCurrency(monthlyExpenses) },
+            { l: "Simulations", v: "1,000" },
+          ].map((item) => (
+            <div key={item.l}>
+              <div style={{ color: C.textFaint, fontSize: 9, fontFamily: C.mono }}>{item.l}</div>
+              <div style={{ color: C.text, fontSize: 11, fontFamily: C.mono }}>{item.v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN PAGE COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1390,6 +1846,7 @@ export default function FinancePage() {
     : [];
 
   const { quotes, loading: quotesLoading, error: quotesError, fetchedAt, marketState, refetch: refetchQuotes } = useStockQuotes(symbols);
+  const { historical: historicalData } = useHistoricalQuotes(symbols);
 
   useEffect(() => {
     async function fetchData() {
@@ -1528,6 +1985,9 @@ export default function FinancePage() {
           </div>
         </div>
 
+        {/* Net Worth Forecast */}
+        <ForecastSection data={data} />
+
         {/* Live Holdings */}
         <LiveHoldingsSection
           data={data}
@@ -1537,6 +1997,7 @@ export default function FinancePage() {
           fetchedAt={fetchedAt}
           marketState={marketState}
           onRefresh={refetchQuotes}
+          historicalData={historicalData}
         />
 
         {/* Raise Adjuster */}

@@ -212,6 +212,48 @@ export interface DebtPayoffProjection {
   payoffDate: string;
 }
 
+// ── Performance metrics ────────────────────────────────────
+
+export interface HoldingPerformance {
+  symbol: string;
+  dailyChange: number;
+  dailyChangePct: number;
+  weekChange: number;
+  weekChangePct: number;
+  monthChange: number;
+  monthChangePct: number;
+  ytdChange: number;
+  ytdChangePct: number;
+  yearChange: number;
+  yearChangePct: number;
+  totalReturn: number;
+  totalReturnPct: number;
+}
+
+export interface PortfolioPerformance {
+  dailyChange: number;
+  dailyChangePct: number;
+  weekChange: number;
+  weekChangePct: number;
+  monthChange: number;
+  monthChangePct: number;
+  ytdChange: number;
+  ytdChangePct: number;
+  yearChange: number;
+  yearChangePct: number;
+  totalReturn: number;
+  totalReturnPct: number;
+}
+
+export interface HistoricalPrices {
+  symbol: string;
+  price1dAgo: number | null;
+  price1wAgo: number | null;
+  price1mAgo: number | null;
+  priceYtdStart: number | null;
+  price1yAgo: number | null;
+}
+
 export interface FinancialDashboardData {
   accounts: FinancialAccount[];
   holdings: FinancialHolding[];
