@@ -10,6 +10,7 @@ import { MODELS, PROVIDERS } from "@/lib/ai/registry";
 import { CaptureBar } from "@/components/capture-bar";
 import { PlannerCard } from "@/components/planner-card";
 import { AgentTerminal } from "@/components/agent-terminal";
+import { useMobile } from "@/lib/useMobile";
 
 const LOCAL_AUTH_KEY = "ruhrohhalp.local-auth";
 const LOCAL_ITEMS_KEY = "ruhrohhalp.local-items";
@@ -63,6 +64,7 @@ type ViewMode = "list" | "kanban";
 
 export default function TasksPage() {
   const supabase = useMemo(() => createSupabaseClient(), []);
+  const isMobile = useMobile();
 
   const [localMode, setLocalMode] = useState(false);
   const [localEmail, setLocalEmail] = useState("");
@@ -268,13 +270,28 @@ export default function TasksPage() {
   const openCount = items.filter((i) => i.status === "open").length;
   const doneCount = items.filter((i) => i.status === "done").length;
 
+  // On mobile, agent terminal is full-screen overlay
+  if (isMobile && activeAgent) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <AgentTerminal
+          item={activeAgent}
+          allItems={items}
+          allowedModels={allowedModels}
+          onClose={() => setActiveAgent(null)}
+          onModelChange={changeModel}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
+    <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden", flexDirection: isMobile ? "column" : "row" }}>
       <div
         style={{
           display: "flex",
           flexDirection: "column",
-          flex: activeAgent ? "0 0 52%" : "1",
+          flex: !isMobile && activeAgent ? "0 0 52%" : "1",
           minWidth: 0,
           overflow: "hidden",
         }}
@@ -282,7 +299,7 @@ export default function TasksPage() {
         {/* Header */}
         <div
           style={{
-            padding: "16px 22px 12px",
+            padding: isMobile ? "14px 14px 10px" : "16px 22px 12px",
             borderBottom: `1px solid ${C.border}`,
             display: "flex",
             justifyContent: "space-between",
@@ -290,7 +307,7 @@ export default function TasksPage() {
           }}
         >
           <div>
-            <div style={{ fontFamily: C.serif, fontSize: 22, fontStyle: "italic", color: C.cream }}>
+            <div style={{ fontFamily: C.serif, fontSize: isMobile ? 20 : 22, fontStyle: "italic", color: C.cream }}>
               Tasks
             </div>
             <div style={{ fontSize: 10, fontFamily: C.mono, color: C.textFaint, marginTop: 2 }}>
@@ -299,38 +316,40 @@ export default function TasksPage() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {/* View switcher */}
-            <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 6, padding: 2 }}>
-              {(["list", "kanban"] as const).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  style={{
-                    padding: "4px 10px",
-                    borderRadius: 4,
-                    border: "none",
-                    background: view === v ? C.card : "transparent",
-                    color: view === v ? C.cream : C.textFaint,
-                    fontFamily: C.mono,
-                    fontSize: 10,
-                    cursor: "pointer",
-                  }}
-                >
-                  {v === "list" ? "☰ List" : "▦ Kanban"}
-                </button>
-              ))}
-            </div>
+            {/* View switcher - hide kanban on mobile (too wide) */}
+            {!isMobile && (
+              <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 6, padding: 2 }}>
+                {(["list", "kanban"] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setView(v)}
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 4,
+                      border: "none",
+                      background: view === v ? C.card : "transparent",
+                      color: view === v ? C.cream : C.textFaint,
+                      fontFamily: C.mono,
+                      fontSize: 10,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {v === "list" ? "☰ List" : "▦ Kanban"}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
         {/* Capture bar */}
-        <div style={{ padding: "14px 18px 10px", flexShrink: 0 }}>
+        <div style={{ padding: isMobile ? "10px 14px 8px" : "14px 18px 10px", flexShrink: 0 }}>
           <CaptureBar onCapture={handleCapture} processing={processing} />
         </div>
 
-        {/* Open / Done Tabs */}
-        <div style={{ padding: "0 18px 10px", flexShrink: 0 }}>
-          <div style={{ display: "flex", gap: 4, marginBottom: 5 }}>
+        {/* Open / Done Tabs + AI filters */}
+        <div style={{ padding: isMobile ? "0 14px 8px" : "0 18px 10px", flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 4, marginBottom: 5, flexWrap: isMobile ? "wrap" : undefined }}>
             {([
               { id: "open" as const, label: "Open", count: openCount },
               { id: "done" as const, label: "Done", count: doneCount },
@@ -357,8 +376,8 @@ export default function TasksPage() {
                 <span style={{ fontSize: 9, opacity: 0.7 }}>{tab.count}</span>
               </button>
             ))}
-            <div style={{ flex: 1 }} />
-            <div style={{ display: "flex", gap: 4 }}>
+            {!isMobile && <div style={{ flex: 1 }} />}
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <button
                 onClick={() => setAiFilter("all")}
                 style={{
@@ -387,7 +406,7 @@ export default function TasksPage() {
                     cursor: "pointer",
                   }}
                 >
-                  {p.icon} {p.name}
+                  {isMobile ? p.icon : `${p.icon} ${p.name}`}
                 </button>
               ))}
             </div>
@@ -399,10 +418,10 @@ export default function TasksPage() {
           style={{
             flex: 1,
             overflowY: "auto",
-            padding: "0 18px 20px",
+            padding: isMobile ? "0 14px 16px" : "0 18px 20px",
             display: "flex",
-            flexDirection: view === "kanban" ? "row" : "column",
-            gap: view === "kanban" ? 12 : 7,
+            flexDirection: (view === "kanban" && !isMobile) ? "row" : "column",
+            gap: (view === "kanban" && !isMobile) ? 12 : 7,
           }}
         >
           {view === "list" ? (
