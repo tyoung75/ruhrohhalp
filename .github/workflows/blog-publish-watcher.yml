@@ -14,7 +14,7 @@ jobs:
       - name: Trigger publish watcher
         run: |
           response=$(curl -s -w "\n%{http_code}" -X POST \
-            "${{ secrets.RUHROHHALP_URL }}/api/jobs/blog-publish-check" \
+            "https://www.ruhrohhalp.com/api/jobs/blog-publish-check" \
             -H "Content-Type: application/json" \
             -H "x-webhook-secret: ${{ secrets.RUHROHHALP_SECRET }}" \
             --max-time 180)
