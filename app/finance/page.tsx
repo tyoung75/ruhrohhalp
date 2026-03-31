@@ -193,6 +193,7 @@ function NetWorthBanner({
 }: {
   data: FinancialDashboardData;
 }) {
+  const isMobile = useMobile();
   const { summary } = data;
 
   return (
@@ -349,6 +350,7 @@ function RaiseAdjusterSection({
   setNewSalary: (n: number) => void;
   raiseImpact: RaiseImpact | null;
 }) {
+  const isMobile = useMobile();
   const currentSalary = parseInt(data.config?.annual_salary ?? "247800", 10);
   const previousSalary = data.config?.previous_salary ? parseInt(data.config.previous_salary, 10) : null;
   const raiseEffectiveDate = data.config?.raise_effective_date ?? null;
@@ -640,6 +642,7 @@ function RaiseAdjusterSection({
 }
 
 function DebtsSection({ data }: { data: FinancialDashboardData }) {
+  const isMobile = useMobile();
   const activeDebts = data.debts.filter((d) => d.status === "active");
 
   if (activeDebts.length === 0) {
@@ -729,6 +732,7 @@ function DebtsSection({ data }: { data: FinancialDashboardData }) {
 }
 
 function ContributionsSection({ data, currentSalary }: { data: FinancialDashboardData; currentSalary: number }) {
+  const isMobile = useMobile();
   const { resolved } = resolveAllContributions(data.contributions, currentSalary);
 
   if (resolved.length === 0) {
@@ -946,6 +950,7 @@ function RSUVestingSection({ data }: { data: FinancialDashboardData }) {
 }
 
 function CashFlowSection({ data }: { data: FinancialDashboardData }) {
+  const isMobile = useMobile();
   const cf = data.cashFlow;
 
   const waterfallItems = [
