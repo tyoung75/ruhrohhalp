@@ -63,6 +63,8 @@ const PLATFORMS: Omit<PlatformConnection, "connected" | "username">[] = [
   },
 ];
 
+const GMAIL_TOKEN_SCOPES = ["gmail.compose", "gmail.readonly"];
+
 export default function IntegrationsPage() {
   const [connections, setConnections] = useState<Record<string, { connected: boolean; username?: string }>>({});
   const [loading, setLoading] = useState(true);
@@ -274,6 +276,126 @@ export default function IntegrationsPage() {
             </div>
           );
         })}
+      </div>
+
+      <div style={{ marginTop: 28, marginBottom: 10 }}>
+        <div
+          style={{
+            fontFamily: C.serif,
+            fontSize: 18,
+            fontStyle: "italic",
+            color: C.cream,
+          }}
+        >
+          Workflow Utilities
+        </div>
+        <div
+          style={{
+            fontFamily: C.mono,
+            fontSize: 10,
+            color: C.textFaint,
+            marginTop: 4,
+          }}
+        >
+          One-off tokens and setup helpers for internal automation.
+        </div>
+      </div>
+
+      <div
+        style={{
+          background: C.card,
+          border: `1px solid ${C.border}`,
+          borderRadius: 10,
+          padding: "16px 18px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 20,
+              color: "#34A853",
+              width: 32,
+              textAlign: "center",
+            }}
+          >
+            ✉
+          </span>
+
+          <div style={{ flex: 1 }}>
+            <div
+              style={{
+                fontFamily: C.sans,
+                fontSize: 14,
+                color: C.cream,
+                fontWeight: 500,
+              }}
+            >
+              Gmail Draft Token
+            </div>
+            <div
+              style={{
+                fontFamily: C.sans,
+                fontSize: 11,
+                color: C.textDim,
+                marginTop: 3,
+                lineHeight: 1.5,
+              }}
+            >
+              Generate a Google refresh token for weekly dev-log Gmail drafts. The callback shows the token once so
+              you can copy it into Vercel as <code style={{ color: C.cream }}>GOOGLE_REFRESH_TOKEN</code>.
+            </div>
+          </div>
+
+          <a
+            href="/api/auth/gmail"
+            style={{
+              fontFamily: C.mono,
+              fontSize: 10,
+              padding: "5px 14px",
+              borderRadius: 6,
+              background: "#34A85318",
+              color: "#34A853",
+              border: "1px solid rgba(52,168,83,0.3)",
+              textDecoration: "none",
+              cursor: "pointer",
+            }}
+          >
+            Generate Token →
+          </a>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            marginTop: 10,
+            paddingLeft: 44,
+            flexWrap: "wrap",
+          }}
+        >
+          {GMAIL_TOKEN_SCOPES.map((scope) => (
+            <span
+              key={scope}
+              style={{
+                fontFamily: C.mono,
+                fontSize: 9,
+                padding: "2px 7px",
+                borderRadius: 3,
+                background: C.surface,
+                color: C.textFaint,
+                border: `1px solid ${C.border}`,
+              }}
+            >
+              {scope}
+            </span>
+          ))}
+        </div>
       </div>
 
       {loading && (
