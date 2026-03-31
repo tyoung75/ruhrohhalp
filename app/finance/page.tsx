@@ -18,6 +18,7 @@ import type {
   FinancialHolding,
 } from "@/lib/types/finance";
 import { Spinner } from "@/components/primitives";
+import { useMobile } from "@/lib/useMobile";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS & HELPERS
@@ -220,7 +221,7 @@ function NetWorthBanner({
         {formatCurrency(summary.netWorth)}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 12 : 24 }}>
         <div>
           <div style={{ color: C.textDim, fontSize: 12, fontFamily: C.sans, marginBottom: 4 }}>
             Tyler Total
@@ -400,7 +401,7 @@ function RaiseAdjusterSection({
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, marginBottom: 32 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 16 : 32, marginBottom: isMobile ? 20 : 32 }}>
           <div>
             <label style={{ color: C.text, fontSize: 13, fontFamily: C.sans, display: "block", marginBottom: 8 }}>
               Current Annual Salary
@@ -453,7 +454,7 @@ function RaiseAdjusterSection({
               Impact
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 10 : 20, marginBottom: 24 }}>
               <div>
                 <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>
                   BIWEEKLY GROSS
@@ -522,7 +523,7 @@ function RaiseAdjusterSection({
               >
                 Monthly Surplus Change
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 10 : 20 }}>
                 <div>
                   <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>
                     CURRENT
@@ -570,7 +571,7 @@ function RaiseAdjusterSection({
               >
                 401k Impact (Annual)
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 10 : 20 }}>
                 <div>
                   <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>
                     CURRENT TOTAL
@@ -604,7 +605,7 @@ function RaiseAdjusterSection({
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 10 : 20, marginTop: 16 }}>
                 <div>
                   <div style={{ color: C.textDim, fontSize: 11, fontFamily: C.mono, marginBottom: 4 }}>
                     CURRENT EMPLOYER MATCH
@@ -655,7 +656,7 @@ function DebtsSection({ data }: { data: FinancialDashboardData }) {
   return (
     <div>
       <SectionTitle>Debts</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(300px, 1fr))", gap: isMobile ? 12 : 16 }}>
         {activeDebts.map((debt) => {
           const projection = projectDebtPayoff(debt, debt.minPayment);
           const debtColor = DEBT_TYPE_COLORS[debt.debtType] || C.textDim;
@@ -681,7 +682,7 @@ function DebtsSection({ data }: { data: FinancialDashboardData }) {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 }}>
                 <div>
                   <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 2 }}>
                     APR
@@ -777,8 +778,8 @@ function ContributionsSection({ data, currentSalary }: { data: FinancialDashboar
                 padding: 12,
                 marginBottom: 8,
                 display: "grid",
-                gridTemplateColumns: "1fr auto auto auto auto",
-                gap: 16,
+                gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr auto auto auto auto",
+                gap: isMobile ? 8 : 16,
                 alignItems: "center",
               }}
             >
@@ -968,7 +969,7 @@ function CashFlowSection({ data }: { data: FinancialDashboardData }) {
           padding: 24,
         }}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, marginBottom: 32 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 16 : 32, marginBottom: isMobile ? 20 : 32 }}>
           <div>
             <div style={{ color: C.textDim, fontSize: 12, fontFamily: C.sans, marginBottom: 8 }}>
               Monthly Gross Income
@@ -1032,6 +1033,7 @@ function CashFlowSection({ data }: { data: FinancialDashboardData }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function FinancePage() {
+  const isMobile = useMobile();
   const [data, setData] = useState<FinancialDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [newSalary, setNewSalary] = useState(0);
@@ -1089,14 +1091,14 @@ export default function FinancePage() {
   }
 
   return (
-    <div style={{ background: C.bg, minHeight: "100vh", padding: "40px 60px", fontFamily: C.sans }}>
+    <div style={{ background: C.bg, minHeight: "100vh", padding: isMobile ? "20px 14px" : "40px 60px", fontFamily: C.sans }}>
       <div style={{ maxWidth: 1400, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "flex-start", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 8 : 0 }}>
           <div>
             <h1
               style={{
                 fontFamily: C.serif,
-                fontSize: 44,
+                fontSize: isMobile ? 28 : 44,
                 fontWeight: 600,
                 color: C.cream,
                 marginBottom: 8,
@@ -1168,7 +1170,7 @@ export default function FinancePage() {
         <NetWorthBanner data={data} />
 
         {/* Two-Column Accounts Layout */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40, marginBottom: 40 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 16 : 40, marginBottom: isMobile ? 20 : 40 }}>
           <AccountsSection data={data} owner="tyler" title="Tyler's Accounts" />
           <div>
             <AccountsSection data={data} owner="spouse" title="Wife's Accounts" />

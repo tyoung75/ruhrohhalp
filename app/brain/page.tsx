@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
+import { useMobile } from "@/lib/useMobile";
 // Spinner available if needed for future loading states
 import { CeoMode } from "@/components/brain/CeoMode";
 import { BrainDumpModal } from "@/components/brain-dump-modal";
@@ -62,6 +63,7 @@ function similarityColor(sim: number): string {
 }
 
 export default function BrainPage() {
+  const isMobile = useMobile();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -140,14 +142,16 @@ export default function BrainPage() {
       )}
 
       {/* Header */}
-      <div style={{ padding: "16px 22px", borderBottom: `1px solid ${C.border}`, flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-        <div>
-          <div style={{ fontFamily: C.serif, fontSize: 22, fontStyle: "italic", color: C.cream }}>
+      <div style={{ padding: isMobile ? "12px 14px" : "16px 22px", borderBottom: `1px solid ${C.border}`, flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: isMobile ? "center" : "flex-end", gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: C.serif, fontSize: isMobile ? 18 : 22, fontStyle: "italic", color: C.cream }}>
             Brain Search
           </div>
-          <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
-            Ask anything — answers grounded in your memories, decisions, and context
-          </div>
+          {!isMobile && (
+            <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
+              Ask anything — answers grounded in your memories, decisions, and context
+            </div>
+          )}
         </div>
         <button
           onClick={() => setShowBrainDump(true)}
@@ -155,13 +159,14 @@ export default function BrainPage() {
             background: `${C.cl}14`,
             border: `1px solid ${C.cl}30`,
             borderRadius: 8,
-            padding: "7px 14px",
+            padding: isMobile ? "6px 10px" : "7px 14px",
             color: C.cl,
             fontFamily: C.sans,
-            fontSize: 12,
+            fontSize: isMobile ? 11 : 12,
             fontWeight: 500,
             cursor: "pointer",
             whiteSpace: "nowrap",
+            flexShrink: 0,
           }}
         >
           Brain Dump
@@ -169,7 +174,7 @@ export default function BrainPage() {
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 22px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "14px" : "20px 22px" }}>
         {isEmpty ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", maxWidth: 520, margin: "0 auto" }}>
             <div style={{ fontSize: 40, marginBottom: 16, opacity: 0.3 }}>◇</div>
@@ -181,7 +186,7 @@ export default function BrainPage() {
             </div>
 
             {/* Suggested questions */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%" }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8, width: "100%" }}>
               {SUGGESTED.map((q) => (
                 <button
                   key={q}
@@ -419,7 +424,7 @@ export default function BrainPage() {
       </div>
 
       {/* Input area */}
-      <div style={{ padding: "12px 22px 20px", borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
+      <div style={{ padding: isMobile ? "10px 14px 16px" : "12px 22px 20px", borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
         <div style={{ maxWidth: 680, margin: "0 auto" }}>
           <div
             style={{
@@ -446,7 +451,7 @@ export default function BrainPage() {
                 outline: "none",
                 color: C.text,
                 fontFamily: C.sans,
-                fontSize: 13,
+                fontSize: 16, // 16px prevents iOS auto-zoom on focus
                 padding: "12px 14px",
                 resize: "none",
                 minHeight: 42,

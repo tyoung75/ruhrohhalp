@@ -118,13 +118,12 @@ export function calculateNetWorth(
     else if (a.owner === "joint") jointAssets += bal;
   }
 
-  // Add pending RSU value
-  const pendingRSU = rsuVests
-    .filter((v) => v.status === "pending")
+  // Only count vested RSUs toward net worth — unvested shares are not yet owned
+  const vestedRSU = rsuVests
+    .filter((v) => v.status === "vested")
     .reduce((sum, v) => sum + Number(v.estimatedValue ?? 0), 0);
-  equityAwards += pendingRSU;
-  // RSU owner attribution
-  for (const v of rsuVests.filter((v) => v.status === "pending")) {
+  equityAwards += vestedRSU;
+  for (const v of rsuVests.filter((v) => v.status === "vested")) {
     const val = Number(v.estimatedValue ?? 0);
     if (v.owner === "tyler") tylerAssets += val;
     else if (v.owner === "spouse") spouseAssets += val;
@@ -145,9 +144,9 @@ export function calculateNetWorth(
   }
 
   return {
-    totalAssets: totalAssets + pendingRSU,
+    totalAssets: totalAssets + vestedRSU,
     totalLiabilities: totalDebt,
-    netWorth: totalAssets + pendingRSU - totalDebt,
+    netWorth: totalAssets + vestedRSU - totalDebt,
     cashPosition,
     investedAssets,
     retirementAssets,

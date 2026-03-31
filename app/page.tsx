@@ -34,6 +34,7 @@
 import { useState, useEffect } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
+import { useMobile } from "@/lib/useMobile";
 import { CommandBar } from "@/components/command-bar";
 import { AgentStatus } from "@/components/agent-status";
 import { PillarHealth } from "@/components/pillar-health";
@@ -52,6 +53,7 @@ function healthNumberToEnum(health: number): "strong" | "stable" | "at_risk" | "
 }
 
 export default function CommandConsolePage() {
+  const isMobile = useMobile();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pillars, setPillars] = useState<any[]>([]);
   const [pillarsLoading, setPillarsLoading] = useState(true);
@@ -59,6 +61,7 @@ export default function CommandConsolePage() {
   const [centerTab, setCenterTab] = useState<"focus" | "briefing">("focus");
   const [processing, setProcessing] = useState(false);
   const [processResult, setProcessResult] = useState<{ count: number; message: string } | null>(null);
+  const [mobileSection, setMobileSection] = useState<"focus" | "pillars" | "signals">("focus");
 
   async function handleCapture(input: string) {
     setProcessing(true);
@@ -121,155 +124,202 @@ export default function CommandConsolePage() {
         <CommandBar />
       </div>
 
-      {/* Main content — three columns */}
+      {/* Mobile section switcher */}
+      {isMobile && (
+        <div
+          style={{
+            display: "flex",
+            borderBottom: `1px solid ${C.border}`,
+            flexShrink: 0,
+            overflowX: "auto",
+          }}
+        >
+          {([
+            { id: "focus" as const, label: "Focus" },
+            { id: "pillars" as const, label: "Pillars" },
+            { id: "signals" as const, label: "Signals" },
+          ]).map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setMobileSection(s.id)}
+              style={{
+                flex: 1,
+                padding: "10px 8px",
+                background: "none",
+                border: "none",
+                borderBottom: mobileSection === s.id ? `2px solid ${C.cl}` : "2px solid transparent",
+                color: mobileSection === s.id ? C.cream : C.textDim,
+                fontFamily: C.mono,
+                fontSize: 11,
+                fontWeight: mobileSection === s.id ? 600 : 400,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Main content */}
       <div
         style={{
           display: "flex",
           flex: 1,
           minHeight: 0,
           background: C.bg,
+          flexDirection: isMobile ? "column" : "row",
+          overflow: isMobile ? "auto" : undefined,
         }}
       >
-        {/* Left: Pillar Health (220px fixed) */}
-        <div
-          style={{
-            width: 220,
-            flexShrink: 0,
-            overflowY: "auto",
-            borderRight: `1px solid ${C.border}`,
-            background: C.surface,
-          }}
-        >
-          <PillarHealth pillars={pillars} loading={pillarsLoading} />
-        </div>
-
-        {/* Center: Tabbed panel (flex, takes remaining space) */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            borderRight: `1px solid ${C.border}`,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {/* Tab bar + Brain Dump button */}
+        {/* Left: Pillar Health */}
+        {(!isMobile || mobileSection === "pillars") && (
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              borderBottom: `1px solid ${C.border}`,
-              padding: "0 28px",
-              flexShrink: 0,
+              width: isMobile ? "100%" : 220,
+              flexShrink: isMobile ? undefined : 0,
+              overflowY: isMobile ? undefined : "auto",
+              borderRight: isMobile ? undefined : `1px solid ${C.border}`,
+              background: C.surface,
             }}
           >
-            {(["focus", "briefing"] as const).map((tab) => (
+            <PillarHealth pillars={pillars} loading={pillarsLoading} />
+          </div>
+        )}
+
+        {/* Center: Tabbed panel (Focus / Briefing) */}
+        {(!isMobile || mobileSection === "focus") && (
+          <div
+            style={{
+              flex: isMobile ? undefined : 1,
+              overflowY: isMobile ? undefined : "auto",
+              borderRight: isMobile ? undefined : `1px solid ${C.border}`,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {/* Tab bar + Brain Dump button */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                borderBottom: `1px solid ${C.border}`,
+                padding: isMobile ? "0 14px" : "0 28px",
+                flexShrink: 0,
+                gap: isMobile ? 4 : 0,
+              }}
+            >
+              {(["focus", "briefing"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setCenterTab(tab)}
+                  style={{
+                    padding: isMobile ? "10px 12px" : "10px 16px",
+                    background: "none",
+                    border: "none",
+                    borderBottom: centerTab === tab ? `2px solid ${C.cl}` : "2px solid transparent",
+                    color: centerTab === tab ? C.cream : C.textDim,
+                    fontFamily: C.mono,
+                    fontSize: 11,
+                    fontWeight: centerTab === tab ? 600 : 400,
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {tab === "focus" ? "Today's Focus" : "Briefing"}
+                </button>
+              ))}
+              <div style={{ flex: 1 }} />
               <button
-                key={tab}
-                onClick={() => setCenterTab(tab)}
+                onClick={() => setShowBrainDump(true)}
                 style={{
-                  padding: "10px 16px",
-                  background: "none",
-                  border: "none",
-                  borderBottom: centerTab === tab ? `2px solid ${C.cl}` : "2px solid transparent",
-                  color: centerTab === tab ? C.cream : C.textDim,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 12px",
+                  background: `${C.cl}14`,
+                  border: `1px solid ${C.cl}30`,
+                  borderRadius: 6,
+                  color: C.cl,
                   fontFamily: C.mono,
-                  fontSize: 11,
-                  fontWeight: centerTab === tab ? 600 : 400,
+                  fontSize: 10,
                   cursor: "pointer",
                   transition: "all 0.15s",
                 }}
               >
-                {tab === "focus" ? "Today's Focus" : "Briefing"}
+                ◈ Brain Dump
               </button>
-            ))}
-            <div style={{ flex: 1 }} />
-            <button
-              onClick={() => setShowBrainDump(true)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "6px 12px",
-                background: `${C.cl}14`,
-                border: `1px solid ${C.cl}30`,
-                borderRadius: 6,
-                color: C.cl,
-                fontFamily: C.mono,
-                fontSize: 10,
-                cursor: "pointer",
-                transition: "all 0.15s",
-              }}
-            >
-              ◈ Brain Dump
-            </button>
-          </div>
+            </div>
 
-          {/* Quick Capture */}
-          <div style={{ padding: "16px 28px 0", maxWidth: 720 }}>
-            <CaptureBar onCapture={handleCapture} processing={processing} />
-            {processResult && (
-              <div
-                style={{
-                  marginTop: 8,
-                  padding: "8px 12px",
-                  borderRadius: 6,
-                  background: processResult.count > 0 ? `${C.gpt}14` : `${C.reminder}14`,
-                  border: `1px solid ${processResult.count > 0 ? `${C.gpt}30` : `${C.reminder}30`}`,
-                  color: processResult.count > 0 ? C.gpt : C.reminder,
-                  fontFamily: C.mono,
-                  fontSize: 11,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <span>{processResult.message}</span>
-                <button
-                  onClick={() => setProcessResult(null)}
-                  style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 14, padding: "0 4px" }}
+            {/* Quick Capture */}
+            <div style={{ padding: isMobile ? "12px 14px 0" : "16px 28px 0", maxWidth: isMobile ? undefined : 720 }}>
+              <CaptureBar onCapture={handleCapture} processing={processing} />
+              {processResult && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    background: processResult.count > 0 ? `${C.gpt}14` : `${C.reminder}14`,
+                    border: `1px solid ${processResult.count > 0 ? `${C.gpt}30` : `${C.reminder}30`}`,
+                    color: processResult.count > 0 ? C.gpt : C.reminder,
+                    fontFamily: C.mono,
+                    fontSize: 11,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
                 >
-                  ✕
-                </button>
-              </div>
-            )}
-            {processing && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: C.textDim, fontFamily: C.mono, fontSize: 11 }}>
-                <Spinner size={12} /> Processing your input into tasks...
-              </div>
-            )}
-          </div>
+                  <span>{processResult.message}</span>
+                  <button
+                    onClick={() => setProcessResult(null)}
+                    style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 14, padding: "0 4px" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+              {processing && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: C.textDim, fontFamily: C.mono, fontSize: 11 }}>
+                  <Spinner size={12} /> Processing your input into tasks...
+                </div>
+              )}
+            </div>
 
-          {/* Tab content */}
-          <div style={{ flex: 1, overflowY: "auto" }}>
-            {centerTab === "focus" ? (
-              <div style={{ padding: "24px 28px", maxWidth: 720 }}>
-                <TodaysFocus />
-              </div>
-            ) : (
-              <div style={{ padding: "24px 28px", maxWidth: 720, display: "flex", flexDirection: "column", minHeight: "100%" }}>
-                <BriefingView />
-              </div>
-            )}
+            {/* Tab content */}
+            <div style={{ flex: 1, overflowY: isMobile ? undefined : "auto" }}>
+              {centerTab === "focus" ? (
+                <div style={{ padding: isMobile ? "16px 14px" : "24px 28px", maxWidth: isMobile ? undefined : 720 }}>
+                  <TodaysFocus />
+                </div>
+              ) : (
+                <div style={{ padding: isMobile ? "16px 14px" : "24px 28px", maxWidth: isMobile ? undefined : 720, display: "flex", flexDirection: "column", minHeight: "100%" }}>
+                  <BriefingView />
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Brain Dump Modal */}
         <BrainDumpModal open={showBrainDump} onClose={() => setShowBrainDump(false)} />
 
-        {/* Right: Signals & Insights (300px fixed) */}
-        <div
-          style={{
-            width: 300,
-            flexShrink: 0,
-            overflowY: "auto",
-            background: C.surface,
-          }}
-        >
-          <div style={{ padding: "16px 14px" }}>
-            <SignalsPanel />
+        {/* Right: Signals & Insights */}
+        {(!isMobile || mobileSection === "signals") && (
+          <div
+            style={{
+              width: isMobile ? "100%" : 300,
+              flexShrink: isMobile ? undefined : 0,
+              overflowY: isMobile ? undefined : "auto",
+              background: C.surface,
+            }}
+          >
+            <div style={{ padding: isMobile ? "14px" : "16px 14px" }}>
+              <SignalsPanel />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Agent Status — persistent at bottom */}

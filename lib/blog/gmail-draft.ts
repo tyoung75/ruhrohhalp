@@ -66,7 +66,7 @@ export async function checkSentDraft(draftId: string) {
 
   const full = await gmail.users.messages.get({ userId: "me", id: message.id, format: "full" });
   const payload = full.data.payload;
-  const textPart = payload?.parts?.find((p: { mimeType?: string }) => p.mimeType === "text/plain") ?? payload;
+  const textPart = payload?.parts?.find((p: Record<string, unknown>) => p.mimeType === "text/plain") ?? payload;
   const edited = textPart?.body?.data ? Buffer.from(textPart.body.data, "base64").toString("utf8") : "";
 
   return {

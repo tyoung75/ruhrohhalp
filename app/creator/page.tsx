@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
+import { useMobile } from "@/lib/useMobile";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -165,6 +166,7 @@ function computeDisplayScore(item: QueueItem): number {
 // ---------------------------------------------------------------------------
 
 export default function CreatorPage() {
+  const isMobile = useMobile();
   const [tab, setTab] = useState<Tab>("queue");
 
   return (
@@ -180,7 +182,7 @@ export default function CreatorPage() {
       {/* Header */}
       <div
         style={{
-          padding: "20px 28px 0",
+          padding: isMobile ? "14px 14px 0" : "20px 28px 0",
           borderBottom: `1px solid ${C.border}`,
         }}
       >
@@ -200,7 +202,7 @@ export default function CreatorPage() {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: "flex", gap: 0 }}>
+        <div style={{ display: "flex", gap: 0, overflowX: "auto" }}>
           {TABS.map((t) => {
             const active = tab === t.id;
             return (
@@ -211,15 +213,16 @@ export default function CreatorPage() {
                   background: "none",
                   border: "none",
                   borderBottom: `2px solid ${active ? C.cl : "transparent"}`,
-                  padding: "8px 18px 10px",
+                  padding: isMobile ? "8px 12px 10px" : "8px 18px 10px",
                   fontFamily: C.sans,
-                  fontSize: 13,
+                  fontSize: isMobile ? 12 : 13,
                   color: active ? C.cream : C.textDim,
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
                   transition: "all 0.15s ease",
+                  whiteSpace: "nowrap",
                 }}
               >
                 <span style={{ fontSize: 12, color: active ? C.cl : C.textFaint }}>{t.icon}</span>
@@ -231,7 +234,7 @@ export default function CreatorPage() {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflow: "auto", padding: "20px 28px" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "14px" : "20px 28px" }}>
         {tab === "queue" && <QueueTab />}
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "history" && <HistoryTab />}
@@ -1913,6 +1916,7 @@ function QueueTab() {
 // ---------------------------------------------------------------------------
 
 function AnalyticsTab() {
+  const isMobile = useMobile();
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
@@ -2090,7 +2094,7 @@ function AnalyticsTab() {
       )}
 
       {/* Overview cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
         <StatCard label="Posts" value={overview.total_posts} />
         <StatCard label="Impressions" value={overview.total_impressions.toLocaleString()} />
         <StatCard label="Engagement" value={`${(overview.avg_engagement_rate * 100).toFixed(1)}%`} accent />
@@ -2142,7 +2146,7 @@ function AnalyticsTab() {
       )}
 
       {/* Two columns: Top Posts + Platform/Queue */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 12 : 16 }}>
         {/* Top Posts */}
         <div>
           <SectionHeader>Top Posts</SectionHeader>
@@ -2296,6 +2300,7 @@ function PlatformDeepDive({
   days: number;
   onClose: () => void;
 }) {
+  const isMobile = useMobile();
   const pColor = PLATFORM_COLORS[platform] ?? C.cl;
   const pIcon = PLATFORM_ICONS[platform] ?? "◈";
 
@@ -2326,7 +2331,7 @@ function PlatformDeepDive({
       </div>
 
       {/* Platform KPI cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(6, 1fr)", gap: 10, marginBottom: 20 }}>
         <StatCard label="Posts" value={totalPosts} />
         <StatCard label="Impressions" value={totalImpressions.toLocaleString()} />
         <StatCard label="Engagement" value={`${(avgEngagement * 100).toFixed(1)}%`} accent />
@@ -2336,7 +2341,7 @@ function PlatformDeepDive({
       </div>
 
       {/* Platform-specific metrics */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 12 : 16 }}>
         {/* Content performance */}
         <div>
           <SectionHeader>{platform} Top Content</SectionHeader>
@@ -3154,6 +3159,7 @@ const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const TIME_SLOTS = ["Morning", "Midday", "Evening", "Late"];
 
 function StrategyTab() {
+  const isMobile = useMobile();
   const [data, setData] = useState<StrategyData | null>(null);
   const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3472,7 +3478,7 @@ function StrategyTab() {
           </div>
 
           {/* ── 3. What's Working / Adjustments ── */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 12 : 16 }}>
             {/* What's Working */}
             <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
               <SectionLabel>What&apos;s Working</SectionLabel>
@@ -3529,7 +3535,7 @@ function StrategyTab() {
           {/* ── 4. Timing Heatmap ── */}
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
             <SectionLabel>Best Posting Times</SectionLabel>
-            <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7, 1fr)", gap: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "40px repeat(7, 1fr)" : "60px repeat(7, 1fr)", gap: isMobile ? 2 : 4 }}>
               {/* Header row */}
               <div />
               {DAY_LABELS.map((d) => (

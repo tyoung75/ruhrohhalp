@@ -5,6 +5,7 @@ import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
 import { TIERS } from "@/lib/tiers";
 import type { PlanTier } from "@/lib/types/domain";
+import { useMobile } from "@/lib/useMobile";
 
 const fields = [
   { provider: "claude", label: "Anthropic Key", placeholder: "sk-ant-...", color: C.cl },
@@ -28,6 +29,7 @@ export function SettingsPanel({
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const byokOrFree = tier === "byok" || tier === "free";
+  const isMobile = useMobile();
 
   async function save(provider: "claude" | "chatgpt" | "gemini") {
     const value = values[provider]?.trim();
@@ -47,20 +49,20 @@ export function SettingsPanel({
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 100, display: "flex", justifyContent: "flex-end" }} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="slideIn" style={{ width: 360, height: "100%", background: C.surface, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column" }}>
+      <div className="slideIn" style={{ width: isMobile ? "100%" : 360, height: "100%", background: C.surface, borderLeft: isMobile ? undefined : `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ padding: "18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ fontFamily: C.serif, fontSize: 18, fontStyle: "italic", color: C.cream }}>Settings</div>
             <div style={{ fontSize: 10, color: C.textFaint }}>Plan: {TIERS[tier].label}</div>
           </div>
-          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${C.border}`, background: "none", color: C.textDim }}>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 6, border: `1px solid ${C.border}`, background: "none", color: C.textDim, fontSize: 16, cursor: "pointer" }}>
             ×
           </button>
         </div>
 
         <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ background: C.card, borderRadius: 9, border: `1px solid ${C.border}`, padding: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <div>
                 <div style={{ fontSize: 13 }}>{TIERS[tier].label}</div>
                 <div style={{ fontSize: 11, color: C.textDim }}>{TIERS[tier].price === 0 ? "Free" : `$${TIERS[tier].price}/mo`}</div>
@@ -85,9 +87,9 @@ export function SettingsPanel({
                       value={values[f.provider] ?? ""}
                       onChange={(e) => setValues((prev) => ({ ...prev, [f.provider]: e.target.value }))}
                       placeholder={f.placeholder}
-                      style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 10px", color: C.text, fontFamily: C.mono, fontSize: 11 }}
+                      style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: "7px 10px", color: C.text, fontFamily: C.mono, fontSize: 16, minWidth: 0 }}
                     />
-                    <button onClick={() => void save(f.provider)} disabled={saving || !(values[f.provider] ?? "").trim()} style={{ borderRadius: 6, border: `1px solid ${f.color}45`, background: `${f.color}14`, color: f.color, padding: "0 10px" }}>
+                    <button onClick={() => void save(f.provider)} disabled={saving || !(values[f.provider] ?? "").trim()} style={{ borderRadius: 6, border: `1px solid ${f.color}45`, background: `${f.color}14`, color: f.color, padding: "0 10px", whiteSpace: "nowrap", cursor: "pointer" }}>
                       Save
                     </button>
                   </div>

@@ -27,7 +27,7 @@ async function extractPatterns(originalMd: string, editedMd: string): Promise<st
     ],
   });
 
-  const text = result.content.filter((c: { type: string }) => c.type === "text").map((c: { type: string; text: string }) => c.text).join("\n");
+  const text = result.content.filter((c: Record<string, unknown>) => c.type === "text").map((c: Record<string, unknown>) => c.text as string).join("\n");
   try {
     const parsed = JSON.parse(text) as string[];
     return Array.isArray(parsed) ? parsed.slice(0, 12) : [];
