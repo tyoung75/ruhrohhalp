@@ -210,18 +210,32 @@ function sectionsToContentJson(sections: ReturnType<typeof parseDailySections>) 
   }));
 }
 
+/** Get current date in ET */
+function getTodayET(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
+
+/** Get time-aware period based on ET hour */
+function getCurrentPeriod(): "morning" | "evening" {
+  const etHour = Number(
+    new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }),
+  );
+  return etHour < 12 ? "morning" : "evening";
+}
+
 /** Persist briefing to the briefings table, upserting by date+period */
 async function saveBriefing(userId: string, rawMd: string, contentJson: unknown, useAdmin = false) {
   const supabase = useAdmin ? createAdminClient() : await createClient();
-  const today = new Date().toISOString().split("T")[0];
+  const today = getTodayET();
+  const period = getCurrentPeriod();
 
-  // Upsert — if a briefing already exists for today, update it
+  // Upsert — if a briefing already exists for today+period, update it
   const { data: existing } = await supabase
     .from("briefings")
     .select("id")
     .eq("user_id", userId)
     .eq("date", today)
-    .eq("period", "daily")
+    .eq("period", period)
     .maybeSingle();
 
   if (existing) {
@@ -249,7 +263,7 @@ async function saveBriefing(userId: string, rawMd: string, contentJson: unknown,
         content_md: rawMd,
         content_json: contentJson,
         date: today,
-        period: "daily",
+        period,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
