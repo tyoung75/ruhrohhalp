@@ -1,28 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
+import YahooFinance from "yahoo-finance2";
 
 /**
  * GET /api/finance/quotes?symbols=AAPL,MSFT,GOOGL
  *
- * Fetches real-time stock quotes from Yahoo Finance.
+ * Fetches real-time stock quotes via yahoo-finance2.
  * Returns current price, change, change %, and market state for each symbol.
  */
-
-interface YahooQuote {
-  symbol: string;
-  regularMarketPrice: number;
-  regularMarketChange: number;
-  regularMarketChangePercent: number;
-  regularMarketPreviousClose: number;
-  regularMarketOpen: number;
-  regularMarketDayHigh: number;
-  regularMarketDayLow: number;
-  regularMarketVolume: number;
-  marketState: string; // "REGULAR", "PRE", "POST", "CLOSED"
-  shortName: string;
-  quoteType: string;
-  currency: string;
-}
 
 export interface StockQuote {
   symbol: string;
@@ -40,6 +25,23 @@ export interface StockQuote {
   currency: string;
 }
 
+// Simple in-memory cache (15s TTL)
+let cache: { data: { quotes: StockQuote[]; fetchedAt: string }; key: string; ts: number } | null = null;
+const CACHE_TTL = 15_000;
+
+// Crypto symbols need -USD suffix for Yahoo
+const CRYPTO_SYMBOLS = new Set(["BTC", "ETH", "XRP", "SOL", "DOGE", "ADA", "AVAX", "DOT", "MATIC", "LINK", "UNI", "SHIB"]);
+
+function toYahooSymbol(s: string): string {
+  return CRYPTO_SYMBOLS.has(s) ? `${s}-USD` : s;
+}
+
+function fromYahooSymbol(s: string): string {
+  return s.endsWith("-USD") && CRYPTO_SYMBOLS.has(s.replace("-USD", ""))
+    ? s.replace("-USD", "")
+    : s;
+}
+
 export async function GET(request: NextRequest) {
   const { user, response } = await requireUser();
   if (response || !user) return response;
@@ -52,53 +54,49 @@ export async function GET(request: NextRequest) {
   const symbols = symbolsParam
     .split(",")
     .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+    .filter((s) => Boolean(s) && s !== "CASH");
 
   if (symbols.length === 0) {
-    return NextResponse.json({ error: "No valid symbols provided" }, { status: 400 });
+    return NextResponse.json({ quotes: [], fetchedAt: new Date().toISOString() });
   }
 
   if (symbols.length > 50) {
     return NextResponse.json({ error: "Maximum 50 symbols per request" }, { status: 400 });
   }
 
+  const cacheKey = symbols.sort().join(",");
+  if (cache && cache.key === cacheKey && Date.now() - cache.ts < CACHE_TTL) {
+    return NextResponse.json(cache.data);
+  }
+
   try {
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(",")}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketOpen,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume,marketState,shortName,quoteType,currency`;
+    const yahooFinance = new YahooFinance();
+    const yahooSymbols = symbols.map(toYahooSymbol);
 
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-      },
-      next: { revalidate: 15 }, // Cache for 15 seconds server-side
-    });
+    const results = await yahooFinance.quote(yahooSymbols, { return: "array" });
 
-    if (!res.ok) {
-      // Fallback: try the v6 endpoint
-      const fallbackUrl = `https://query2.finance.yahoo.com/v6/finance/quote?symbols=${symbols.join(",")}`;
-      const fallbackRes = await fetch(fallbackUrl, {
-        headers: { "User-Agent": "Mozilla/5.0" },
-        next: { revalidate: 15 },
-      });
+    const quotes: StockQuote[] = (Array.isArray(results) ? results : [results])
+      .filter((q) => q && q.regularMarketPrice != null)
+      .map((q) => ({
+        symbol: fromYahooSymbol(q.symbol ?? ""),
+        price: q.regularMarketPrice ?? 0,
+        change: q.regularMarketChange ?? 0,
+        changePercent: q.regularMarketChangePercent ?? 0,
+        previousClose: q.regularMarketPreviousClose ?? 0,
+        open: q.regularMarketOpen ?? 0,
+        dayHigh: q.regularMarketDayHigh ?? 0,
+        dayLow: q.regularMarketDayLow ?? 0,
+        volume: q.regularMarketVolume ?? 0,
+        marketState: q.marketState ?? "CLOSED",
+        name: q.shortName ?? q.longName ?? fromYahooSymbol(q.symbol ?? ""),
+        quoteType: q.quoteType ?? "EQUITY",
+        currency: q.currency ?? "USD",
+      }));
 
-      if (!fallbackRes.ok) {
-        return NextResponse.json(
-          { error: "Failed to fetch quotes from Yahoo Finance" },
-          { status: 502 }
-        );
-      }
+    const responseData = { quotes, fetchedAt: new Date().toISOString() };
+    cache = { data: responseData, key: cacheKey, ts: Date.now() };
 
-      const fallbackData = await fallbackRes.json();
-      const quotes = mapQuotes(fallbackData?.quoteResponse?.result ?? []);
-      return NextResponse.json({ quotes, fetchedAt: new Date().toISOString() });
-    }
-
-    const data = await res.json();
-    const quotes = mapQuotes(data?.quoteResponse?.result ?? []);
-
-    return NextResponse.json({
-      quotes,
-      fetchedAt: new Date().toISOString(),
-    });
+    return NextResponse.json(responseData);
   } catch (err) {
     console.error("Yahoo Finance fetch error:", err);
     return NextResponse.json(
@@ -106,22 +104,4 @@ export async function GET(request: NextRequest) {
       { status: 502 }
     );
   }
-}
-
-function mapQuotes(results: YahooQuote[]): StockQuote[] {
-  return results.map((q) => ({
-    symbol: q.symbol,
-    price: q.regularMarketPrice ?? 0,
-    change: q.regularMarketChange ?? 0,
-    changePercent: q.regularMarketChangePercent ?? 0,
-    previousClose: q.regularMarketPreviousClose ?? 0,
-    open: q.regularMarketOpen ?? 0,
-    dayHigh: q.regularMarketDayHigh ?? 0,
-    dayLow: q.regularMarketDayLow ?? 0,
-    volume: q.regularMarketVolume ?? 0,
-    marketState: q.marketState ?? "CLOSED",
-    name: q.shortName ?? q.symbol,
-    quoteType: q.quoteType ?? "EQUITY",
-    currency: q.currency ?? "USD",
-  }));
 }

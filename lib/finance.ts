@@ -11,12 +11,16 @@ import type {
   FinancialDebt,
   FinancialIncome,
   FinancialContribution,
+  FinancialHolding,
   RSUVest,
   NetWorthSummary,
   CashFlowSummary,
   RaiseImpact,
   DebtPayoffProjection,
   ContributionResolved,
+  HoldingPerformance,
+  PortfolioPerformance,
+  HistoricalPrices,
   IncomeFrequency,
   Owner,
 } from "@/lib/types/finance";
@@ -346,6 +350,118 @@ export function projectDebtPayoff(
     monthsToPayoff: months,
     totalInterestPaid: Math.round(totalInterest * 100) / 100,
     payoffDate: payoffDate.toISOString().split("T")[0],
+  };
+}
+
+// ── Portfolio Performance Metrics ────────────────────────────
+
+function calcChange(
+  currentPrice: number,
+  historicalPrice: number | null,
+  shares: number
+): { change: number; changePct: number } {
+  if (historicalPrice == null || historicalPrice === 0) {
+    return { change: 0, changePct: 0 };
+  }
+  const change = (currentPrice - historicalPrice) * shares;
+  const changePct = ((currentPrice - historicalPrice) / historicalPrice) * 100;
+  return { change, changePct };
+}
+
+export function calculateHoldingPerformance(
+  holding: FinancialHolding,
+  currentPrice: number,
+  hist: HistoricalPrices | undefined
+): HoldingPerformance {
+  const shares = holding.shares;
+  const costBasis = holding.costBasis ?? 0;
+  const currentValue = currentPrice * shares;
+  const totalReturn = costBasis > 0 ? currentValue - costBasis : 0;
+  const totalReturnPct = costBasis > 0 ? (totalReturn / costBasis) * 100 : 0;
+
+  const daily = calcChange(currentPrice, hist?.price1dAgo ?? null, shares);
+  const week = calcChange(currentPrice, hist?.price1wAgo ?? null, shares);
+  const month = calcChange(currentPrice, hist?.price1mAgo ?? null, shares);
+  const ytd = calcChange(currentPrice, hist?.priceYtdStart ?? null, shares);
+  const year = calcChange(currentPrice, hist?.price1yAgo ?? null, shares);
+
+  return {
+    symbol: holding.symbol,
+    dailyChange: daily.change,
+    dailyChangePct: daily.changePct,
+    weekChange: week.change,
+    weekChangePct: week.changePct,
+    monthChange: month.change,
+    monthChangePct: month.changePct,
+    ytdChange: ytd.change,
+    ytdChangePct: ytd.changePct,
+    yearChange: year.change,
+    yearChangePct: year.changePct,
+    totalReturn,
+    totalReturnPct,
+  };
+}
+
+export function calculatePortfolioPerformance(
+  holdings: FinancialHolding[],
+  currentPrices: Record<string, number>,
+  historicalData: Record<string, HistoricalPrices>
+): PortfolioPerformance {
+  let totalCurrentValue = 0;
+  let totalCostBasis = 0;
+  let totalDailyChange = 0;
+  let totalWeekChange = 0;
+  let totalMonthChange = 0;
+  let totalYtdChange = 0;
+  let totalYearChange = 0;
+
+  // For percentage calculations, we need value-weighted returns
+  let value1dAgo = 0;
+  let value1wAgo = 0;
+  let value1mAgo = 0;
+  let valueYtdStart = 0;
+  let value1yAgo = 0;
+
+  for (const h of holdings) {
+    if (h.holdingType === "cash") continue;
+    const price = currentPrices[h.symbol] ?? h.currentPrice ?? 0;
+    const hist = historicalData[h.symbol];
+    const shares = h.shares;
+    const value = price * shares;
+
+    totalCurrentValue += value;
+    totalCostBasis += h.costBasis ?? 0;
+
+    const perf = calculateHoldingPerformance(h, price, hist);
+    totalDailyChange += perf.dailyChange;
+    totalWeekChange += perf.weekChange;
+    totalMonthChange += perf.monthChange;
+    totalYtdChange += perf.ytdChange;
+    totalYearChange += perf.yearChange;
+
+    if (hist?.price1dAgo) value1dAgo += hist.price1dAgo * shares;
+    if (hist?.price1wAgo) value1wAgo += hist.price1wAgo * shares;
+    if (hist?.price1mAgo) value1mAgo += hist.price1mAgo * shares;
+    if (hist?.priceYtdStart) valueYtdStart += hist.priceYtdStart * shares;
+    if (hist?.price1yAgo) value1yAgo += hist.price1yAgo * shares;
+  }
+
+  const totalReturn = totalCostBasis > 0 ? totalCurrentValue - totalCostBasis : 0;
+  const totalReturnPct = totalCostBasis > 0 ? (totalReturn / totalCostBasis) * 100 : 0;
+
+  return {
+    dailyChange: totalDailyChange,
+    dailyChangePct: value1dAgo > 0 ? (totalDailyChange / value1dAgo) * 100 : 0,
+    weekChange: totalWeekChange,
+    weekChangePct: value1wAgo > 0 ? (totalWeekChange / value1wAgo) * 100 : 0,
+    monthChange: totalMonthChange,
+    monthChangePct: value1mAgo > 0 ? (totalMonthChange / value1mAgo) * 100 : 0,
+    ytdChange: totalYtdChange,
+    ytdChangePct: valueYtdStart > 0 ? (totalYtdChange / valueYtdStart) * 100 : 0,
+    yearChange: totalYearChange,
+    yearChangePct: value1yAgo > 0 ? (totalYearChange / value1yAgo) * 100 : 0,
+    totalReturn,
+    totalReturnPct,
   };
 }
 
