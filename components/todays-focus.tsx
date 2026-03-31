@@ -3,6 +3,7 @@ import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
 import { GoalProgressCard, type GoalData } from "@/components/goal-progress-card";
 import { Spinner } from "@/components/primitives";
+import { buildFingerprint } from "@/lib/signal-fingerprint";
 
 // AI tool config for launch buttons
 const AI_TOOLS: Record<string, { label: string; icon: string; color: string; urlPrefix: string }> = {
@@ -301,17 +302,32 @@ export function TodaysFocus() {
     }
   };
 
-  // CW-2: Dismiss with reason
+  // CW-2: Dismiss with reason + persist as signal fingerprint
   const handleDismiss = async (taskId: string, reason: DismissReason) => {
+    // Find the task title for persistent signal dismissal
+    const task = focusItems.find((item) => item.id === taskId);
     try {
       await api(`/api/tasks/${taskId}/dismiss`, {
         method: "POST",
         body: JSON.stringify({ reason }),
       });
-      // Fade out dismissed card, then load replacement
+      // Also save as persistent signal dismissal so it doesn't resurface in briefings
+      if (task) {
+        try {
+          await api("/api/signals/dismiss", {
+            method: "POST",
+            body: JSON.stringify({
+              text: task.title,
+              category: "focus_task",
+              source: "todays_focus",
+            }),
+          });
+        } catch {
+          // Non-critical — task dismiss still succeeded
+        }
+      }
       setFocusItems((prev) => prev.filter((item) => item.id !== taskId));
       setDeletingId(null);
-      // TODO: Fetch next-highest-scored task to replace dismissed one
     } catch {
       // Dismiss endpoint not deployed yet — fall back to delete
       handleDeleteTask(taskId);
@@ -477,6 +493,12 @@ function FocusCard(props: FocusCardProps) {
   const whyContent = item.leverageReason;
   const [feedbackGiven, setFeedbackGiven] = useState<"up" | "down" | null>(null);
   const [feedbackSaving, setFeedbackSaving] = useState(false);
+  // Inline reply state
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [replyLoading, setReplyLoading] = useState(false);
+  const [replyHistory, setReplyHistory] = useState<Array<{ reply: string; created_at: string }>>([]);
+  const [replySaved, setReplySaved] = useState(false);
   const priorityColors: Record<string, string> = {
     urgent: C.reminder,
     high: C.task,
@@ -532,6 +554,58 @@ function FocusCard(props: FocusCardProps) {
       console.error("Error saving feedback:", err);
     } finally {
       setFeedbackSaving(false);
+    }
+  };
+
+  const handleReplyToggle = async () => {
+    if (replyOpen) {
+      setReplyOpen(false);
+      return;
+    }
+    setReplyOpen(true);
+    setReplyText("");
+    setReplySaved(false);
+    // Load reply history
+    try {
+      const data = await api<{ replies: Array<{ reply: string; created_at: string }> }>(
+        `/api/tasks/${item.id}/replies`
+      );
+      setReplyHistory(data.replies ?? []);
+    } catch {
+      // Silently fail — reply history is non-critical
+    }
+  };
+
+  const handleSubmitReply = async () => {
+    if (!replyText.trim() || replyLoading) return;
+    setReplyLoading(true);
+    try {
+      const text = replyText.trim();
+      await api(`/api/tasks/${item.id}/replies`, {
+        method: "POST",
+        body: JSON.stringify({ reply: text }),
+      });
+      // Also save as a signal reply for broader learning
+      try {
+        await api("/api/signals/reply", {
+          method: "POST",
+          body: JSON.stringify({
+            signal_text: item.title,
+            reply: text,
+            scope: "specific",
+          }),
+        });
+      } catch {
+        // Non-critical
+      }
+      setReplyText("");
+      setReplyHistory((prev) => [{ reply: text, created_at: new Date().toISOString() }, ...prev]);
+      setReplySaved(true);
+      setTimeout(() => setReplySaved(false), 3000);
+    } catch (err) {
+      console.error("Error saving reply:", err);
+    } finally {
+      setReplyLoading(false);
     }
   };
 
@@ -814,8 +888,104 @@ function FocusCard(props: FocusCardProps) {
           >
             ▼
           </button>
+          {/* Reply button */}
+          <button
+            onClick={handleReplyToggle}
+            style={{
+              background: replyOpen ? `${C.cl}20` : "none",
+              border: replyOpen ? `1px solid ${C.cl}60` : `1px solid ${C.border}`,
+              color: replyOpen ? C.cl : C.textDim,
+              borderRadius: 4,
+              padding: "2px 8px",
+              fontSize: 11,
+              cursor: "pointer",
+              transition: "all 0.15s",
+              fontFamily: C.mono,
+            }}
+            title="Reply with feedback"
+          >
+            💬 Reply
+          </button>
         </div>
       </div>
+
+      {/* Inline Reply Panel */}
+      {replyOpen && (
+        <div
+          style={{
+            background: `${C.surface}80`,
+            border: `1px solid ${C.border}`,
+            borderRadius: 6,
+            padding: "10px 12px",
+            marginBottom: 10,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          {replyHistory.length > 0 && (
+            <div style={{ marginBottom: 4 }}>
+              <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textDim, marginBottom: 4 }}>Previous replies:</div>
+              {replyHistory.slice(0, 5).map((r, idx) => (
+                <div key={idx} style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginBottom: 2, lineHeight: 1.4 }}>
+                  • {r.reply}
+                </div>
+              ))}
+            </div>
+          )}
+          {replySaved && (
+            <div style={{ fontFamily: C.mono, fontSize: 10, color: C.gpt }}>
+              Saved — the system will learn from this.
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 6 }}>
+            <textarea
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmitReply();
+                }
+              }}
+              placeholder="Tell the system something about this task... context, corrections, why it's wrong"
+              rows={2}
+              style={{
+                flex: 1,
+                background: C.card,
+                border: `1px solid ${C.border}`,
+                borderRadius: 4,
+                padding: "6px 8px",
+                fontFamily: C.mono,
+                fontSize: 11,
+                color: C.text,
+                outline: "none",
+                resize: "none",
+                lineHeight: 1.4,
+              }}
+            />
+            <button
+              onClick={handleSubmitReply}
+              disabled={!replyText.trim() || replyLoading}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 4,
+                background: replyText.trim() && !replyLoading ? C.cl : C.border,
+                color: replyText.trim() && !replyLoading ? C.bg : C.textFaint,
+                border: "none",
+                fontFamily: C.mono,
+                fontSize: 11,
+                cursor: replyText.trim() && !replyLoading ? "pointer" : "default",
+                whiteSpace: "nowrap",
+                height: "fit-content",
+                alignSelf: "flex-end",
+              }}
+            >
+              {replyLoading ? "..." : "Send"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Action Row — CW-1: One-tap execution (Start/Done/Block) */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
