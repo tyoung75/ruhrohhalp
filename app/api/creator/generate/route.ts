@@ -92,12 +92,19 @@ export async function POST(request: NextRequest) {
       ? `\n\n--- CONTENT PERFORMANCE LEARNINGS (from semantic memory) ---\n${contentMemories.join("\n\n")}`
       : "";
 
+    // Build a hard-stop directives block that appears BEFORE the generation instruction.
+    // These are Tyler's explicit strategic instructions — they override everything else.
+    const directivesFromContext = context.creatorFeedback?.directives ?? [];
+    const directivesBlock = directivesFromContext.length
+      ? `\n\n=== MANDATORY CONTENT DIRECTIVES (from Tyler — MUST be followed, override all other signals) ===\n${directivesFromContext.map((d: string) => `• STOP/AVOID: ${d}`).join("\n")}\n=== END DIRECTIVES — any post that violates the above MUST be rejected and regenerated ===`
+      : "";
+
     let userMessage: string;
     if (isSeedMode) {
       // Single-post generation seeded from Strategy recommendation
-      userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate exactly 1 post based on this specific strategy recommendation:\n- Topic: ${seedTopic ?? "your best judgment"}\n- Platform: ${seedPlatform ?? "threads"}\n- Format: ${seedFormat ?? "text"}\n- Rationale from strategy agent: ${seedRationale ?? "N/A"}\n\nCreate the BEST possible post for this specific recommendation. Match the platform's voice and format expectations. Return ONLY a JSON array with 1 item.`;
+      userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${directivesBlock}${memoryBlock}\n\nGenerate exactly 1 post based on this specific strategy recommendation:\n- Topic: ${seedTopic ?? "your best judgment"}\n- Platform: ${seedPlatform ?? "threads"}\n- Format: ${seedFormat ?? "text"}\n- Rationale from strategy agent: ${seedRationale ?? "N/A"}\n\nCreate the BEST possible post for this specific recommendation. Match the platform's voice and format expectations. Return ONLY a JSON array with 1 item.`;
     } else {
-      userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate 5 posts across platforms based on this context. Learn from the performance data above — lean into patterns that worked and avoid patterns that didn't. Return ONLY a JSON array.`;
+      userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${directivesBlock}${memoryBlock}\n\nGenerate 5 posts across platforms based on this context. Learn from the performance data above — lean into patterns that worked and avoid patterns that didn't. Return ONLY a JSON array.`;
     }
     const rawResponse = await callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048);
 
@@ -405,6 +412,34 @@ async function gatherDailyContext(
     console.error("[creator-generate] Feedback fetch failed (non-fatal):", err);
   }
 
+  // --- Content Strategy Directives (broad steering from the Creator tab) ---
+  // These are SEPARATE from content_feedback directives — they're standing
+  // strategic instructions that override default generation behavior.
+  let contentDirectives: string[] = [];
+  try {
+    const now = new Date().toISOString();
+    const { data: directives } = await supabase
+      .from("content_directives")
+      .select("directive, platforms")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .or(`expires_at.is.null,expires_at.gt.${now}`)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (directives?.length) {
+      contentDirectives = directives.map(
+        (d: { directive: string; platforms: string[] | null }) =>
+          d.platforms ? `${d.directive} [applies to: ${d.platforms.join(", ")}]` : d.directive
+      );
+      // Also merge into creatorFeedback.directives so the prompt sees them
+      // in both the structured context AND the directives list
+      creatorFeedback.directives = [...contentDirectives, ...creatorFeedback.directives];
+    }
+  } catch (err) {
+    console.error("[creator-generate] Content directives fetch failed (non-fatal):", err);
+  }
+
   return {
     date: today,
     dayOfWeek: new Date().toLocaleDateString("en-US", { weekday: "long" }),
@@ -419,6 +454,7 @@ async function gatherDailyContext(
     strategyInsights,
     activeTrends,
     creatorFeedback,
+    contentDirectives,
   };
 }
 

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
+import { buildFingerprint, isSignalDismissed } from "@/lib/signal-fingerprint";
 
 interface BriefingSection {
   title: string;
@@ -59,6 +60,24 @@ export function BriefingView() {
   const [error, setError] = useState("");
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [feedbackGiven, setFeedbackGiven] = useState<Set<string>>(new Set());
+  const [dismissedFingerprints, setDismissedFingerprints] = useState<Set<string>>(new Set());
+  const [replyOpenItemId, setReplyOpenItemId] = useState<string | null>(null);
+  const [actionTaken, setActionTaken] = useState<Map<string, string>>(new Map());
+  const [dismissedItemIds, setDismissedItemIds] = useState<Set<string>>(new Set());
+  const [replyText, setReplyText] = useState<string>("");
+  const [replyLoading, setReplyLoading] = useState(false);
+  const [replyHistory, setReplyHistory] = useState<Array<{ reply: string; created_at: string }>>([]);
+
+  // Load dismissed fingerprints
+  const loadDismissedFingerprints = useCallback(async () => {
+    try {
+      const data = await api<{ dismissals: Array<{ fingerprint: string; original_text: string }> }>("/api/signals/dismiss");
+      const fingerprints = new Set(data.dismissals?.map((d) => d.fingerprint) ?? []);
+      setDismissedFingerprints(fingerprints);
+    } catch (e) {
+      console.error("Failed to load dismissed fingerprints:", e);
+    }
+  }, []);
 
   // Load the latest persisted briefing on mount
   const loadBriefing = useCallback(async () => {
@@ -79,8 +98,9 @@ export function BriefingView() {
   }, []);
 
   useEffect(() => {
+    loadDismissedFingerprints();
     loadBriefing().finally(() => setLoading(false));
-  }, [loadBriefing]);
+  }, [loadBriefing, loadDismissedFingerprints]);
 
   // Listen for briefing refresh events
   useEffect(() => {
@@ -129,20 +149,99 @@ export function BriefingView() {
     }
   }
 
-  async function handleFeedback(itemId: string | undefined, helpful: boolean) {
+  async function handleFeedback(itemId: string | undefined, helpful: boolean, sectionTitle: string, itemText: string) {
     if (!itemId) return;
     try {
       await api("/api/feedback", {
         method: "POST",
         body: JSON.stringify({
-          item_id: itemId,
-          helpful,
+          section: sectionTitle,
+          action: helpful ? "helpful" : "not_helpful",
+          note: itemText,
           briefing_id: briefing?.id,
         }),
       });
       setFeedbackGiven((prev) => new Set([...prev, `${itemId}-${helpful}`]));
     } catch (e) {
       console.error("Feedback error:", e);
+    }
+  }
+
+  async function handleDismissItem(itemText: string) {
+    try {
+      await api("/api/signals/dismiss", {
+        method: "POST",
+        body: JSON.stringify({
+          text: itemText,
+          category: "briefing",
+          source: "briefing",
+        }),
+      });
+      const fingerprint = buildFingerprint(itemText);
+      setDismissedFingerprints((prev) => new Set([...prev, fingerprint]));
+      setDismissedItemIds((prev) => new Set([...prev, itemText]));
+    } catch (e) {
+      console.error("Dismiss error:", e);
+    }
+  }
+
+  async function handleReplyOpen(itemId: string, itemText: string) {
+    if (replyOpenItemId === itemId) {
+      setReplyOpenItemId(null);
+      return;
+    }
+    setReplyOpenItemId(itemId);
+    setReplyText("");
+    setReplyHistory([]);
+
+    // Load reply history by fingerprint
+    try {
+      const fingerprint = buildFingerprint(itemText);
+      const data = await api<{ replies: Array<{ reply: string; created_at: string }> }>(
+        `/api/signals/reply?fingerprint=${encodeURIComponent(fingerprint)}`
+      );
+      setReplyHistory(data.replies ?? []);
+    } catch (e) {
+      console.error("Failed to load reply history:", e);
+    }
+  }
+
+  async function handleSubmitReply(itemText: string) {
+    if (!replyText.trim()) return;
+    setReplyLoading(true);
+    try {
+      const reply = replyText.trim();
+      await api("/api/signals/reply", {
+        method: "POST",
+        body: JSON.stringify({
+          signal_text: itemText,
+          reply,
+          scope: "specific",
+        }),
+      });
+      setReplyText("");
+      setReplyHistory((prev) => [...prev, { reply, created_at: new Date().toISOString() }]);
+    } catch (e) {
+      console.error("Reply error:", e);
+    } finally {
+      setReplyLoading(false);
+    }
+  }
+
+  async function handleActionTaken(itemId: string, itemText: string, sectionTitle: string, action: "already_done" | "wont_do") {
+    try {
+      await api("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          section: sectionTitle,
+          action,
+          note: itemText,
+          briefing_id: briefing?.id,
+        }),
+      });
+      setActionTaken((prev) => new Map([...prev, [itemId, action]]));
+    } catch (e) {
+      console.error("Action error:", e);
     }
   }
 
@@ -414,6 +513,12 @@ export function BriefingView() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, overflow: "auto" }}>
           {briefing.content_json.map((section, idx) => {
             const isExpanded = expandedSections.has(section.title);
+            // Filter out dismissed items
+            const visibleItems = section.items.filter(
+              (item) => !isSignalDismissed(item.text, dismissedFingerprints) && !dismissedItemIds.has(item.text)
+            );
+            const hiddenCount = section.items.length - visibleItems.length;
+
             return (
               <div
                 key={idx}
@@ -464,8 +569,19 @@ export function BriefingView() {
                       textAlign: "center",
                     }}
                   >
-                    {section.items.length}
+                    {visibleItems.length}
                   </span>
+                  {hiddenCount > 0 && (
+                    <span
+                      style={{
+                        fontFamily: C.mono,
+                        fontSize: 8,
+                        color: C.textFaint,
+                      }}
+                    >
+                      ({hiddenCount} hidden)
+                    </span>
+                  )}
                   <span
                     style={{
                       fontFamily: C.mono,
@@ -482,68 +598,152 @@ export function BriefingView() {
                 {/* Section content */}
                 {isExpanded && (
                   <div style={{ padding: "8px 0" }}>
-                    {section.items.map((item, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          padding: "8px 12px",
-                          borderBottom: i < section.items.length - 1 ? `1px solid ${C.border}22` : "none",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 6,
-                        }}
-                      >
-                        {/* Item text */}
+                    {visibleItems.map((item, i) => {
+                      const itemAction = actionTaken.get(item.id || "");
+                      const isStrikethrough = itemAction === "already_done";
+                      const isDimmed = itemAction === "wont_do";
+                      return (
                         <div
+                          key={i}
                           style={{
-                            fontSize: 12,
-                            fontFamily: C.sans,
-                            color: C.text,
-                            lineHeight: 1.6,
+                            padding: "8px 12px",
+                            borderBottom: i < visibleItems.length - 1 ? `1px solid ${C.border}22` : "none",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 6,
+                            opacity: isDimmed ? 0.6 : 1,
                           }}
                         >
-                          {renderMarkdown(item.text)}
-                        </div>
-
-                        {/* Action buttons */}
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                          <button
-                            onClick={() => handleFeedback(item.id, true)}
-                            disabled={feedbackGiven.has(`${item.id}-true`)}
+                          {/* Item text */}
+                          <div
                             style={{
-                              padding: "2px 6px",
-                              borderRadius: 4,
-                              background: feedbackGiven.has(`${item.id}-true`) ? `${C.gpt}20` : "transparent",
-                              border: `1px solid ${feedbackGiven.has(`${item.id}-true`) ? C.gpt : C.border}`,
-                              color: feedbackGiven.has(`${item.id}-true`) ? C.gpt : C.textDim,
-                              fontFamily: C.mono,
-                              fontSize: 9,
-                              cursor: feedbackGiven.has(`${item.id}-true`) ? "default" : "pointer",
+                              fontSize: 12,
+                              fontFamily: C.sans,
+                              color: C.text,
+                              lineHeight: 1.6,
+                              textDecoration: isStrikethrough ? "line-through" : "none",
                             }}
                           >
-                            👍
-                          </button>
-                          <button
-                            onClick={() => handleFeedback(item.id, false)}
-                            disabled={feedbackGiven.has(`${item.id}-false`)}
-                            style={{
-                              padding: "2px 6px",
-                              borderRadius: 4,
-                              background: feedbackGiven.has(`${item.id}-false`) ? `${C.reminder}20` : "transparent",
-                              border: `1px solid ${feedbackGiven.has(`${item.id}-false`) ? C.reminder : C.border}`,
-                              color: feedbackGiven.has(`${item.id}-false`) ? C.reminder : C.textDim,
-                              fontFamily: C.mono,
-                              fontSize: 9,
-                              cursor: feedbackGiven.has(`${item.id}-false`) ? "default" : "pointer",
-                            }}
-                          >
-                            👎
-                          </button>
+                            {renderMarkdown(item.text)}
+                          </div>
 
-                          {item.type === "triage" && (
-                            <>
+                          {/* Action buttons */}
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            {/* Feedback buttons */}
+                            <button
+                              onClick={() => handleFeedback(item.id, true, section.title, item.text)}
+                              disabled={feedbackGiven.has(`${item.id}-true`)}
+                              title="Helpful"
+                              style={{
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: feedbackGiven.has(`${item.id}-true`) ? `${C.gpt}20` : "transparent",
+                                border: `1px solid ${feedbackGiven.has(`${item.id}-true`) ? C.gpt : C.border}`,
+                                color: feedbackGiven.has(`${item.id}-true`) ? C.gpt : C.textDim,
+                                fontFamily: C.mono,
+                                fontSize: 9,
+                                cursor: feedbackGiven.has(`${item.id}-true`) ? "default" : "pointer",
+                              }}
+                            >
+                              👍
+                            </button>
+                            <button
+                              onClick={() => handleFeedback(item.id, false, section.title, item.text)}
+                              disabled={feedbackGiven.has(`${item.id}-false`)}
+                              title="Not helpful"
+                              style={{
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: feedbackGiven.has(`${item.id}-false`) ? `${C.reminder}20` : "transparent",
+                                border: `1px solid ${feedbackGiven.has(`${item.id}-false`) ? C.reminder : C.border}`,
+                                color: feedbackGiven.has(`${item.id}-false`) ? C.reminder : C.textDim,
+                                fontFamily: C.mono,
+                                fontSize: 9,
+                                cursor: feedbackGiven.has(`${item.id}-false`) ? "default" : "pointer",
+                              }}
+                            >
+                              👎
+                            </button>
+
+                            {/* Dismiss button */}
+                            <button
+                              onClick={() => handleDismissItem(item.text)}
+                              title="Dismiss this item"
+                              style={{
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: "transparent",
+                                border: `1px solid ${C.border}`,
+                                color: C.textDim,
+                                fontFamily: C.mono,
+                                fontSize: 9,
+                                cursor: "pointer",
+                              }}
+                            >
+                              ✕
+                            </button>
+
+                            {/* Already Done button */}
+                            <button
+                              onClick={() => handleActionTaken(item.id || "", item.text, section.title, "already_done")}
+                              disabled={itemAction === "already_done"}
+                              title="Mark as already done"
+                              style={{
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: itemAction === "already_done" ? `${C.gpt}20` : "transparent",
+                                border: `1px solid ${itemAction === "already_done" ? C.gpt : C.border}`,
+                                color: itemAction === "already_done" ? C.gpt : C.textDim,
+                                fontFamily: C.mono,
+                                fontSize: 9,
+                                cursor: itemAction === "already_done" ? "default" : "pointer",
+                              }}
+                            >
+                              ✓ Done
+                            </button>
+
+                            {/* Won't Do button */}
+                            <button
+                              onClick={() => handleActionTaken(item.id || "", item.text, section.title, "wont_do")}
+                              disabled={itemAction === "wont_do"}
+                              title="Mark as won't do"
+                              style={{
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: itemAction === "wont_do" ? `${C.reminder}20` : "transparent",
+                                border: `1px solid ${itemAction === "wont_do" ? C.reminder : C.border}`,
+                                color: itemAction === "wont_do" ? C.reminder : C.textDim,
+                                fontFamily: C.mono,
+                                fontSize: 9,
+                                cursor: itemAction === "wont_do" ? "default" : "pointer",
+                              }}
+                            >
+                              ✗ Skip
+                            </button>
+
+                            {/* Reply button */}
+                            <button
+                              onClick={() => handleReplyOpen(item.id || "", item.text)}
+                              title="Reply to this item"
+                              style={{
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: replyOpenItemId === (item.id || "") ? `${C.cl}20` : "transparent",
+                                border: `1px solid ${replyOpenItemId === (item.id || "") ? C.cl : C.border}`,
+                                color: replyOpenItemId === (item.id || "") ? C.cl : C.textDim,
+                                fontFamily: C.mono,
+                                fontSize: 9,
+                                cursor: "pointer",
+                              }}
+                            >
+                              💬 Reply
+                            </button>
+
+                            {/* Type-specific buttons */}
+                            {item.type === "triage" && (
                               <button
                                 onClick={() => handleApproveTriage(item.id, item.text)}
+                                title="Approve and create task"
                                 style={{
                                   padding: "2px 6px",
                                   borderRadius: 4,
@@ -557,43 +757,84 @@ export function BriefingView() {
                               >
                                 ✓ Approve
                               </button>
+                            )}
+
+                            {item.type === "recommendation" && (
                               <button
+                                onClick={() => handleDraftContent(item.id)}
+                                title="Draft this content"
                                 style={{
                                   padding: "2px 6px",
                                   borderRadius: 4,
-                                  background: `${C.reminder}14`,
-                                  border: `1px solid ${C.reminder}35`,
-                                  color: C.reminder,
+                                  background: `${C.gem}14`,
+                                  border: `1px solid ${C.gem}35`,
+                                  color: C.gem,
                                   fontFamily: C.mono,
                                   fontSize: 9,
                                   cursor: "pointer",
                                 }}
                               >
-                                ✕ Dismiss
+                                ✎ Draft This
                               </button>
-                            </>
-                          )}
+                            )}
+                          </div>
 
-                          {item.type === "recommendation" && (
-                            <button
-                              onClick={() => handleDraftContent(item.id)}
-                              style={{
-                                padding: "2px 6px",
-                                borderRadius: 4,
-                                background: `${C.gem}14`,
-                                border: `1px solid ${C.gem}35`,
-                                color: C.gem,
-                                fontFamily: C.mono,
-                                fontSize: 9,
-                                cursor: "pointer",
-                              }}
-                            >
-                              ✎ Draft This
-                            </button>
+                          {/* Reply panel */}
+                          {replyOpenItemId === (item.id || "") && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4, padding: "8px", background: `${C.surface}50`, borderRadius: 4 }}>
+                              {replyHistory.length > 0 && (
+                                <div style={{ fontSize: 10, color: C.textFaint }}>
+                                  <div style={{ fontFamily: C.mono, marginBottom: 4, color: C.textDim }}>Recent replies:</div>
+                                  {replyHistory.map((r, idx) => (
+                                    <div key={idx} style={{ fontFamily: C.mono, fontSize: 9, marginBottom: 2 }}>
+                                      • {r.reply}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div style={{ display: "flex", gap: 4 }}>
+                                <textarea
+                                  value={replyText}
+                                  onChange={(e) => setReplyText(e.target.value)}
+                                  placeholder="Your reply..."
+                                  rows={2}
+                                  style={{
+                                    flex: 1,
+                                    background: C.card,
+                                    border: `1px solid ${C.border}`,
+                                    borderRadius: 4,
+                                    padding: "4px 6px",
+                                    fontFamily: C.mono,
+                                    fontSize: 9,
+                                    color: C.text,
+                                    outline: "none",
+                                    resize: "none",
+                                  }}
+                                />
+                                <button
+                                  onClick={() => handleSubmitReply(item.text)}
+                                  disabled={!replyText.trim() || replyLoading}
+                                  style={{
+                                    padding: "4px 8px",
+                                    borderRadius: 4,
+                                    background: replyText.trim() && !replyLoading ? C.cl : C.border,
+                                    color: replyText.trim() && !replyLoading ? C.bg : C.textFaint,
+                                    border: "none",
+                                    fontFamily: C.mono,
+                                    fontSize: 9,
+                                    cursor: replyText.trim() && !replyLoading ? "pointer" : "default",
+                                    whiteSpace: "nowrap",
+                                    height: "fit-content",
+                                  }}
+                                >
+                                  {replyLoading ? "..." : "Send"}
+                                </button>
+                              </div>
+                            </div>
                           )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
