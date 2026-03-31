@@ -12,6 +12,7 @@ import { Spinner } from "@/components/primitives";
 import { NavSidebar } from "@/components/NavSidebar";
 import { PricingModal } from "@/components/pricing-modal";
 import { SettingsPanel } from "@/components/settings-panel";
+import { useMobile } from "@/lib/useMobile";
 
 /** Routes that should be publicly accessible without auth */
 const PUBLIC_ROUTES = ["/terms", "/privacy", "/home"];
@@ -33,6 +34,7 @@ function localModeEnabled() {
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const supabase = useMemo(() => createSupabaseClient(), []);
+  const isMobile = useMobile();
 
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -49,9 +51,15 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
 
   const [showSettings, setShowSettings] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
 
   const [email, setEmail] = useState("");
   const [authMsg, setAuthMsg] = useState<string | null>(null);
+
+  // Close mobile nav on route change
+  useEffect(() => {
+    setNavOpen(false);
+  }, [pathname]);
 
   async function refreshServerState() {
     try {
@@ -160,13 +168,13 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
             background: C.surface,
             border: `1px solid ${C.borderMid}`,
             borderRadius: 16,
-            padding: 24,
+            padding: isMobile ? 18 : 24,
           }}
         >
-          <div style={{ fontFamily: C.serif, fontSize: 34, fontStyle: "italic", color: C.cream }}>
+          <div style={{ fontFamily: C.serif, fontSize: isMobile ? 28 : 34, fontStyle: "italic", color: C.cream }}>
             ruh-roh. halp.
           </div>
-          <p style={{ color: C.textDim, marginTop: 8, marginBottom: 20 }}>
+          <p style={{ color: C.textDim, marginTop: 8, marginBottom: 20, fontSize: isMobile ? 13 : 14 }}>
             Sign in to access your cross-device planner, task agents, and tier settings.
           </p>
           <button
@@ -197,6 +205,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                 color: C.text,
                 borderRadius: 10,
                 padding: "10px 12px",
+                fontSize: 16, // prevents iOS zoom on focus
               }}
             />
             <button
@@ -209,6 +218,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                 padding: "10px 14px",
                 fontWeight: 600,
                 cursor: "pointer",
+                whiteSpace: "nowrap",
               }}
             >
               Magic Link
@@ -264,7 +274,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
 
   // Authed layout with sidebar
   return (
-    <div style={{ display: "flex", height: "100vh", background: C.bg, color: C.text, overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.bg, color: C.text, overflow: "hidden" }}>
       {showPricing && (
         <PricingModal
           current={tier}
@@ -301,28 +311,72 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      <NavSidebar
-        userEmail={localMode ? localEmail : user?.email}
-        onSignOut={() => void signOut()}
-      />
-
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {localMode && (
-          <div
+      {/* Mobile top bar with hamburger */}
+      {isMobile && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "10px 14px",
+            borderBottom: `1px solid ${C.border}`,
+            background: C.surface,
+            flexShrink: 0,
+            gap: 12,
+            zIndex: 10,
+          }}
+        >
+          <button
+            onClick={() => setNavOpen(true)}
             style={{
-              padding: "8px 18px",
-              borderBottom: `1px solid ${C.border}`,
-              background: `${C.cl}10`,
-              color: C.textDim,
-              fontSize: 11,
+              background: "none",
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              width: 36,
+              height: 36,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: C.cream,
+              fontSize: 18,
+              cursor: "pointer",
               flexShrink: 0,
             }}
           >
-            Local dev mode for <span style={{ color: C.cream }}>{localEmail}</span>. Agent chat, billing, and synced settings are disabled.
+            ☰
+          </button>
+          <div style={{ fontFamily: C.serif, fontSize: 17, fontStyle: "italic", color: C.cream }}>
+            ruh-roh. halp.
           </div>
-        )}
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
-          {children}
+        </div>
+      )}
+
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <NavSidebar
+          userEmail={localMode ? localEmail : user?.email}
+          onSignOut={() => void signOut()}
+          isMobile={isMobile}
+          isOpen={navOpen}
+          onClose={() => setNavOpen(false)}
+        />
+
+        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          {localMode && (
+            <div
+              style={{
+                padding: isMobile ? "6px 14px" : "8px 18px",
+                borderBottom: `1px solid ${C.border}`,
+                background: `${C.cl}10`,
+                color: C.textDim,
+                fontSize: 11,
+                flexShrink: 0,
+              }}
+            >
+              Local dev mode for <span style={{ color: C.cream }}>{localEmail}</span>. Agent chat, billing, and synced settings are disabled.
+            </div>
+          )}
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            {children}
+          </div>
         </div>
       </div>
     </div>

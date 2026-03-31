@@ -20,3 +20,34 @@ body { background: #0f1117; color: #e4e2dc; font-family: 'Instrument Sans', syst
 .dot-1 { animation: pulse 1.2s ease infinite; }
 .dot-2 { animation: pulse 1.2s .2s ease infinite; }
 .dot-3 { animation: pulse 1.2s .4s ease infinite; }
+
+/* Mobile overlay backdrop */
+.mobile-nav-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* Prevent horizontal overflow on mobile */
+  html, body { overflow-x: hidden; }
+
+  .mobile-nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 89;
+  }
+
+  /* Slide-in animation for mobile nav */
+  @keyframes slideNavIn {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+  @keyframes slideNavOut {
+    from { transform: translateX(0); }
+    to { transform: translateX(-100%); }
+  }
+  .mobile-nav-open {
+    animation: slideNavIn 0.2s ease forwards;
+  }
+}

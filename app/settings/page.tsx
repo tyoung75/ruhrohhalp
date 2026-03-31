@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { C } from "@/lib/ui";
+import { useMobile } from "@/lib/useMobile";
 
 const SETTINGS_SECTIONS = [
   {
@@ -19,8 +20,9 @@ const SETTINGS_SECTIONS = [
 ] as const;
 
 export default function SettingsPage() {
+  const isMobile = useMobile();
   return (
-    <div style={{ padding: "32px 40px", maxWidth: 720, margin: "0 auto" }}>
+    <div style={{ padding: isMobile ? "20px 14px" : "32px 40px", maxWidth: 720, margin: "0 auto" }}>
       <h1
         style={{
           fontFamily: C.serif,
