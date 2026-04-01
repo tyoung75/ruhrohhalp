@@ -8,6 +8,8 @@ import { generateBlogPost } from "@/lib/blog/generate";
 import { createBlogPR } from "@/lib/blog/github-pr";
 import { createBlogDraftEmail } from "@/lib/blog/gmail-draft";
 
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   const authError = validateWebhookSecret(request.headers.get("x-webhook-secret"));
   if (authError) return authError;
@@ -102,7 +104,7 @@ export async function POST(request: NextRequest) {
         stats: activity.stats,
       };
     },
-    { idempotencyKey },
+    { idempotencyKey, maxRetries: 1 },
   );
 
   return NextResponse.json(result);
