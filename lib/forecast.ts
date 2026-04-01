@@ -79,9 +79,16 @@ export interface ForecastInput {
   rothIraValue: number;         // Tyler + spouse Roth IRAs
   retirementValue: number;      // Fidelity 401k (pre-tax + mega backdoor Roth)
   cryptoValue: number;          // Coinbase
-  equityAwardsValue: number;    // Schwab equity awards
   cashPosition: number;         // Chase checking/savings
   totalDebt: number;
+
+  // Unvested RSU grants — each grows at CART returns until vest,
+  // then sold immediately (net of tax) and transferred to brokerage for SPY/QQQ
+  unvestedRSUs: {
+    monthOffset: number;        // months from now until vest
+    grossValue: number;         // current estimated value (pre-tax)
+  }[];
+  rsuTaxRate: number;           // e.g. 0.37 — applied at vest
 
   // Monthly contribution breakdown (actual allocation)
   monthlyBrokerageContrib: number;     // $1,000 biweekly = ~$2,167/mo to SPY/QQQ
@@ -93,15 +100,12 @@ export interface ForecastInput {
   monthlyNetIncome: number;
   monthlyExpenses: number;
 
-  // RSU vests: net of tax → goes to brokerage bucket
-  rsuVests: { monthOffset: number; netValue: number }[];
-
   // Tunable return assumptions per asset class
   brokerageReturn: AssetClassParams;
   rothIraReturn: AssetClassParams;
   retirementReturn: AssetClassParams;
   cryptoReturn: AssetClassParams;
-  equityAwardsReturn: AssetClassParams;
+  equityAwardsReturn: AssetClassParams;  // CART single-stock — applied to unvested RSUs
 
   // Growth rates
   salaryGrowthAnnual: number;
@@ -139,10 +143,14 @@ export function runNetWorthForecast(
   const eqMu = input.equityAwardsReturn.returnAnnual / 12;
   const eqSigma = input.equityAwardsReturn.volAnnual / Math.sqrt(12);
 
-  // Build RSU vest lookup
-  const rsuByMonth = new Map<number, number>();
-  for (const v of input.rsuVests) {
-    rsuByMonth.set(v.monthOffset, (rsuByMonth.get(v.monthOffset) ?? 0) + v.netValue);
+  // Build per-grant RSU tracking: each grant grows independently at CART returns
+  // until vest, then is sold (net of tax) and transferred to brokerage
+  // Group by monthOffset for vest events
+  const rsuGrantsByVestMonth = new Map<number, number[]>();
+  for (const v of input.unvestedRSUs) {
+    const list = rsuGrantsByVestMonth.get(v.monthOffset) || [];
+    list.push(v.grossValue);
+    rsuGrantsByVestMonth.set(v.monthOffset, list);
   }
 
   const allPaths: number[][] = [];
@@ -154,9 +162,13 @@ export function runNetWorthForecast(
     let rothIra = input.rothIraValue;
     let retirement = input.retirementValue;
     let crypto = input.cryptoValue;
-    let equityAwards = input.equityAwardsValue;
     let cash = input.cashPosition;
     let debt = input.totalDebt;
+
+    // Track each unvested RSU grant's current value independently
+    // They grow at CART returns each month until their vest date
+    const unvestedGrants: Array<{ vestMonth: number; currentValue: number }> =
+      input.unvestedRSUs.map((v) => ({ vestMonth: v.monthOffset, currentValue: v.grossValue }));
 
     let monthlyIncome = input.monthlyNetIncome;
     let monthlyExpenses = input.monthlyExpenses;
@@ -165,46 +177,62 @@ export function runNetWorthForecast(
     const rothContrib = input.monthlyRothIraContrib;
     const cryptoContrib = input.monthlyCryptoContrib;
 
-    path[0] = brokerage + rothIra + retirement + crypto + equityAwards + cash - debt;
+    // Initial net worth includes unvested RSUs at current pre-tax value
+    const initialUnvested = unvestedGrants.reduce((sum, g) => sum + g.currentValue, 0);
+    path[0] = brokerage + rothIra + retirement + crypto + cash - debt + initialUnvested * (1 - input.rsuTaxRate);
 
     for (let m = 1; m <= months; m++) {
-      // Each bucket gets its own stochastic return (partially correlated via equity market)
-      // Use separate random draws — they'll have natural correlation through market beta
+      // Stochastic returns per bucket
       const brokerageReturn = brokerageMu + brokerageSigma * normalRandom(rng);
       const rothReturn = rothMu + rothSigma * normalRandom(rng);
       const retReturn = retMu + retSigma * normalRandom(rng);
       const crReturn = crMu + crSigma * normalRandom(rng);
-      const eqReturn = eqMu + eqSigma * normalRandom(rng);
+      // CART return — shared across all unvested grants this month
+      const cartReturn = eqMu + eqSigma * normalRandom(rng);
 
-      // Apply returns to existing balances
+      // Apply returns to liquid account balances
       brokerage *= 1 + brokerageReturn;
       rothIra *= 1 + rothReturn;
       retirement *= 1 + retReturn;
       crypto *= 1 + crReturn;
-      equityAwards *= 1 + eqReturn;
-      // Cash earns savings rate (~4% annually, negligible vol)
-      cash *= 1 + 0.04 / 12;
+      cash *= 1 + 0.04 / 12; // savings rate
+
+      // Grow all unvested RSU grants at CART's return
+      for (const grant of unvestedGrants) {
+        if (grant.vestMonth > m) {
+          // Still unvested — CART price movement applies
+          grant.currentValue *= 1 + cartReturn;
+        }
+      }
+
+      // Vest events: sell immediately, net of tax, transfer to brokerage → SPY/QQQ
+      let vestProceeds = 0;
+      for (const grant of unvestedGrants) {
+        if (grant.vestMonth === m && grant.currentValue > 0) {
+          vestProceeds += grant.currentValue * (1 - input.rsuTaxRate);
+          grant.currentValue = 0; // fully vested and sold
+        }
+      }
+      brokerage += vestProceeds;
 
       // Annual salary/expense growth
       if (m % 12 === 0) {
         monthlyIncome *= 1 + input.salaryGrowthAnnual;
         monthlyExpenses *= 1 + input.expenseInflationAnnual;
-        // Contributions scale with salary (401k is percentage-based)
         brokerageContrib *= 1 + input.salaryGrowthAnnual;
         retirementContrib *= 1 + input.salaryGrowthAnnual;
       }
 
       // Route contributions to their specific accounts
-      brokerage += brokerageContrib;        // → SPY/QQQ
-      retirement += retirementContrib;      // → FUIPX
-      rothIra += rothContrib;               // → Growth ETFs (AVUV, VTI, IBIT, VXUS)
-      crypto += cryptoContrib;              // → BTC/ETH/XRP/SOL
+      brokerage += brokerageContrib;
+      retirement += retirementContrib;
+      rothIra += rothContrib;
+      crypto += cryptoContrib;
 
       // Monthly surplus after contributions and expenses
       const currentContribs = brokerageContrib + retirementContrib + rothContrib + cryptoContrib;
       const surplus = monthlyIncome - monthlyExpenses - currentContribs;
 
-      // Surplus: pay down debt first, then excess to cash
       if (debt > 0 && surplus > 0) {
         const debtPayment = Math.min(surplus, debt);
         debt -= debtPayment;
@@ -213,13 +241,12 @@ export function runNetWorthForecast(
         cash += surplus;
       }
 
-      // RSU vest events → add to brokerage (sold and reinvested in SPY/QQQ)
-      const rsuVest = rsuByMonth.get(m);
-      if (rsuVest) {
-        brokerage += rsuVest;
-      }
+      // Remaining unvested value (shown at after-tax estimate)
+      const remainingUnvested = unvestedGrants
+        .filter((g) => g.vestMonth > m)
+        .reduce((sum, g) => sum + g.currentValue, 0);
 
-      path[m] = brokerage + rothIra + retirement + crypto + equityAwards + cash - debt;
+      path[m] = brokerage + rothIra + retirement + crypto + cash - debt + remainingUnvested * (1 - input.rsuTaxRate);
     }
 
     allPaths.push(path);
@@ -255,11 +282,11 @@ export function runNetWorthForecast(
 }
 
 // ── Helper: convert RSU vest schedule to month offsets ──────────
+// Returns GROSS (pre-tax) values — tax is applied at vest time in the simulation
 
 export function rsuVestsToMonthOffsets(
-  vests: Array<{ vestDate: string; estimatedValue: number | null; status: string }>,
-  taxRate: number = 0.37
-): Array<{ monthOffset: number; netValue: number }> {
+  vests: Array<{ vestDate: string; estimatedValue: number | null; status: string }>
+): Array<{ monthOffset: number; grossValue: number }> {
   const now = new Date();
   const nowMonth = now.getFullYear() * 12 + now.getMonth();
 
@@ -271,7 +298,7 @@ export function rsuVestsToMonthOffsets(
       const monthOffset = vestMonth - nowMonth;
       return {
         monthOffset: Math.max(0, monthOffset),
-        netValue: (v.estimatedValue ?? 0) * (1 - taxRate),
+        grossValue: v.estimatedValue ?? 0,
       };
     })
     .filter((v) => v.monthOffset >= 0);
