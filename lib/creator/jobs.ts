@@ -196,13 +196,14 @@ export async function publishQueuedPosts(
   }
 
   // Pull publish candidates
-  // Manual trigger: publish all queued posts regardless of schedule
-  // Automated cron: only posts whose scheduled time has arrived
+  // Both manual and automated: only publish posts whose scheduled time has arrived.
+  // Future-scheduled posts are always preserved for their scheduled time.
   let query = supabase
     .from("content_queue")
     .select("*")
     .eq("user_id", userId)
     .eq("status", "queued")
+    .lte("scheduled_for", now)
     .order("scheduled_for", { ascending: true })
     .limit(50);
 
@@ -210,10 +211,6 @@ export async function publishQueuedPosts(
   // Non-Threads content stays in queue as drafts for manual review
   if (options.platformFilter) {
     query = query.eq("platform", options.platformFilter);
-  }
-
-  if (!options.manual) {
-    query = query.lte("scheduled_for", now);
   }
 
   const { data: candidates, error: fetchError } = await query;
@@ -386,6 +383,14 @@ export async function publishSinglePost(
 
   if (post.status === "rejected") {
     return { success: false, error: "Post was rejected" };
+  }
+
+  // Block publishing if scheduled for the future
+  if (post.scheduled_for && new Date(post.scheduled_for) > new Date()) {
+    return {
+      success: false,
+      error: `Post is scheduled for ${new Date(post.scheduled_for).toLocaleString()}. Remove the schedule or wait until the scheduled time.`,
+    };
   }
 
   // Mark as posting

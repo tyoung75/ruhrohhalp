@@ -1846,7 +1846,7 @@ function QueueTab() {
                             }}
                           />
                         )}
-                        {(item.status === "draft" || item.status === "queued") && (
+                        {(item.status === "draft" || item.status === "queued") && !(item.scheduled_for && new Date(item.scheduled_for) > new Date()) && (
                           <ActionBtn
                             label={publishingId === item.id ? "Publishing..." : "Publish"}
                             color="#6fcf9a"
