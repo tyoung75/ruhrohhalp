@@ -56,14 +56,16 @@ export async function POST(request: NextRequest) {
       if (!dryRun) {
         try {
           prResult = await createBlogPR(post.slug, post.markdown, post.title);
-        } catch {
-          prResult = null;
+        } catch (err) {
+          console.error("[weekly-dev-log] createBlogPR threw:", err);
+          prResult = { ok: false as const, error: err instanceof Error ? err.message : "unknown_pr_error" };
         }
 
         try {
           gmailResult = await createBlogDraftEmail(post, draft.id, activity.weekStartIso);
-        } catch {
-          gmailResult = null;
+        } catch (err) {
+          console.error("[weekly-dev-log] createBlogDraftEmail threw:", err);
+          gmailResult = { ok: false as const, error: err instanceof Error ? err.message : "unknown_gmail_error" };
         }
       }
 
