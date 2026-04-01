@@ -385,14 +385,6 @@ export async function publishSinglePost(
     return { success: false, error: "Post was rejected" };
   }
 
-  // Block publishing if scheduled for the future
-  if (post.scheduled_for && new Date(post.scheduled_for) > new Date()) {
-    return {
-      success: false,
-      error: `Post is scheduled for ${new Date(post.scheduled_for).toLocaleString()}. Remove the schedule or wait until the scheduled time.`,
-    };
-  }
-
   // Mark as posting
   await supabase
     .from("content_queue")
