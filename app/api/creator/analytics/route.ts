@@ -148,6 +148,15 @@ export async function GET(request: NextRequest) {
       queueStatus[status] = (queueStatus[status] ?? 0) + 1;
     }
 
+    // 8. Most recent analytics pull timestamp
+    const { data: latestFetch } = await supabase
+      .from("post_analytics")
+      .select("fetched_at")
+      .eq("user_id", user.id)
+      .order("fetched_at", { ascending: false })
+      .limit(1)
+      .single();
+
     return NextResponse.json({
       period: { days, since },
       overview: {
@@ -162,6 +171,7 @@ export async function GET(request: NextRequest) {
       daily_trend: trend,
       platforms,
       queue_status: queueStatus,
+      last_fetched_at: (latestFetch?.fetched_at as string) ?? null,
     });
   } catch (error) {
     return NextResponse.json(
