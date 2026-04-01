@@ -30,6 +30,15 @@ export async function createBlogPR(slug: string, markdown: string, title: string
     sha: base.data.commit.sha,
   }).catch(() => null);
 
+  // Fetch existing file sha if the branch/file already exists (e.g. from a previous failed run)
+  const existing = await octokit.repos.getContent({
+    owner: SITE_REPO_OWNER,
+    repo: SITE_REPO_NAME,
+    path: filePath,
+    ref: branch,
+  }).catch(() => null);
+  const existingSha = existing?.data && "sha" in existing.data ? existing.data.sha : undefined;
+
   await octokit.repos.createOrUpdateFileContents({
     owner: SITE_REPO_OWNER,
     repo: SITE_REPO_NAME,
@@ -37,18 +46,28 @@ export async function createBlogPR(slug: string, markdown: string, title: string
     branch,
     message: `Add weekly dev log: ${slug}`,
     content: b64(markdown),
+    sha: existingSha,
   });
 
-  const pr = await octokit.pulls.create({
+  // Re-use existing PR for this branch if one is already open
+  const existingPRs = await octokit.pulls.list({
     owner: SITE_REPO_OWNER,
     repo: SITE_REPO_NAME,
-    title,
-    body: "Automated weekly dev log draft for review.",
-    base: BASE_BRANCH,
-    head: branch,
+    head: `${SITE_REPO_OWNER}:${branch}`,
+    state: "open",
   });
 
-  return { ok: true as const, url: pr.data.html_url, number: pr.data.number, branch, filePath };
+  const pr = existingPRs.data[0]
+    ?? (await octokit.pulls.create({
+        owner: SITE_REPO_OWNER,
+        repo: SITE_REPO_NAME,
+        title,
+        body: "Automated weekly dev log draft for review.",
+        base: BASE_BRANCH,
+        head: branch,
+      })).data;
+
+  return { ok: true as const, url: pr.html_url, number: pr.number, branch, filePath };
 }
 
 export async function updateBlogPR(prNumber: number, slug: string, markdown: string) {
