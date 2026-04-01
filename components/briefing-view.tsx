@@ -76,6 +76,8 @@ export function BriefingView() {
   const [dismissedFingerprints, setDismissedFingerprints] = useState<Set<string>>(new Set());
   const [dismissedItemIds, setDismissedItemIds] = useState<Set<string>>(new Set());
   const [actionTaken, setActionTaken] = useState<Map<string, string>>(new Map());
+  const [actionPending, setActionPending] = useState<Set<string>>(new Set());
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [replyOpenItemKey, setReplyOpenItemKey] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
   const [replyLoading, setReplyLoading] = useState(false);
@@ -161,27 +163,43 @@ export function BriefingView() {
     }
   }
 
+  // Show a toast notification
+  function showToast(msg: string) {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 2500);
+  }
+
   // Fixed: sends correct payload matching /api/feedback POST schema
   async function handleFeedback(itemId: string | undefined, helpful: boolean, sectionTitle: string, itemText: string) {
     if (!itemId) return;
+    // Optimistic update
+    setFeedbackGiven((prev) => new Set([...prev, `${itemId}-${helpful}`]));
+    showToast(helpful ? "Marked as helpful" : "Marked as not helpful");
     try {
       await api("/api/feedback", {
         method: "POST",
         body: JSON.stringify({
           section: sectionTitle,
-          action: helpful ? "helpful" : "not_helpful",
+          action: helpful ? "thumbs_up" : "thumbs_down",
           note: itemText,
           briefing_id: briefing?.id,
         }),
       });
-      setFeedbackGiven((prev) => new Set([...prev, `${itemId}-${helpful}`]));
     } catch (e) {
       console.error("Feedback error:", e);
+      // Revert on failure
+      setFeedbackGiven((prev) => { const next = new Set(prev); next.delete(`${itemId}-${helpful}`); return next; });
+      showToast("Failed to save feedback");
     }
   }
 
-  // Persistent dismiss via signal fingerprint
+  // Persistent dismiss via signal fingerprint — optimistic
   async function handleDismissItem(itemText: string) {
+    // Optimistic: hide immediately
+    const fp = buildFingerprint(itemText);
+    setDismissedFingerprints((prev) => new Set([...prev, fp]));
+    setDismissedItemIds((prev) => new Set([...prev, itemText]));
+    showToast("Dismissed — won't show again");
     try {
       await api("/api/signals/dismiss", {
         method: "POST",
@@ -191,29 +209,57 @@ export function BriefingView() {
           source: "briefing",
         }),
       });
-      const fp = buildFingerprint(itemText);
-      setDismissedFingerprints((prev) => new Set([...prev, fp]));
-      setDismissedItemIds((prev) => new Set([...prev, itemText]));
     } catch (e) {
       console.error("Dismiss error:", e);
+      // Revert on failure
+      setDismissedFingerprints((prev) => { const next = new Set(prev); next.delete(fp); return next; });
+      setDismissedItemIds((prev) => { const next = new Set(prev); next.delete(itemText); return next; });
+      showToast("Dismiss failed — item restored");
     }
   }
 
-  // Mark as already done or won't do
-  async function handleActionTaken(itemId: string, itemText: string, sectionTitle: string, action: "already_done" | "wont_do") {
+  // Mark as already done or won't do — optimistic, stores via signal reply + dismiss APIs
+  // (avoids the feedback table's CHECK constraint on action values)
+  async function handleActionTaken(itemId: string, itemText: string, _sectionTitle: string, action: "already_done" | "wont_do") {
+    // Optimistic update — show feedback immediately
+    const fp = buildFingerprint(itemText);
+    setActionTaken((prev) => new Map([...prev, [itemId, action]]));
+    setActionPending((prev) => new Set([...prev, itemId]));
+    showToast(action === "already_done" ? "Marked as done" : "Skipped — won't suggest again");
+
     try {
-      await api("/api/feedback", {
+      const replyMsg = action === "already_done"
+        ? "ALREADY DONE — I completed this. Do not suggest again."
+        : "WON'T DO — skipping this. Do not suggest again.";
+
+      // 1. Save as a signal reply so the AI learns
+      await api("/api/signals/reply", {
         method: "POST",
         body: JSON.stringify({
-          section: sectionTitle,
-          action,
-          note: itemText,
-          briefing_id: briefing?.id,
+          signal_text: itemText,
+          reply: replyMsg,
+          scope: "specific",
         }),
       });
-      setActionTaken((prev) => new Map([...prev, [itemId, action]]));
+
+      // 2. Dismiss so it doesn't resurface
+      await api("/api/signals/dismiss", {
+        method: "POST",
+        body: JSON.stringify({
+          text: itemText,
+          category: "briefing",
+          source: action === "already_done" ? "done" : "wont_do",
+        }),
+      });
+
+      setDismissedFingerprints((prev) => new Set([...prev, fp]));
     } catch (e) {
       console.error("Action error:", e);
+      // Revert on failure
+      setActionTaken((prev) => { const next = new Map(prev); next.delete(itemId); return next; });
+      showToast("Action failed — please try again");
+    } finally {
+      setActionPending((prev) => { const next = new Set(prev); next.delete(itemId); return next; });
     }
   }
 
@@ -237,12 +283,16 @@ export function BriefingView() {
     }
   }
 
-  // Submit reply
+  // Submit reply — optimistic
   async function handleSubmitReply(itemText: string) {
     if (!replyText.trim()) return;
+    const text = replyText.trim();
     setReplyLoading(true);
+    // Optimistic: show reply in history immediately
+    setReplyText("");
+    setReplyHistory((prev) => [{ reply: text, created_at: new Date().toISOString() }, ...prev]);
+    showToast("Reply saved");
     try {
-      const text = replyText.trim();
       await api("/api/signals/reply", {
         method: "POST",
         body: JSON.stringify({
@@ -251,10 +301,11 @@ export function BriefingView() {
           scope: "specific",
         }),
       });
-      setReplyText("");
-      setReplyHistory((prev) => [{ reply: text, created_at: new Date().toISOString() }, ...prev]);
     } catch (e) {
       console.error("Reply error:", e);
+      // Revert on failure
+      setReplyHistory((prev) => prev.filter((r) => r.reply !== text));
+      showToast("Reply failed to save");
     } finally {
       setReplyLoading(false);
     }
@@ -391,7 +442,29 @@ export function BriefingView() {
     : null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 16, position: "relative" }}>
+      {/* Toast notification */}
+      {toastMsg && (
+        <div style={{
+          position: "absolute",
+          top: 8,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 50,
+          padding: "6px 14px",
+          borderRadius: 6,
+          background: C.card,
+          border: `1px solid ${C.cl}`,
+          color: C.cream,
+          fontFamily: C.mono,
+          fontSize: 10,
+          boxShadow: `0 4px 12px ${C.bg}88`,
+          animation: "fadeIn 0.15s ease-out",
+          whiteSpace: "nowrap",
+        }}>
+          {toastMsg}
+        </div>
+      )}
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 12, borderBottom: `1px solid ${C.border}` }}>
         <div>
@@ -577,20 +650,28 @@ export function BriefingView() {
                             {/* Already Done */}
                             <button
                               onClick={() => handleActionTaken(itemKey, item.text, section.title, "already_done")}
-                              disabled={itemAction === "already_done"}
+                              disabled={!!itemAction || actionPending.has(itemKey)}
                               title="Already done"
-                              style={compactBtn(itemAction === "already_done", C.gpt)}
+                              style={{
+                                ...compactBtn(itemAction === "already_done", C.gpt),
+                                ...(itemAction === "already_done" ? { background: C.gpt, color: C.bg, fontWeight: 700, borderColor: C.gpt } : {}),
+                                ...(actionPending.has(itemKey) ? { opacity: 0.6 } : {}),
+                              }}
                             >
-                              ✓ Done
+                              {actionPending.has(itemKey) && itemAction === "already_done" ? "Saving…" : "✓ Done"}
                             </button>
                             {/* Won't Do / Skip */}
                             <button
                               onClick={() => handleActionTaken(itemKey, item.text, section.title, "wont_do")}
-                              disabled={itemAction === "wont_do"}
+                              disabled={!!itemAction || actionPending.has(itemKey)}
                               title="Won't do"
-                              style={compactBtn(itemAction === "wont_do", C.reminder)}
+                              style={{
+                                ...compactBtn(itemAction === "wont_do", C.reminder),
+                                ...(itemAction === "wont_do" ? { background: C.reminder, color: C.bg, fontWeight: 700, borderColor: C.reminder } : {}),
+                                ...(actionPending.has(itemKey) ? { opacity: 0.6 } : {}),
+                              }}
                             >
-                              ✗ Skip
+                              {actionPending.has(itemKey) && itemAction === "wont_do" ? "Saving…" : "✗ Skip"}
                             </button>
                             {/* Reply */}
                             <button
