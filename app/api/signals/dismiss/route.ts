@@ -55,34 +55,32 @@ export async function POST(request: NextRequest) {
   const fingerprint = buildFingerprint(text);
   const supabase = createAdminClient();
 
-  // Try insert first; if duplicate, just return success
+  // Plain insert — the partial unique index (user_id, fingerprint WHERE active = true)
+  // can't be used with PostgREST's upsert/onConflict, so we insert and catch duplicates.
   const { data, error } = await supabase
     .from("signal_dismissals")
-    .upsert(
-      {
-        user_id: user.id,
-        fingerprint,
-        original_text: text,
-        category: category ?? null,
-        source: source ?? null,
-        active: true,
-        created_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,fingerprint" }
-    )
-    .select();
+    .insert({
+      user_id: user.id,
+      fingerprint,
+      original_text: text,
+      category: category ?? null,
+      source: source ?? null,
+      active: true,
+      created_at: new Date().toISOString(),
+    })
+    .select()
+    .single();
 
-  // If upsert returned data, use first row; otherwise treat as success (already dismissed)
   if (error) {
-    // Ignore duplicate-key errors — the signal is already dismissed
-    if (error.message.includes("duplicate") || error.code === "23505") {
+    // Duplicate-key from the partial unique index → already dismissed, treat as success
+    if (error.code === "23505" || error.message.includes("duplicate")) {
       return NextResponse.json({ dismissal: null, fingerprint, already_dismissed: true }, { status: 200 });
     }
-    console.error("[signal_dismissals.upsert]", JSON.stringify(error));
+    console.error("[signal_dismissals.insert]", JSON.stringify(error));
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ dismissal: data?.[0] ?? null, fingerprint }, { status: 201 });
+  return NextResponse.json({ dismissal: data, fingerprint }, { status: 201 });
 }
 
 /**
