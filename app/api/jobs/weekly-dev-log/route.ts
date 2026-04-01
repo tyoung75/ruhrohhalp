@@ -15,8 +15,11 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const lookbackDays = Number(body.lookback_days ?? 7);
   const dryRun = Boolean(body.dry_run ?? false);
+  const force = Boolean(body.force ?? false);
 
-  const idempotencyKey = `weekly-dev-log:${new Date().toISOString().slice(0, 10)}:${lookbackDays}:${dryRun}`;
+  const idempotencyKey = force
+    ? undefined
+    : `weekly-dev-log:${new Date().toISOString().slice(0, 10)}:${lookbackDays}:${dryRun}`;
 
   const result = await runJob(
     "weekly-dev-log",
@@ -69,6 +72,9 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      const hasCriticalFailure = !dryRun && (!prResult?.ok || !gmailResult?.ok);
+
+      // Always save partial results for debugging
       await supabase
         .from("blog_drafts")
         .update({
@@ -78,6 +84,14 @@ export async function POST(request: NextRequest) {
           gmail_message_id: gmailResult && gmailResult.ok ? gmailResult.messageId : null,
         })
         .eq("id", draft.id);
+
+      // Throw on partial failure so runJob retries instead of caching a broken result
+      if (hasCriticalFailure) {
+        const failures: string[] = [];
+        if (!prResult?.ok) failures.push(`PR: ${prResult?.error ?? "null"}`);
+        if (!gmailResult?.ok) failures.push(`Gmail: ${gmailResult?.error ?? "null"}`);
+        throw new Error(`Partial failure — ${failures.join(", ")}. Draft saved as ${draft.id}`);
+      }
 
       return {
         ok: true,
