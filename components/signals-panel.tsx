@@ -946,27 +946,6 @@ export function SignalsPanel() {
   const [deadLetterAlerts, setDeadLetterAlerts] = useState<DeadLetterAlert[]>([]);
   const [contentReviewItems, setContentReviewItems] = useState<ContentReviewItem[]>([]);
 
-  const refreshSignals = useCallback(async () => {
-    try {
-      setGenerating(true);
-      setError("");
-      await loadSignals();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to refresh signals";
-      setError(msg);
-      console.error("Failed to refresh signals:", e);
-    } finally {
-      setGenerating(false);
-    }
-  }, [loadSignals]);
-
-  // Handler when a signal is dismissed from a card
-  const handleSignalDismissed = useCallback((signal: Signal) => {
-    const fp = buildFingerprint(signal.text);
-    setDismissedFingerprints((prev) => new Set([...prev, fp]));
-    setSignals((prev) => prev.filter((s) => s.id !== signal.id));
-  }, []);
-
   const loadSignals = useCallback(async () => {
     try {
       // Load dismissals in parallel with signals
@@ -1079,6 +1058,27 @@ export function SignalsPanel() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const refreshSignals = useCallback(async () => {
+    try {
+      setGenerating(true);
+      setError("");
+      await loadSignals();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to refresh signals";
+      setError(msg);
+      console.error("Failed to refresh signals:", e);
+    } finally {
+      setGenerating(false);
+    }
+  }, [loadSignals]);
+
+  // Handler when a signal is dismissed from a card
+  const handleSignalDismissed = useCallback((signal: Signal) => {
+    const fp = buildFingerprint(signal.text);
+    setDismissedFingerprints((prev) => new Set([...prev, fp]));
+    setSignals((prev) => prev.filter((s) => s.id !== signal.id));
   }, []);
 
   useEffect(() => {
