@@ -914,6 +914,8 @@ function QueueTab() {
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [replyOpenId, setReplyOpenId] = useState<string | null>(null);
+  const [schedulingId, setSchedulingId] = useState<string | null>(null);
+  const [scheduleDate, setScheduleDate] = useState("");
   const [postsPerJob, setPostsPerJob] = useState(2);
   const [savingPostsPerJob, setSavingPostsPerJob] = useState(false);
   const [postsPerJobMessage, setPostsPerJobMessage] = useState<string | null>(null);
@@ -1802,6 +1804,39 @@ function QueueTab() {
                         )}
                         {(item.status === "draft" || item.status === "queued") && (
                           <ActionBtn
+                            label="Schedule"
+                            color={C.gold}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (schedulingId === item.id) {
+                                setSchedulingId(null);
+                              } else {
+                                setSchedulingId(item.id);
+                                // Pre-fill with existing schedule or default to tomorrow 9am
+                                if (item.scheduled_for) {
+                                  setScheduleDate(new Date(item.scheduled_for).toISOString().slice(0, 16));
+                                } else {
+                                  const tomorrow = new Date();
+                                  tomorrow.setDate(tomorrow.getDate() + 1);
+                                  tomorrow.setHours(9, 0, 0, 0);
+                                  setScheduleDate(tomorrow.toISOString().slice(0, 16));
+                                }
+                              }
+                            }}
+                          />
+                        )}
+                        {(item.status === "queued" || item.status === "approved") && (
+                          <ActionBtn
+                            label="Save to Drafts"
+                            color={C.textDim}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateItem(item.id, { status: "draft" });
+                            }}
+                          />
+                        )}
+                        {(item.status === "draft" || item.status === "queued") && (
+                          <ActionBtn
                             label={publishingId === item.id ? "Publishing..." : "Publish"}
                             color="#6fcf9a"
                             disabled={publishingId === item.id}
@@ -1835,6 +1870,69 @@ function QueueTab() {
                     )}
                   </div>
                 </div>
+
+                {/* Inline schedule picker */}
+                {schedulingId === item.id && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      padding: "10px 14px",
+                      background: `${C.gold}08`,
+                      border: `1px solid ${C.gold}20`,
+                      borderRadius: 6,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      animation: "fadeUp 0.15s ease both",
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span style={{ fontFamily: C.mono, fontSize: 10, color: C.gold, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                      Schedule for:
+                    </span>
+                    <input
+                      type="datetime-local"
+                      value={scheduleDate}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                      min={new Date().toISOString().slice(0, 16)}
+                      style={{
+                        background: C.surface,
+                        border: `1px solid ${C.borderMid}`,
+                        borderRadius: 4,
+                        color: C.text,
+                        fontFamily: C.mono,
+                        fontSize: 11,
+                        padding: "5px 10px",
+                      }}
+                    />
+                    <ActionBtn
+                      label={saving ? "Scheduling..." : "Confirm Schedule"}
+                      color={C.gold}
+                      disabled={saving || !scheduleDate}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const scheduledFor = new Date(scheduleDate).toISOString();
+                        updateItem(item.id, {
+                          scheduled_for: scheduledFor,
+                          status: "queued",
+                        });
+                        setSchedulingId(null);
+                      }}
+                    />
+                    <ActionBtn
+                      label="Cancel"
+                      color={C.textDim}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSchedulingId(null);
+                      }}
+                    />
+                    <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint }}>
+                      Post will auto-publish at the scheduled time.
+                    </span>
+                  </div>
+                )}
 
                 {/* Expanded details */}
                 {isExpanded && !isEditing && (
