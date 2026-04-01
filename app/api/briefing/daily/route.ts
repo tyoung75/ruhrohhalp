@@ -14,27 +14,36 @@ interface DirectContext {
   openTasks: { title: string; description: string | null; priority_num: number | null; due_date: string | null; state: string | null }[];
   activeGoals: { title: string; description: string | null; pillar_name: string | null; progress_current: string | null; progress_target: string | null; target_date: string | null }[];
   recentFeedback: { action: string; note: string; created_at: string }[];
-  /** Recently completed tasks (last 7 days) — so the AI knows what's already done */
-  recentlyCompleted: { title: string; updated_at: string }[];
-  /** Recent emails and calendar events from memory store */
-  recentActivity: { content: string; source: string; created_at: string }[];
-  /** Aggregated feedback context: dismissals, replies, directives, done/skip actions */
   feedbackContext: {
-    dismissedTexts: string[];
-    alreadyDoneItems: string[];
-    wontDoItems: string[];
-    signalReplies: { signal_text: string; reply: string; scope: string }[];
-    taskReplies: { task_id: string; reply: string }[];
+    dismissedSignals: string[];
+    alreadyDone: string[];
+    wontDo: string[];
+    signalReplies: { signal_text: string; reply: string; scope: string; created_at: string }[];
+    taskReplies: { task_title: string; reply: string; created_at: string }[];
   };
+  recentlyCompleted: { title: string; completed_at: string }[];
+  recentActivity: { content: string; created_at: string }[];
 }
 
 async function fetchDirectContext(userId: string): Promise<DirectContext> {
   const supabase = createAdminClient();
-
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Fetch open tasks (not done/cancelled), ordered by priority
-  const [{ data: tasks }, { data: goals }, { data: completedTasks }, { data: recentMemories }] = await Promise.all([
+  // Run all queries in parallel for performance
+  const [
+    tasksResult,
+    goalsResult,
+    feedbackResult,
+    dismissalsResult,
+    alreadyDoneResult,
+    wontDoResult,
+    signalRepliesResult,
+    taskRepliesResult,
+    completedTasksResult,
+    recentMemoriesResult,
+  ] = await Promise.all([
+    // Open tasks (not done/cancelled), ordered by priority
     supabase
       .from("tasks")
       .select("title, description, priority_num, due_date, state")
@@ -42,6 +51,7 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
       .not("state", "in", '("done","cancelled")')
       .order("priority_num", { ascending: true, nullsFirst: false })
       .limit(15),
+
     // Active goals with pillar context
     supabase
       .from("goals")
@@ -49,29 +59,8 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
       .eq("user_id", userId)
       .eq("status", "active")
       .limit(10),
-    // Recently completed tasks (last 7 days) — critical for awareness
-    supabase
-      .from("tasks")
-      .select("title, updated_at")
-      .eq("user_id", userId)
-      .eq("state", "done")
-      .gte("updated_at", sevenDaysAgo)
-      .order("updated_at", { ascending: false })
-      .limit(20),
-    // Recent emails and calendar memories (last 7 days)
-    supabase
-      .from("memories")
-      .select("content, source, created_at")
-      .eq("user_id", userId)
-      .in("source", ["manual", "meeting", "email", "gmail", "calendar"])
-      .gte("created_at", sevenDaysAgo)
-      .order("created_at", { ascending: false })
-      .limit(20),
-  ]);
 
-  // Fetch recent leverage_tasks feedback (last 30 days, unapplied)
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const [feedbackRes, dismissalsRes, alreadyDoneRes, wontDoRes, signalRepliesRes, taskRepliesRes] = await Promise.all([
+    // Recent leverage_tasks feedback (last 30 days)
     supabase
       .from("feedback")
       .select("action, note, created_at")
@@ -80,61 +69,79 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
       .gte("created_at", thirtyDaysAgo)
       .order("created_at", { ascending: false })
       .limit(20),
-    // Signal dismissals — items Tyler explicitly suppressed
+
+    // Dismissed signals — items Tyler never wants to see again
     supabase
       .from("signal_dismissals")
       .select("original_text")
       .eq("user_id", userId)
-      .eq("active", true)
-      .order("created_at", { ascending: false })
       .limit(50),
-    // "Already done" feedback — things Tyler already completed
-    supabase
-      .from("feedback")
-      .select("note")
-      .eq("user_id", userId)
-      .eq("action", "already_done")
-      .gte("created_at", thirtyDaysAgo)
-      .order("created_at", { ascending: false })
-      .limit(30),
-    // "Won't do" feedback — things Tyler chose to skip
-    supabase
-      .from("feedback")
-      .select("note")
-      .eq("user_id", userId)
-      .eq("action", "wont_do")
-      .gte("created_at", thirtyDaysAgo)
-      .order("created_at", { ascending: false })
-      .limit(30),
-    // Signal replies (unapplied) — direct feedback on specific signals
+
+    // Feedback marked "already_done" via signal replies
     supabase
       .from("signal_replies")
-      .select("signal_text, reply, scope")
+      .select("signal_text, reply, created_at")
       .eq("user_id", userId)
-      .eq("applied", false)
-      .order("created_at", { ascending: false })
+      .ilike("reply", "%ALREADY DONE%")
+      .gte("created_at", thirtyDaysAgo)
       .limit(30),
-    // Task replies (unapplied) — direct feedback on tasks
+
+    // Feedback marked "wont_do" via signal replies
+    supabase
+      .from("signal_replies")
+      .select("signal_text, reply, created_at")
+      .eq("user_id", userId)
+      .ilike("reply", "%WON'T DO%")
+      .gte("created_at", thirtyDaysAgo)
+      .limit(30),
+
+    // All signal replies (for specific/broad directives)
+    supabase
+      .from("signal_replies")
+      .select("signal_text, reply, scope, created_at")
+      .eq("user_id", userId)
+      .gte("created_at", thirtyDaysAgo)
+      .order("created_at", { ascending: false })
+      .limit(40),
+
+    // Task-specific replies
     supabase
       .from("task_replies")
-      .select("task_id, reply")
+      .select("reply, created_at, tasks(title)")
       .eq("user_id", userId)
-      .eq("applied", false)
+      .gte("created_at", thirtyDaysAgo)
       .order("created_at", { ascending: false })
       .limit(20),
+
+    // Recently completed tasks (last 7 days) — so briefing knows what's done
+    supabase
+      .from("tasks")
+      .select("title, updated_at")
+      .eq("user_id", userId)
+      .eq("state", "done")
+      .gte("updated_at", sevenDaysAgo)
+      .order("updated_at", { ascending: false })
+      .limit(15),
+
+    // Recent ingested memories (emails, calendar, etc.) for activity awareness
+    supabase
+      .from("memories")
+      .select("content, created_at")
+      .eq("user_id", userId)
+      .gte("created_at", sevenDaysAgo)
+      .order("created_at", { ascending: false })
+      .limit(10),
   ]);
 
-  const feedback = feedbackRes.data;
-
   return {
-    openTasks: (tasks ?? []).map((t) => ({
+    openTasks: (tasksResult.data ?? []).map((t) => ({
       title: t.title,
       description: t.description,
       priority_num: t.priority_num,
       due_date: t.due_date,
       state: t.state,
     })),
-    activeGoals: (goals ?? []).map((g) => ({
+    activeGoals: (goalsResult.data ?? []).map((g) => ({
       title: g.title,
       description: g.description,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -143,34 +150,36 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
       progress_target: g.progress_target,
       target_date: g.target_date,
     })),
-    recentFeedback: (feedback ?? []).map((f) => ({
+    recentFeedback: (feedbackResult.data ?? []).map((f) => ({
       action: f.action,
       note: f.note,
       created_at: f.created_at,
     })),
-    recentlyCompleted: (completedTasks ?? []).map((t) => ({
-      title: t.title,
-      updated_at: t.updated_at,
-    })),
-    recentActivity: (recentMemories ?? []).map((m) => ({
-      content: typeof m.content === "string" ? m.content.slice(0, 200) : "",
-      source: m.source,
-      created_at: m.created_at,
-    })),
     feedbackContext: {
-      dismissedTexts: (dismissalsRes.data ?? []).map((d) => d.original_text),
-      alreadyDoneItems: (alreadyDoneRes.data ?? []).map((d) => d.note),
-      wontDoItems: (wontDoRes.data ?? []).map((d) => d.note),
-      signalReplies: (signalRepliesRes.data ?? []).map((r) => ({
+      dismissedSignals: (dismissalsResult.data ?? []).map((d) => d.original_text).filter(Boolean),
+      alreadyDone: (alreadyDoneResult.data ?? []).map((d) => d.signal_text).filter(Boolean),
+      wontDo: (wontDoResult.data ?? []).map((d) => d.signal_text).filter(Boolean),
+      signalReplies: (signalRepliesResult.data ?? []).map((r) => ({
         signal_text: r.signal_text,
         reply: r.reply,
         scope: r.scope,
+        created_at: r.created_at,
       })),
-      taskReplies: (taskRepliesRes.data ?? []).map((r) => ({
-        task_id: r.task_id,
+      taskReplies: (taskRepliesResult.data ?? []).map((r) => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        task_title: (r as any).tasks?.title ?? "Unknown task",
         reply: r.reply,
+        created_at: r.created_at,
       })),
     },
+    recentlyCompleted: (completedTasksResult.data ?? []).map((t) => ({
+      title: t.title,
+      completed_at: t.updated_at,
+    })),
+    recentActivity: (recentMemoriesResult.data ?? []).map((m) => ({
+      content: typeof m.content === "string" ? m.content.slice(0, 200) : JSON.stringify(m.content).slice(0, 200),
+      created_at: m.created_at,
+    })),
   };
 }
 
@@ -201,25 +210,9 @@ function formatDirectContext(ctx: DirectContext): string {
     parts.push(`## Active Goals (${ctx.activeGoals.length} total)\n${goalLines.join("\n")}`);
   }
 
-  if (ctx.recentlyCompleted.length > 0) {
-    const completedLines = ctx.recentlyCompleted.map((t) => {
-      const when = new Date(t.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      return `- ${t.title} (completed ${when})`;
-    });
-    parts.push(`## Recently Completed Tasks (last 7 days — DO NOT suggest these again)\n${completedLines.join("\n")}`);
-  }
-
-  if (ctx.recentActivity.length > 0) {
-    const activityLines = ctx.recentActivity.map((a) => {
-      const when = new Date(a.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      return `- [${a.source}] ${a.content} (${when})`;
-    });
-    parts.push(`## Recent Activity (emails, calendar, meetings)\n${activityLines.join("\n")}`);
-  }
-
   if (ctx.recentFeedback.length > 0) {
-    const thumbsUp = ctx.recentFeedback.filter((f) => f.action === "thumbs_up" || f.action === "helpful");
-    const thumbsDown = ctx.recentFeedback.filter((f) => f.action === "thumbs_down" || f.action === "not_helpful");
+    const thumbsUp = ctx.recentFeedback.filter((f) => f.action === "thumbs_up");
+    const thumbsDown = ctx.recentFeedback.filter((f) => f.action === "thumbs_down");
 
     const feedbackLines: string[] = [];
     if (thumbsDown.length > 0) {
@@ -233,47 +226,50 @@ function formatDirectContext(ctx: DirectContext): string {
     parts.push(`## Recent Leverage Feedback\n${feedbackLines.join("\n")}`);
   }
 
-  // === Comprehensive feedback context ===
+  // ---- NEW: Feedback context from inline controls ----
+
   const fc = ctx.feedbackContext;
 
-  if (fc.alreadyDoneItems.length > 0) {
-    parts.push(
-      `## ALREADY COMPLETED (DO NOT suggest these again — Tyler already did them)\n${fc.alreadyDoneItems.map((t) => `- ${t}`).join("\n")}`
-    );
+  // Already completed items — NEVER suggest these again
+  if (fc.alreadyDone.length > 0) {
+    parts.push(`## ALREADY COMPLETED (do NOT suggest these)\n${fc.alreadyDone.map((t) => `- ${t}`).join("\n")}`);
   }
 
-  if (fc.wontDoItems.length > 0) {
-    parts.push(
-      `## WON'T DO (Tyler explicitly chose to skip these — do NOT resurface)\n${fc.wontDoItems.map((t) => `- ${t}`).join("\n")}`
-    );
+  // Won't do items — Tyler explicitly declined these
+  if (fc.wontDo.length > 0) {
+    parts.push(`## WON'T DO (Tyler declined — do NOT suggest these)\n${fc.wontDo.map((t) => `- ${t}`).join("\n")}`);
   }
 
-  if (fc.dismissedTexts.length > 0) {
-    parts.push(
-      `## DISMISSED SIGNALS (suppress similar topics — Tyler doesn't want to see these)\n${fc.dismissedTexts.slice(0, 20).map((t) => `- "${t.slice(0, 80)}"`).join("\n")}`
-    );
+  // Dismissed signals — permanently hidden
+  if (fc.dismissedSignals.length > 0) {
+    parts.push(`## DISMISSED SIGNALS (never show again)\n${fc.dismissedSignals.map((t) => `- ${t}`).join("\n")}`);
   }
 
-  if (fc.signalReplies.length > 0) {
-    const broad = fc.signalReplies.filter((r) => r.scope === "broad");
-    const specific = fc.signalReplies.filter((r) => r.scope === "specific");
+  // Signal replies — broad directives and specific feedback
+  const broadDirectives = fc.signalReplies.filter((r) => r.scope === "broad" && !r.reply.includes("ALREADY DONE") && !r.reply.includes("WON'T DO"));
+  const specificFeedback = fc.signalReplies.filter((r) => r.scope === "specific" && !r.reply.includes("ALREADY DONE") && !r.reply.includes("WON'T DO"));
 
-    if (broad.length > 0) {
-      parts.push(
-        `## BROAD DIRECTIVES FROM TYLER (apply across the entire briefing)\n${broad.map((r) => `- "${r.reply}"`).join("\n")}`
-      );
-    }
-    if (specific.length > 0) {
-      parts.push(
-        `## SPECIFIC FEEDBACK ON SIGNALS (incorporate when covering similar topics)\n${specific.map((r) => `- On "${r.signal_text.slice(0, 60)}…": Tyler says "${r.reply}"`).join("\n")}`
-      );
-    }
+  if (broadDirectives.length > 0) {
+    parts.push(`## BROAD DIRECTIVES FROM TYLER (apply to all future briefings)\n${broadDirectives.map((r) => `- "${r.reply}"`).join("\n")}`);
   }
 
+  if (specificFeedback.length > 0) {
+    parts.push(`## SPECIFIC FEEDBACK ON SIGNALS\n${specificFeedback.map((r) => `- Re: "${r.signal_text}" → Tyler said: "${r.reply}"`).join("\n")}`);
+  }
+
+  // Task replies — direct feedback on specific tasks
   if (fc.taskReplies.length > 0) {
-    parts.push(
-      `## TASK FEEDBACK FROM TYLER\n${fc.taskReplies.map((r) => `- Task ${r.task_id}: "${r.reply}"`).join("\n")}`
-    );
+    parts.push(`## TASK FEEDBACK\n${fc.taskReplies.map((r) => `- Re: "${r.task_title}" → Tyler said: "${r.reply}"`).join("\n")}`);
+  }
+
+  // Recently completed tasks — for awareness, not re-suggestion
+  if (ctx.recentlyCompleted.length > 0) {
+    parts.push(`## Recently Completed Tasks (last 7 days)\n${ctx.recentlyCompleted.map((t) => `- ${t.title} (completed ${t.completed_at.slice(0, 10)})`).join("\n")}`);
+  }
+
+  // Recent activity from ingested memories
+  if (ctx.recentActivity.length > 0) {
+    parts.push(`## Recent Activity (emails, calendar, etc.)\n${ctx.recentActivity.map((a) => `- ${a.content}`).join("\n")}`);
   }
 
   return parts.join("\n\n");
@@ -293,11 +289,15 @@ Here is Tyler's current task and goal state pulled directly from the database:
 
 ${directContext || "(No open tasks or active goals found in database.)"}
 
-CRITICAL RULES:
-- If items appear under "ALREADY COMPLETED", "WON'T DO", or "DISMISSED SIGNALS" above, you MUST NOT include them or anything similar in the briefing. These represent Tyler's explicit feedback.
-- If "BROAD DIRECTIVES" are provided, apply them across the entire briefing — they override default behavior.
-- If "SPECIFIC FEEDBACK ON SIGNALS" is provided, incorporate Tyler's responses when covering similar topics.
-- If "TASK FEEDBACK" is provided, reflect Tyler's notes in how you present those tasks.
+CRITICAL RULES — MUST FOLLOW:
+1. NEVER suggest items listed under "ALREADY COMPLETED" — Tyler already finished these.
+2. NEVER suggest items listed under "WON'T DO" — Tyler explicitly declined these.
+3. NEVER include items listed under "DISMISSED SIGNALS" — they are permanently hidden.
+4. APPLY all "BROAD DIRECTIVES FROM TYLER" — these are standing instructions that shape every briefing.
+5. RESPECT "SPECIFIC FEEDBACK ON SIGNALS" — adjust your recommendations based on Tyler's replies.
+6. RESPECT "TASK FEEDBACK" — incorporate Tyler's notes on specific tasks into your prioritization.
+7. Reference "Recently Completed Tasks" for awareness (what momentum looks like) but do NOT re-suggest them.
+8. Use "Recent Activity" for context on what Tyler has been doing lately.
 
 Using the above data AND the retrieved memories, return a structured daily briefing with EXACTLY these four markdown sections. You MUST use ## headings exactly as shown. Each section MUST have at least one bullet point. Be specific — reference real items, people, deadlines, and context.
 
@@ -455,7 +455,7 @@ export async function GET() {
   if (response || !user) return response;
 
   try {
-    // 1. Fetch direct context from DB (tasks + goals)
+    // 1. Fetch direct context from DB (tasks + goals + feedback + activity)
     const directCtx = await fetchDirectContext(user.id);
     const directContextStr = formatDirectContext(directCtx);
 

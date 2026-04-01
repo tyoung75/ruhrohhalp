@@ -41,7 +41,6 @@ type PlatformVariant = {
 export async function loadSystemContext(userId: string): Promise<SystemContext> {
   const supabase = createAdminClient();
 
-  const now = new Date().toISOString();
   const [goalsRes, tasksRes, settingsRes, queuedRes, directivesRes] = await Promise.all([
     supabase
       .from("goals")
@@ -67,13 +66,12 @@ export async function loadSystemContext(userId: string): Promise<SystemContext> 
       .eq("user_id", userId)
       .in("status", ["draft", "queued", "approved"])
       .limit(20),
-    // Content strategy directives — broad steering instructions
+    // Fetch broad content directives from signal replies
     supabase
-      .from("content_directives")
-      .select("directive, platforms")
+      .from("signal_replies")
+      .select("reply")
       .eq("user_id", userId)
-      .eq("active", true)
-      .or(`expires_at.is.null,expires_at.gt.${now}`)
+      .eq("scope", "broad")
       .order("created_at", { ascending: false })
       .limit(20),
   ]);
@@ -84,10 +82,7 @@ export async function loadSystemContext(userId: string): Promise<SystemContext> 
     brain_dump_week: settingsRes.data?.brain_dump_week ?? null,
     top_of_mind: settingsRes.data?.top_of_mind ?? null,
     queued_topics: (queuedRes.data ?? []).map(q => q.topic || q.body?.slice(0, 50) || ""),
-    content_directives: (directivesRes.data ?? []).map(
-      (d: { directive: string; platforms: string[] | null }) =>
-        d.platforms ? `${d.directive} [${d.platforms.join(", ")}]` : d.directive
-    ),
+    content_directives: (directivesRes.data ?? []).map(d => d.reply).filter(Boolean),
   };
 }
 
@@ -148,10 +143,8 @@ export async function generatePlatformVariants(
 ): Promise<PlatformVariant[]> {
   const platforms = idea.platforms.length > 0 ? idea.platforms : ["threads"];
 
-  // Build mandatory directives block
-  const directivesList = (systemCtx.content_directives ?? []);
-  const directivesSection = directivesList.length
-    ? `\n\nMANDATORY CONTENT DIRECTIVES (from Tyler — these override everything else):\n${directivesList.map((d: string) => `- MUST FOLLOW: ${d}`).join("\n")}\nAny post that violates the above directives MUST be rejected and regenerated.\n`
+  const directivesBlock = systemCtx.content_directives.length > 0
+    ? `\n\nCONTENT DIRECTIVES FROM TYLER (must follow):\n${systemCtx.content_directives.map(d => `- ${d}`).join("\n")}`
     : "";
 
   const systemPrompt = `You are the Platform Intelligence Agent for a personal brand content system.
@@ -162,8 +155,8 @@ CONTEXT:
 - Brain dump: ${systemCtx.brain_dump_week || "none"}
 - Top of mind: ${systemCtx.top_of_mind || "none"}
 - Already queued topics: ${systemCtx.queued_topics.join(", ") || "none"}
-- Recent content performance patterns: ${JSON.stringify(performanceCtx.content_patterns)}
-${directivesSection}
+- Recent content performance patterns: ${JSON.stringify(performanceCtx.content_patterns)}${directivesBlock}
+
 PLATFORM RULES:
 - threads: Max 500 chars, conversational, lowercase, no hashtags in body. Hook in first line.
 - instagram: Caption up to 2200 chars, 3-5 hashtags, CTA at end. Separate title for carousel/reel.
