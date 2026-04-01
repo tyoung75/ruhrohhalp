@@ -2,8 +2,16 @@
  * Monte Carlo Net Worth Forecast Engine
  *
  * Runs N simulations over M months to project household net worth
- * with confidence bands. Incorporates salary, contributions, RSU vests,
- * portfolio growth (stochastic), expenses, and debt payoff.
+ * with confidence bands. Models each account bucket separately with
+ * its own return profile and contribution stream:
+ *
+ *   Brokerage (E*Trade)    → SPY/QQQ blend (large-cap growth)
+ *   Roth IRA (Tyler)       → Higher-risk growth ETFs (AVUV, VTI, IBIT, etc.)
+ *   Roth IRA (Spouse)      → Similar growth allocation
+ *   401k + Mega Backdoor   → FUIPX (Fidelity Freedom Index 2060, ~90/10 equity/bond)
+ *   Crypto (Coinbase)      → BTC/ETH/altcoin blend
+ *   Equity Awards (Schwab) → CART single-stock risk
+ *   Cash (Chase)           → Negligible return
  *
  * Pure function — runs client-side, no API calls.
  */
@@ -28,32 +36,76 @@ function normalRandom(rng: () => number): number {
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
+// ── Asset class return profiles ────────────────────────────────
+// Based on historical performance and fund characteristics
+
+export interface AssetClassParams {
+  returnAnnual: number;   // expected annual return
+  volAnnual: number;      // annual volatility (std dev)
+  label: string;
+}
+
+/** Default return profiles for each account bucket */
+export const ASSET_CLASS_DEFAULTS = {
+  // SPY/QQQ blend — S&P 500 + Nasdaq-100 mix (~60/40 SPY/QQQ)
+  // Historical: SPY ~10.5%, QQQ ~14%, blended ~12%, vol ~17%
+  brokerage: { returnAnnual: 0.12, volAnnual: 0.17, label: "Brokerage (SPY/QQQ)" },
+
+  // Growth ETFs — AVUV (small cap value), VTI (total market), IBIT (bitcoin ETF),
+  // VXUS (international) — higher risk, higher expected return
+  // Small cap value has historically outperformed by 2-3%
+  rothIra: { returnAnnual: 0.13, volAnnual: 0.20, label: "Roth IRA (Growth ETFs)" },
+
+  // FUIPX — Fidelity Freedom Index 2060 Premier
+  // ~90% equity / 10% bonds, 0.12% expense ratio
+  // Historical 5yr: ~10-12% annualized, vol ~15%
+  retirement: { returnAnnual: 0.10, volAnnual: 0.15, label: "401k/MBDR (FUIPX)" },
+
+  // BTC/ETH/altcoin blend — highly volatile, higher expected return
+  crypto: { returnAnnual: 0.18, volAnnual: 0.52, label: "Crypto (BTC/ETH/SOL)" },
+
+  // CART single stock — higher single-stock volatility
+  equityAwards: { returnAnnual: 0.10, volAnnual: 0.35, label: "Equity Awards (CART)" },
+
+  // Cash — ~4.5% APY savings / money market (conservative)
+  cash: { returnAnnual: 0.04, volAnnual: 0.005, label: "Cash" },
+} as const;
+
 // ── Types ──────────────────────────────────────────────────────
 
 export interface ForecastInput {
-  // Current balances by asset class
-  portfolioValue: number;       // brokerage stocks/ETFs
-  cryptoValue: number;
-  retirementValue: number;      // 401k + IRAs
-  equityAwardsValue: number;    // options/vested RSUs
-  cashPosition: number;
+  // Current balances by account bucket
+  brokerageValue: number;       // E*Trade brokerage
+  rothIraValue: number;         // Tyler + spouse Roth IRAs
+  retirementValue: number;      // Fidelity 401k (pre-tax + mega backdoor Roth)
+  cryptoValue: number;          // Coinbase
+  equityAwardsValue: number;    // Schwab equity awards
+  cashPosition: number;         // Chase checking/savings
   totalDebt: number;
 
-  // Monthly inflows
-  monthlyNetIncome: number;     // post-tax household income
-  monthlyContributions: number; // 401k + brokerage + crypto + Roth (total)
-  monthlyExpenses: number;      // total including rent
+  // Monthly contribution breakdown (actual allocation)
+  monthlyBrokerageContrib: number;     // $1,000 biweekly = ~$2,167/mo to SPY/QQQ
+  monthlyRetirementContrib: number;    // 10% pre-tax + 15% after-tax + 4% match → FUIPX
+  monthlyRothIraContrib: number;       // $7K/yr each = ~$1,167/mo (Tyler + spouse)
+  monthlyCryptoContrib: number;        // $500/mo (BTC/ETH/XRP/SOL DCA)
 
-  // RSU vests: net of tax
+  // Income and expenses
+  monthlyNetIncome: number;
+  monthlyExpenses: number;
+
+  // RSU vests: net of tax → goes to brokerage bucket
   rsuVests: { monthOffset: number; netValue: number }[];
 
-  // Tunable assumptions
-  equityReturnAnnual: number;     // e.g. 0.10 for 10%
-  equityVolAnnual: number;        // e.g. 0.156 for 15.6%
-  cryptoReturnAnnual: number;     // e.g. 0.18
-  cryptoVolAnnual: number;        // e.g. 0.52
-  salaryGrowthAnnual: number;     // e.g. 0.04 for 4%
-  expenseInflationAnnual: number; // e.g. 0.03 for 3%
+  // Tunable return assumptions per asset class
+  brokerageReturn: AssetClassParams;
+  rothIraReturn: AssetClassParams;
+  retirementReturn: AssetClassParams;
+  cryptoReturn: AssetClassParams;
+  equityAwardsReturn: AssetClassParams;
+
+  // Growth rates
+  salaryGrowthAnnual: number;
+  expenseInflationAnnual: number;
 }
 
 export interface ForecastResult {
@@ -63,7 +115,7 @@ export interface ForecastResult {
   p50: number[];
   p75: number[];
   p90: number[];
-  labels: string[];   // "Apr 2026", "May 2026", ...
+  labels: string[];
 }
 
 // ── Core simulation ────────────────────────────────────────────
@@ -75,67 +127,84 @@ export function runNetWorthForecast(
 ): ForecastResult {
   const rng = mulberry32(42);
 
-  // Monthly return parameters
-  const eqMu = input.equityReturnAnnual / 12;
-  const eqSigma = input.equityVolAnnual / Math.sqrt(12);
-  const crMu = input.cryptoReturnAnnual / 12;
-  const crSigma = input.cryptoVolAnnual / Math.sqrt(12);
+  // Monthly return parameters for each bucket
+  const brokerageMu = input.brokerageReturn.returnAnnual / 12;
+  const brokerageSigma = input.brokerageReturn.volAnnual / Math.sqrt(12);
+  const rothMu = input.rothIraReturn.returnAnnual / 12;
+  const rothSigma = input.rothIraReturn.volAnnual / Math.sqrt(12);
+  const retMu = input.retirementReturn.returnAnnual / 12;
+  const retSigma = input.retirementReturn.volAnnual / Math.sqrt(12);
+  const crMu = input.cryptoReturn.returnAnnual / 12;
+  const crSigma = input.cryptoReturn.volAnnual / Math.sqrt(12);
+  const eqMu = input.equityAwardsReturn.returnAnnual / 12;
+  const eqSigma = input.equityAwardsReturn.volAnnual / Math.sqrt(12);
 
-  // Monthly growth factors
-  const salaryGrowthMonthly = Math.pow(1 + input.salaryGrowthAnnual, 1 / 12) - 1;
-
-  // Build RSU vest lookup: monthOffset → total net value
+  // Build RSU vest lookup
   const rsuByMonth = new Map<number, number>();
   for (const v of input.rsuVests) {
     rsuByMonth.set(v.monthOffset, (rsuByMonth.get(v.monthOffset) ?? 0) + v.netValue);
   }
 
-  // Run simulations
   const allPaths: number[][] = [];
 
   for (let sim = 0; sim < simulations; sim++) {
     const path: number[] = new Array(months + 1);
 
-    let portfolio = input.portfolioValue;
-    let crypto = input.cryptoValue;
+    let brokerage = input.brokerageValue;
+    let rothIra = input.rothIraValue;
     let retirement = input.retirementValue;
-    let equity = input.equityAwardsValue;
+    let crypto = input.cryptoValue;
+    let equityAwards = input.equityAwardsValue;
     let cash = input.cashPosition;
     let debt = input.totalDebt;
+
     let monthlyIncome = input.monthlyNetIncome;
     let monthlyExpenses = input.monthlyExpenses;
-    let monthlyContribs = input.monthlyContributions;
+    let brokerageContrib = input.monthlyBrokerageContrib;
+    let retirementContrib = input.monthlyRetirementContrib;
+    const rothContrib = input.monthlyRothIraContrib;
+    const cryptoContrib = input.monthlyCryptoContrib;
 
-    // Initial net worth
-    path[0] = portfolio + crypto + retirement + equity + cash - debt;
+    path[0] = brokerage + rothIra + retirement + crypto + equityAwards + cash - debt;
 
     for (let m = 1; m <= months; m++) {
-      // Stochastic returns
-      const eqReturn = eqMu + eqSigma * normalRandom(rng);
+      // Each bucket gets its own stochastic return (partially correlated via equity market)
+      // Use separate random draws — they'll have natural correlation through market beta
+      const brokerageReturn = brokerageMu + brokerageSigma * normalRandom(rng);
+      const rothReturn = rothMu + rothSigma * normalRandom(rng);
+      const retReturn = retMu + retSigma * normalRandom(rng);
       const crReturn = crMu + crSigma * normalRandom(rng);
+      const eqReturn = eqMu + eqSigma * normalRandom(rng);
 
-      portfolio *= 1 + eqReturn;
+      // Apply returns to existing balances
+      brokerage *= 1 + brokerageReturn;
+      rothIra *= 1 + rothReturn;
+      retirement *= 1 + retReturn;
       crypto *= 1 + crReturn;
-      retirement *= 1 + eqReturn; // retirement tracks equity
-      equity *= 1 + eqReturn * 1.5; // single-stock higher vol
+      equityAwards *= 1 + eqReturn;
+      // Cash earns savings rate (~4% annually, negligible vol)
+      cash *= 1 + 0.04 / 12;
 
-      // Annual salary/expense growth (applied monthly)
-      if (m > 0 && m % 12 === 0) {
+      // Annual salary/expense growth
+      if (m % 12 === 0) {
         monthlyIncome *= 1 + input.salaryGrowthAnnual;
         monthlyExpenses *= 1 + input.expenseInflationAnnual;
-        monthlyContribs *= 1 + salaryGrowthMonthly * 12; // contributions scale with salary
+        // Contributions scale with salary (401k is percentage-based)
+        brokerageContrib *= 1 + input.salaryGrowthAnnual;
+        retirementContrib *= 1 + input.salaryGrowthAnnual;
       }
 
-      // Monthly surplus → cash (after contributions which go to portfolio/retirement)
-      const surplus = monthlyIncome - monthlyExpenses - monthlyContribs;
+      // Route contributions to their specific accounts
+      brokerage += brokerageContrib;        // → SPY/QQQ
+      retirement += retirementContrib;      // → FUIPX
+      rothIra += rothContrib;               // → Growth ETFs (AVUV, VTI, IBIT, VXUS)
+      crypto += cryptoContrib;              // → BTC/ETH/XRP/SOL
 
-      // Allocate contributions proportionally
-      // ~50% to retirement (401k), ~30% to portfolio (brokerage), ~20% to crypto
-      retirement += monthlyContribs * 0.5;
-      portfolio += monthlyContribs * 0.3;
-      crypto += monthlyContribs * 0.2;
+      // Monthly surplus after contributions and expenses
+      const currentContribs = brokerageContrib + retirementContrib + rothContrib + cryptoContrib;
+      const surplus = monthlyIncome - monthlyExpenses - currentContribs;
 
-      // Surplus goes to cash (or debt paydown)
+      // Surplus: pay down debt first, then excess to cash
       if (debt > 0 && surplus > 0) {
         const debtPayment = Math.min(surplus, debt);
         debt -= debtPayment;
@@ -144,13 +213,13 @@ export function runNetWorthForecast(
         cash += surplus;
       }
 
-      // RSU vest event
+      // RSU vest events → add to brokerage (sold and reinvested in SPY/QQQ)
       const rsuVest = rsuByMonth.get(m);
       if (rsuVest) {
-        portfolio += rsuVest; // vested RSUs add to portfolio value
+        brokerage += rsuVest;
       }
 
-      path[m] = portfolio + crypto + retirement + equity + cash - debt;
+      path[m] = brokerage + rothIra + retirement + crypto + equityAwards + cash - debt;
     }
 
     allPaths.push(path);

@@ -23,8 +23,8 @@ import type {
 } from "@/lib/types/finance";
 import type { StockQuote } from "@/app/api/finance/quotes/route";
 import type { HistoricalPriceData } from "@/app/api/finance/quotes/historical/route";
-import { runNetWorthForecast, rsuVestsToMonthOffsets } from "@/lib/forecast";
-import type { ForecastInput } from "@/lib/forecast";
+import { runNetWorthForecast, rsuVestsToMonthOffsets, ASSET_CLASS_DEFAULTS } from "@/lib/forecast";
+import type { ForecastInput, AssetClassParams } from "@/lib/forecast";
 import { Spinner } from "@/components/primitives";
 import { useMobile } from "@/lib/useMobile";
 import {
@@ -1522,11 +1522,22 @@ const HORIZON_OPTIONS = [
   { label: "10Y", months: 120 },
 ];
 
-const DEFAULT_ASSUMPTIONS = {
-  equityReturnAnnual: 0.10,
-  equityVolAnnual: 0.156,
-  cryptoReturnAnnual: 0.18,
-  cryptoVolAnnual: 0.52,
+interface ForecastAssumptions {
+  brokerage: AssetClassParams;
+  rothIra: AssetClassParams;
+  retirement: AssetClassParams;
+  crypto: AssetClassParams;
+  equityAwards: AssetClassParams;
+  salaryGrowthAnnual: number;
+  expenseInflationAnnual: number;
+}
+
+const DEFAULT_ASSUMPTIONS: ForecastAssumptions = {
+  brokerage: { ...ASSET_CLASS_DEFAULTS.brokerage },
+  rothIra: { ...ASSET_CLASS_DEFAULTS.rothIra },
+  retirement: { ...ASSET_CLASS_DEFAULTS.retirement },
+  crypto: { ...ASSET_CLASS_DEFAULTS.crypto },
+  equityAwards: { ...ASSET_CLASS_DEFAULTS.equityAwards },
   salaryGrowthAnnual: 0.04,
   expenseInflationAnnual: 0.03,
 };
@@ -1535,24 +1546,49 @@ function ForecastSection({ data }: { data: FinancialDashboardData }) {
   const isMobile = useMobile();
   const [horizon, setHorizon] = useState(60);
   const [showSettings, setShowSettings] = useState(false);
-  const [assumptions, setAssumptions] = useState(DEFAULT_ASSUMPTIONS);
+  const [assumptions, setAssumptions] = useState<ForecastAssumptions>(DEFAULT_ASSUMPTIONS);
 
   const summary = data.summary;
   const monthlyExpenses = parseFloat(data.config?.monthly_expenses ?? "12000");
+  const annualSalary = parseFloat(data.config?.annual_salary ?? "247800");
   const rsuOffsets = rsuVestsToMonthOffsets(data.rsuVests);
 
+  // Calculate actual monthly contribution amounts per bucket
+  // Brokerage: $1,000 biweekly = $2,166.67/mo
+  const monthlyBrokerageContrib = 1000 * (26 / 12);
+  // 401k: 10% pre-tax + 15% after-tax + 4% match = 29% of salary / 12
+  const monthlyRetirementContrib = annualSalary * 0.29 / 12;
+  // Roth IRA: $7K/yr Tyler + $7K/yr spouse = $14K/yr
+  const monthlyRothIraContrib = 14000 / 12;
+  // Crypto DCA: $500/mo
+  const monthlyCryptoContrib = 500;
+
   const forecastInput: ForecastInput = {
-    portfolioValue: summary.investedAssets,
+    brokerageValue: summary.investedAssets,
+    rothIraValue: (data.accounts
+      .filter((a) => a.accountType === "roth_ira")
+      .reduce((sum, a) => sum + Number(a.balance), 0)),
+    retirementValue: (data.accounts
+      .filter((a) => a.accountType === "401k")
+      .reduce((sum, a) => sum + Number(a.balance), 0)),
     cryptoValue: summary.cryptoAssets,
-    retirementValue: summary.retirementAssets,
     equityAwardsValue: summary.equityAwards,
     cashPosition: summary.cashPosition,
     totalDebt: summary.totalDebt,
+    monthlyBrokerageContrib,
+    monthlyRetirementContrib,
+    monthlyRothIraContrib,
+    monthlyCryptoContrib,
     monthlyNetIncome: data.cashFlow.monthlyNetIncome,
-    monthlyContributions: data.cashFlow.monthlyContributions,
     monthlyExpenses,
     rsuVests: rsuOffsets,
-    ...assumptions,
+    brokerageReturn: assumptions.brokerage,
+    rothIraReturn: assumptions.rothIra,
+    retirementReturn: assumptions.retirement,
+    cryptoReturn: assumptions.crypto,
+    equityAwardsReturn: assumptions.equityAwards,
+    salaryGrowthAnnual: assumptions.salaryGrowthAnnual,
+    expenseInflationAnnual: assumptions.expenseInflationAnnual,
   };
 
   const forecast = runNetWorthForecast(forecastInput, horizon, 1000);
@@ -1666,34 +1702,50 @@ function ForecastSection({ data }: { data: FinancialDashboardData }) {
       {/* Settings panel */}
       {showSettings && (
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20, marginBottom: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 20 }}>
-            <div>
-              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>EQUITY RETURN (ANNUAL)</div>
-              <input type="range" min="0" max="20" step="0.5" value={assumptions.equityReturnAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, equityReturnAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
-              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.equityReturnAnnual * 100).toFixed(1)}%</div>
-            </div>
-            <div>
-              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>EQUITY VOLATILITY</div>
-              <input type="range" min="5" max="40" step="0.5" value={assumptions.equityVolAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, equityVolAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
-              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.equityVolAnnual * 100).toFixed(1)}%</div>
-            </div>
-            <div>
-              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>CRYPTO RETURN (ANNUAL)</div>
-              <input type="range" min="0" max="50" step="1" value={assumptions.cryptoReturnAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, cryptoReturnAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
-              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.cryptoReturnAnnual * 100).toFixed(0)}%</div>
-            </div>
-            <div>
-              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>CRYPTO VOLATILITY</div>
-              <input type="range" min="10" max="80" step="1" value={assumptions.cryptoVolAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, cryptoVolAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
-              <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.cryptoVolAnnual * 100).toFixed(0)}%</div>
-            </div>
+          {/* Per-account return assumptions */}
+          <div style={{ color: C.gold, fontSize: 11, fontFamily: C.mono, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>Return Assumptions by Account</div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 20 }}>
+            {([
+              { key: "brokerage" as const, label: "Brokerage (SPY/QQQ)", color: C.gem },
+              { key: "rothIra" as const, label: "Roth IRA (Growth ETFs)", color: C.todo },
+              { key: "retirement" as const, label: "401k/MBDR (FUIPX)", color: C.note },
+              { key: "crypto" as const, label: "Crypto (BTC/ETH/SOL)", color: C.task },
+              { key: "equityAwards" as const, label: "Equity Awards (CART)", color: C.cl },
+            ]).map(({ key, label, color }) => (
+              <div key={key} style={{ background: C.surface, borderRadius: 6, padding: 12, border: `1px solid ${color}20` }}>
+                <div style={{ color, fontSize: 10, fontFamily: C.mono, marginBottom: 8, fontWeight: 600 }}>{label}</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <div style={{ color: C.textDim, fontSize: 9, fontFamily: C.mono, marginBottom: 4 }}>RETURN</div>
+                    <input type="range" min="0" max={key === "crypto" ? "50" : "25"} step="0.5"
+                      value={assumptions[key].returnAnnual * 100}
+                      onChange={(e) => setAssumptions({ ...assumptions, [key]: { ...assumptions[key], returnAnnual: parseFloat(e.target.value) / 100 } })}
+                      style={{ ...sliderStyle, accentColor: color }} />
+                    <div style={{ color: C.cream, fontSize: 11, fontFamily: C.mono, textAlign: "center" }}>{(assumptions[key].returnAnnual * 100).toFixed(1)}%</div>
+                  </div>
+                  <div>
+                    <div style={{ color: C.textDim, fontSize: 9, fontFamily: C.mono, marginBottom: 4 }}>VOLATILITY</div>
+                    <input type="range" min="1" max={key === "crypto" ? "80" : "50"} step="0.5"
+                      value={assumptions[key].volAnnual * 100}
+                      onChange={(e) => setAssumptions({ ...assumptions, [key]: { ...assumptions[key], volAnnual: parseFloat(e.target.value) / 100 } })}
+                      style={{ ...sliderStyle, accentColor: color }} />
+                    <div style={{ color: C.cream, fontSize: 11, fontFamily: C.mono, textAlign: "center" }}>{(assumptions[key].volAnnual * 100).toFixed(1)}%</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Growth rates */}
+          <div style={{ color: C.gold, fontSize: 11, fontFamily: C.mono, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>Income & Expense Growth</div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20 }}>
             <div>
               <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>SALARY GROWTH (ANNUAL)</div>
               <input type="range" min="0" max="10" step="0.5" value={assumptions.salaryGrowthAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, salaryGrowthAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
               <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.salaryGrowthAnnual * 100).toFixed(1)}%</div>
             </div>
             <div>
-              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>EXPENSE INFLATION</div>
+              <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 6 }}>EXPENSE INFLATION (ANNUAL)</div>
               <input type="range" min="0" max="10" step="0.5" value={assumptions.expenseInflationAnnual * 100} onChange={(e) => setAssumptions({ ...assumptions, expenseInflationAnnual: parseFloat(e.target.value) / 100 })} style={sliderStyle} />
               <div style={{ color: C.cream, fontSize: 12, fontFamily: C.mono, textAlign: "center" }}>{(assumptions.expenseInflationAnnual * 100).toFixed(1)}%</div>
             </div>
@@ -1797,21 +1849,23 @@ function ForecastSection({ data }: { data: FinancialDashboardData }) {
 
       {/* Assumptions summary */}
       <div style={{ marginTop: 16, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-        <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Assumptions</div>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 8 }}>
+        <div style={{ color: C.textDim, fontSize: 10, fontFamily: C.mono, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Allocation & Assumptions</div>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 10 }}>
           {[
-            { l: "Equity Return", v: `${(assumptions.equityReturnAnnual * 100).toFixed(1)}%/yr` },
-            { l: "Equity Vol", v: `${(assumptions.equityVolAnnual * 100).toFixed(1)}%` },
-            { l: "Crypto Return", v: `${(assumptions.cryptoReturnAnnual * 100).toFixed(0)}%/yr` },
-            { l: "Crypto Vol", v: `${(assumptions.cryptoVolAnnual * 100).toFixed(0)}%` },
-            { l: "Salary Growth", v: `${(assumptions.salaryGrowthAnnual * 100).toFixed(1)}%/yr` },
-            { l: "Expense Inflation", v: `${(assumptions.expenseInflationAnnual * 100).toFixed(1)}%/yr` },
-            { l: "Monthly Expenses", v: formatCurrency(monthlyExpenses) },
-            { l: "Simulations", v: "1,000" },
+            { l: "Brokerage → SPY/QQQ", v: `${(assumptions.brokerage.returnAnnual * 100).toFixed(0)}% ret, ${(assumptions.brokerage.volAnnual * 100).toFixed(0)}% vol`, c: formatCurrency(monthlyBrokerageContrib) + "/mo" },
+            { l: "Roth IRA → Growth ETFs", v: `${(assumptions.rothIra.returnAnnual * 100).toFixed(0)}% ret, ${(assumptions.rothIra.volAnnual * 100).toFixed(0)}% vol`, c: formatCurrency(monthlyRothIraContrib) + "/mo" },
+            { l: "401k/MBDR → FUIPX", v: `${(assumptions.retirement.returnAnnual * 100).toFixed(0)}% ret, ${(assumptions.retirement.volAnnual * 100).toFixed(0)}% vol`, c: formatCurrency(monthlyRetirementContrib) + "/mo" },
+            { l: "Crypto → BTC/ETH/SOL", v: `${(assumptions.crypto.returnAnnual * 100).toFixed(0)}% ret, ${(assumptions.crypto.volAnnual * 100).toFixed(0)}% vol`, c: formatCurrency(monthlyCryptoContrib) + "/mo" },
+            { l: "CART Equity Awards", v: `${(assumptions.equityAwards.returnAnnual * 100).toFixed(0)}% ret, ${(assumptions.equityAwards.volAnnual * 100).toFixed(0)}% vol`, c: "RSU vests" },
+            { l: "Salary Growth", v: `${(assumptions.salaryGrowthAnnual * 100).toFixed(1)}%/yr`, c: "" },
+            { l: "Expense Inflation", v: `${(assumptions.expenseInflationAnnual * 100).toFixed(1)}%/yr`, c: "" },
+            { l: "Monthly Expenses", v: formatCurrency(monthlyExpenses), c: "$4,540 rent + $7,460 other" },
+            { l: "Simulations", v: "1,000 Monte Carlo paths", c: "" },
           ].map((item) => (
             <div key={item.l}>
               <div style={{ color: C.textFaint, fontSize: 9, fontFamily: C.mono }}>{item.l}</div>
               <div style={{ color: C.text, fontSize: 11, fontFamily: C.mono }}>{item.v}</div>
+              {item.c && <div style={{ color: C.textDim, fontSize: 9, fontFamily: C.mono }}>{item.c}</div>}
             </div>
           ))}
         </div>
