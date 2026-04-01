@@ -12,6 +12,7 @@ import {
   calculatePortfolioPerformance,
   resolveAllContributions,
   projectDebtPayoff,
+  adjustNetWorthWithQuotes,
 } from "@/lib/finance";
 import type {
   FinancialDashboardData,
@@ -319,11 +320,19 @@ function AccountCard({ account, holdings }: { account: FinancialAccount; holding
 
 function NetWorthBanner({
   data,
+  quotes,
 }: {
   data: FinancialDashboardData;
+  quotes: Record<string, StockQuote>;
 }) {
   const isMobile = useMobile();
-  const { summary } = data;
+  const summary = adjustNetWorthWithQuotes(
+    data.summary,
+    data.accounts,
+    data.holdings,
+    data.rsuVests,
+    quotes
+  );
 
   return (
     <div
@@ -2026,7 +2035,7 @@ export default function FinancePage() {
         )}
 
         {/* Net Worth Banner */}
-        <NetWorthBanner data={data} />
+        <NetWorthBanner data={data} quotes={quotes} />
 
         {/* Two-Column Accounts Layout */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 16 : 40, marginBottom: isMobile ? 20 : 40 }}>
