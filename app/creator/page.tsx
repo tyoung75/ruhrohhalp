@@ -933,6 +933,7 @@ function QueueTab() {
       const statusMap: Record<string, string> = {
         upcoming: "queued,approved",
         draft: "draft",
+        scheduled: "queued,approved",
         failed: "failed",
         all: "",
       };
@@ -1130,6 +1131,7 @@ function QueueTab() {
   const filters = [
     { id: "upcoming", label: "Upcoming" },
     { id: "draft", label: "Drafts" },
+    { id: "scheduled", label: "Scheduled" },
     { id: "failed", label: "Failed" },
     { id: "all", label: "All" },
   ];
@@ -1526,13 +1528,22 @@ function QueueTab() {
           No posts in queue. Hit &ldquo;Generate Posts&rdquo; to create your first batch.
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {(() => {
-            // Sort items by composite score (descending) only for "upcoming" filter
-            const displayItems = filter === "upcoming"
-              ? [...items].sort((a, b) => computeDisplayScore(b) - computeDisplayScore(a))
-              : items;
-            return displayItems.map((item) => {
+        (() => {
+          // Sort items by composite score (descending) only for "upcoming" filter
+          const sortedItems = filter === "upcoming"
+            ? [...items].sort((a, b) => computeDisplayScore(b) - computeDisplayScore(a))
+            : items;
+
+          // Split into ready-now vs scheduled-in-future
+          const now = new Date();
+          const readyItems = sortedItems.filter(
+            (item) => !item.scheduled_for || new Date(item.scheduled_for) <= now
+          );
+          const scheduledItems = sortedItems
+            .filter((item) => item.scheduled_for && new Date(item.scheduled_for) > now)
+            .sort((a, b) => new Date(a.scheduled_for!).getTime() - new Date(b.scheduled_for!).getTime());
+
+          const renderItem = (item: QueueItem) => {
               const isEditing = editingId === item.id;
               const isExpanded = expandedId === item.id;
 
@@ -2002,9 +2013,78 @@ function QueueTab() {
                 )}
               </div>
             );
-            });
-          })()}
-        </div>
+          };
+
+          return (
+            <>
+              {/* Main queue (hidden when "scheduled" filter is active) */}
+              {filter !== "scheduled" && readyItems.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {readyItems.map(renderItem)}
+                </div>
+              )}
+
+              {/* Scheduled queue */}
+              {scheduledItems.length > 0 && (
+                <div style={{ marginTop: readyItems.length > 0 ? 28 : 0 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginBottom: 10,
+                      paddingBottom: 8,
+                      borderBottom: `1px solid ${C.border}`,
+                    }}
+                  >
+                    <span style={{ fontSize: 13, color: C.gold }}>&#9716;</span>
+                    <span
+                      style={{
+                        fontFamily: C.mono,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: C.gold,
+                        letterSpacing: 0.4,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Scheduled
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: C.mono,
+                        fontSize: 9,
+                        color: C.textFaint,
+                        background: C.surface,
+                        padding: "2px 6px",
+                        borderRadius: 3,
+                      }}
+                    >
+                      {scheduledItems.length} post{scheduledItems.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {scheduledItems.map(renderItem)}
+                  </div>
+                </div>
+              )}
+
+              {readyItems.length === 0 && scheduledItems.length === 0 && (
+                <div
+                  style={{
+                    padding: 40,
+                    textAlign: "center",
+                    color: C.textDim,
+                    fontFamily: C.sans,
+                    fontSize: 13,
+                  }}
+                >
+                  No posts match this filter.
+                </div>
+              )}
+            </>
+          );
+        })()
       )}
     </div>
   );
