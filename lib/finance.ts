@@ -465,6 +465,77 @@ export function calculatePortfolioPerformance(
   };
 }
 
+// ── Live net worth adjustment ───────────────────────────────
+// Adjusts the static net worth summary with real-time stock quotes.
+// The base calculateNetWorth() uses stale account.balance values from the DB.
+// This applies the delta between live holding prices and stored prices.
+
+export function adjustNetWorthWithQuotes(
+  baseSummary: NetWorthSummary,
+  accounts: FinancialAccount[],
+  holdings: FinancialHolding[],
+  rsuVests: RSUVest[],
+  liveQuotes: Record<string, { price: number }>
+): NetWorthSummary {
+  if (Object.keys(liveQuotes).length === 0) return baseSummary;
+
+  const accountMap = new Map<string, FinancialAccount>();
+  for (const a of accounts) accountMap.set(a.id, a);
+
+  // Calculate the delta between live and stored values for holdings
+  let totalDelta = 0;
+  const ownerDeltas: Record<string, number> = { tyler: 0, spouse: 0, joint: 0, business: 0 };
+  const typeDeltas = { invested: 0, retirement: 0, equity: 0, crypto: 0 };
+
+  for (const h of holdings) {
+    const quote = liveQuotes[h.symbol];
+    if (!quote) continue;
+    const liveValue = quote.price * h.shares;
+    const storedValue = h.currentValue;
+    const delta = liveValue - storedValue;
+    if (delta === 0) continue;
+
+    totalDelta += delta;
+
+    const acct = accountMap.get(h.accountId);
+    if (acct) {
+      if (acct.owner in ownerDeltas) ownerDeltas[acct.owner] += delta;
+      if (acct.accountType === "brokerage") typeDeltas.invested += delta;
+      else if (["401k", "ira", "roth_ira"].includes(acct.accountType)) typeDeltas.retirement += delta;
+      else if (acct.accountType === "equity_awards") typeDeltas.equity += delta;
+      else if (acct.accountType === "crypto") typeDeltas.crypto += delta;
+    }
+  }
+
+  // Adjust vested RSU values with live prices
+  for (const v of rsuVests) {
+    if (v.status !== "vested") continue;
+    const quote = liveQuotes[v.symbol];
+    if (!quote) continue;
+    const liveValue = quote.price * v.shares;
+    const storedValue = Number(v.estimatedValue ?? 0);
+    const delta = liveValue - storedValue;
+    if (delta === 0) continue;
+
+    totalDelta += delta;
+    typeDeltas.equity += delta;
+    if (v.owner in ownerDeltas) ownerDeltas[v.owner] += delta;
+  }
+
+  return {
+    ...baseSummary,
+    totalAssets: baseSummary.totalAssets + totalDelta,
+    netWorth: baseSummary.netWorth + totalDelta,
+    investedAssets: baseSummary.investedAssets + typeDeltas.invested,
+    retirementAssets: baseSummary.retirementAssets + typeDeltas.retirement,
+    equityAwards: baseSummary.equityAwards + typeDeltas.equity,
+    cryptoAssets: baseSummary.cryptoAssets + typeDeltas.crypto,
+    tylerAssets: baseSummary.tylerAssets + ownerDeltas.tyler,
+    spouseAssets: baseSummary.spouseAssets + ownerDeltas.spouse,
+    jointAssets: baseSummary.jointAssets + (ownerDeltas.joint ?? 0),
+  };
+}
+
 // ── Owner filtering ─────────────────────────────────────────
 
 export function filterByOwner<T extends { owner: Owner }>(items: T[], owner?: Owner): T[] {
