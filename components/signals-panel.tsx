@@ -946,21 +946,19 @@ export function SignalsPanel() {
   const [deadLetterAlerts, setDeadLetterAlerts] = useState<DeadLetterAlert[]>([]);
   const [contentReviewItems, setContentReviewItems] = useState<ContentReviewItem[]>([]);
 
-  const generateBriefing = useCallback(async () => {
+  const refreshSignals = useCallback(async () => {
     try {
       setGenerating(true);
       setError("");
-      await api("/api/briefing/daily");
-      // Refresh signals after briefing is generated
-      window.dispatchEvent(new Event("briefing:refresh"));
+      await loadSignals();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to generate briefing";
+      const msg = e instanceof Error ? e.message : "Failed to refresh signals";
       setError(msg);
-      console.error("Failed to generate briefing:", e);
+      console.error("Failed to refresh signals:", e);
     } finally {
       setGenerating(false);
     }
-  }, []);
+  }, [loadSignals]);
 
   // Handler when a signal is dismissed from a card
   const handleSignalDismissed = useCallback((signal: Signal) => {
@@ -974,10 +972,10 @@ export function SignalsPanel() {
       // Load dismissals in parallel with signals
       const dismissalsPromise = api<{ dismissals: Array<{ fingerprint: string }> }>("/api/signals/dismiss").catch(() => ({ dismissals: [] }));
 
-      // Pull from briefing content + activity feed
-      const [briefingRes, activityRes, dismissalsRes] = await Promise.allSettled([
-        api<{ briefing: { content_json?: Array<{ title: string; color: string; items: Array<{ id?: string; text: string; type?: string }> }> } | null }>("/api/briefings"),
+      // Pull from activity feed + strategy insights (NOT briefing — briefing is shown in its own panel)
+      const [activityRes, strategyRes, dismissalsRes] = await Promise.allSettled([
         api<{ entries: Array<{ id: string; type: string; description: string; created_at: string; metadata?: Record<string, unknown> }> }>("/api/activity?limit=20"),
+        api<{ insights: Array<{ insight_type: string; content: string; confidence: number; data?: Record<string, unknown> }> }>("/api/creator/strategy").catch(() => ({ insights: [] })),
         dismissalsPromise,
       ]);
 
@@ -992,39 +990,39 @@ export function SignalsPanel() {
 
       const sigs: Signal[] = [];
 
-      // Extract signals from briefing sections
-      if (briefingRes.status === "fulfilled" && briefingRes.value.briefing?.content_json) {
-        const sections = briefingRes.value.briefing.content_json;
-        for (const section of sections) {
-          for (const item of section.items) {
-            const category = classifySignal(item.text, item.type, section.title);
-            const action = inferSignalAction(item.text, item.type);
-
+      // Extract from activity feed — genuinely new events (webhooks, agent completions, system alerts)
+      if (activityRes.status === "fulfilled" && activityRes.value.entries) {
+        for (const entry of activityRes.value.entries.slice(0, 15)) {
+          if (entry.type === "agent_complete" || entry.type === "signal" || entry.type === "webhook" || entry.type === "alert") {
+            const category = classifySignal(entry.description, entry.type);
+            const action = inferSignalAction(entry.description, entry.type);
             sigs.push({
-              id: item.id ?? `sig-${Math.random().toString(36).slice(2, 8)}`,
-              text: item.text,
+              id: entry.id,
+              text: entry.description,
               category,
-              source: "daily briefing",
-              timestamp: new Date().toISOString(),
+              source: entry.type,
+              timestamp: entry.created_at,
               action: action ?? undefined,
+              seen: entry.type === "agent_complete",
             });
           }
         }
       }
 
-      // Extract from activity feed
-      if (activityRes.status === "fulfilled" && activityRes.value.entries) {
-        for (const entry of activityRes.value.entries.slice(0, 10)) {
-          if (entry.type === "agent_complete" || entry.type === "signal") {
-            sigs.push({
-              id: entry.id,
-              text: entry.description,
-              category: "insight",
-              source: entry.type,
-              timestamp: entry.created_at,
-              seen: true,
-            });
-          }
+      // Surface high-confidence strategy insights as signals (these are unique to strategy, not in briefing)
+      if (strategyRes.status === "fulfilled") {
+        const stratData = strategyRes.value as { insights?: Array<{ insight_type: string; content: string; confidence: number }> };
+        const highConfidence = (stratData?.insights ?? []).filter((i) => i.confidence >= 0.75);
+        for (const insight of highConfidence.slice(0, 3)) {
+          const category: SignalCategory = insight.insight_type === "trend_shift" ? "alert" : "insight";
+          sigs.push({
+            id: `strat-${Math.random().toString(36).slice(2, 8)}`,
+            text: insight.content,
+            category,
+            source: "strategy agent",
+            timestamp: new Date().toISOString(),
+            relevance: insight.confidence,
+          });
         }
       }
 
@@ -1129,7 +1127,7 @@ export function SignalsPanel() {
           Signals & Insights
         </h3>
         <button
-          onClick={generateBriefing}
+          onClick={refreshSignals}
           disabled={generating}
           style={{
             background: generating ? C.surface : `${C.cl}14`,
@@ -1143,7 +1141,7 @@ export function SignalsPanel() {
             transition: "all 0.15s",
           }}
         >
-          {generating ? "Generating…" : "Generate Briefing"}
+          {generating ? "Refreshing…" : "Refresh"}
         </button>
       </div>
 
