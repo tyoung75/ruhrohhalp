@@ -23,6 +23,10 @@ interface DirectContext {
   };
   recentlyCompleted: { title: string; completed_at: string }[];
   recentActivity: { content: string; created_at: string }[];
+  // Cross-section awareness: what other sections are already showing
+  todaysFocusTasks: string[];
+  activeStrategyInsights: string[];
+  contentDirectives: string[];
 }
 
 async function fetchDirectContext(userId: string): Promise<DirectContext> {
@@ -42,6 +46,10 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
     taskRepliesResult,
     completedTasksResult,
     recentMemoriesResult,
+    // Cross-section awareness queries
+    topRankedTasksResult,
+    strategyInsightsResult,
+    contentDirectivesResult,
   ] = await Promise.all([
     // Open tasks (not done/cancelled), ordered by priority
     supabase
@@ -131,6 +139,31 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
       .gte("created_at", sevenDaysAgo)
       .order("created_at", { ascending: false })
       .limit(10),
+
+    // Cross-section: Top ranked tasks (same as Today's Focus shows) — so briefing won't repeat them
+    supabase
+      .from("tasks")
+      .select("title")
+      .eq("user_id", userId)
+      .not("state", "in", '("done","cancelled")')
+      .order("priority_num", { ascending: true, nullsFirst: false })
+      .limit(5),
+
+    // Cross-section: Active strategy insights — so briefing won't repeat content strategy
+    supabase
+      .from("strategy_insights")
+      .select("content")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .limit(10),
+
+    // Cross-section: Active content directives — so briefing knows what strategy is already steering
+    supabase
+      .from("content_directives")
+      .select("directive")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .limit(10),
   ]);
 
   return {
@@ -180,6 +213,10 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
       content: typeof m.content === "string" ? m.content.slice(0, 200) : JSON.stringify(m.content).slice(0, 200),
       created_at: m.created_at,
     })),
+    // Cross-section awareness
+    todaysFocusTasks: (topRankedTasksResult.data ?? []).map((t) => t.title),
+    activeStrategyInsights: (strategyInsightsResult.data ?? []).map((i) => i.content),
+    contentDirectives: (contentDirectivesResult.data ?? []).map((d) => d.directive),
   };
 }
 
@@ -272,6 +309,19 @@ function formatDirectContext(ctx: DirectContext): string {
     parts.push(`## Recent Activity (emails, calendar, etc.)\n${ctx.recentActivity.map((a) => `- ${a.content}`).join("\n")}`);
   }
 
+  // Cross-section awareness — what other parts of the OS are already showing
+  if (ctx.todaysFocusTasks.length > 0) {
+    parts.push(`## ALREADY SHOWN IN TODAY'S FOCUS (do NOT repeat these as leverage tasks)\n${ctx.todaysFocusTasks.map((t) => `- ${t}`).join("\n")}`);
+  }
+
+  if (ctx.activeStrategyInsights.length > 0) {
+    parts.push(`## ACTIVE STRATEGY INSIGHTS (do NOT repeat these — they're in the Strategy tab)\n${ctx.activeStrategyInsights.map((i) => `- ${i}`).join("\n")}`);
+  }
+
+  if (ctx.contentDirectives.length > 0) {
+    parts.push(`## ACTIVE CONTENT DIRECTIVES (strategy is already applying these)\n${ctx.contentDirectives.map((d) => `- ${d}`).join("\n")}`);
+  }
+
   return parts.join("\n\n");
 }
 
@@ -298,20 +348,25 @@ CRITICAL RULES — MUST FOLLOW:
 6. RESPECT "TASK FEEDBACK" — incorporate Tyler's notes on specific tasks into your prioritization.
 7. Reference "Recently Completed Tasks" for awareness (what momentum looks like) but do NOT re-suggest them.
 8. Use "Recent Activity" for context on what Tyler has been doing lately.
+9. NEVER repeat items listed under "ALREADY SHOWN IN TODAY'S FOCUS" — these are displayed in the Today's Focus panel. The briefing should add NEW value, not echo what's already visible.
+10. NEVER repeat items listed under "ACTIVE STRATEGY INSIGHTS" — these are displayed in the Strategy tab. If you have a related but distinct insight, make the distinction explicit.
+11. NEVER repeat "ACTIVE CONTENT DIRECTIVES" — these are already steering the content strategy agent.
+
+IMPORTANT: This briefing exists alongside other panels in the OS. Today's Focus shows Tyler's top tasks. The Strategy tab shows content recommendations. The Signals panel shows real-time alerts. This briefing must add INCREMENTAL VALUE — focus on decisions that need Tyler's judgment, upcoming deadlines he might miss, and cross-venture connections that no other panel surfaces.
 
 Using the above data AND the retrieved memories, return a structured daily briefing with EXACTLY these four markdown sections. You MUST use ## headings exactly as shown. Each section MUST have at least one bullet point. Be specific — reference real items, people, deadlines, and context.
 
 ## Leverage Tasks
-The top 3-5 highest-leverage tasks Tyler should tackle TODAY. Prioritize by urgency and impact. Include why each matters and any deadlines. Pull from the open tasks above. IMPORTANT: If "Recent Leverage Feedback" is provided, use it to calibrate — avoid suggesting tasks similar to ones Tyler marked as not high-leverage, and favor patterns matching tasks he confirmed as high-leverage.
+The top 3-5 highest-leverage tasks Tyler should tackle TODAY that are NOT already shown in Today's Focus. If Today's Focus already covers the most important tasks, surface DIFFERENT high-leverage items — tasks that are important but might be overlooked, blocked items that need unblocking, or cross-venture dependencies. Do NOT simply rephrase the same tasks.
 
 ## Open Decisions
-Decisions pending Tyler's input. Include context on what's blocking each decision and who is waiting. If none are clear from context, surface the most ambiguous open items that need Tyler's judgment call.
+Decisions pending Tyler's input. Include context on what's blocking each decision and who is waiting. If none are clear from context, surface the most ambiguous open items that need Tyler's judgment call. This is the briefing's unique value — no other panel surfaces pending decisions.
 
 ## Upcoming
 Calendar events, deadlines, and time-sensitive items for today and the next 48 hours. Include any due dates from the tasks above. If no calendar data is available, list the nearest deadlines from goals and tasks.
 
 ## Insights
-Patterns, risks, or opportunities Tyler should be aware of. Surface anything that connects across ventures or that might be falling through the cracks. At minimum, note the health of active goals.`;
+Cross-venture patterns, risks, or opportunities that NO OTHER panel surfaces. Do NOT repeat strategy insights already shown in the Strategy tab. Focus on: connections between ventures, risks falling through cracks, goal health trends, and time-sensitive opportunities that require Tyler's attention today.`;
 }
 
 // ---------------------------------------------------------------------------

@@ -119,6 +119,17 @@ and likes (what he loved). STRICTLY FOLLOW ALL DIRECTIVES. Learn from dislikes �
 those patterns. Amplify patterns from likes. This feedback is Tyler's voice and takes priority
 over data patterns when they conflict.
 
+UNIFIED OS FEEDBACK:
+The context includes "unifiedFeedback" with feedback given across the ENTIRE system (not just content):
+- "dismissedTopics": Topics Tyler dismissed in Signals — NEVER recommend content on these topics.
+- "broadDirectives": Standing instructions Tyler gave to the briefing system — apply these to strategy too.
+- "specificFeedback": Tyler's replies to specific signals — learn from these preferences.
+- "contentDirectives": Active content steering rules — STRICTLY FOLLOW these.
+This feedback propagates across the entire OS. Respecting it here ensures the system feels self-aware.
+
+ROLE CLARITY:
+This strategy output powers the Strategy tab and content generation. The daily briefing (separate system) covers tasks, decisions, and deadlines. The Signals panel shows real-time alerts. Your job is CONTENT STRATEGY ONLY — do not overlap with task prioritization or deadline tracking.
+
 Generate 5-7 specific content recommendations and 4-8 strategic insights. Be specific — reference actual numbers from the data, not vague generalities.`;
 
 // ---------------------------------------------------------------------------
@@ -212,6 +223,31 @@ async function gatherStrategyContext(userId: string) {
     .eq("active", true)
     .order("created_at", { ascending: false })
     .limit(30);
+
+  // Unified feedback: pull from signal dismissals, signal replies, and content directives
+  // so strategy generation is aware of ALL feedback given across the entire OS
+  const thirtyDaysAgoDate = new Date(Date.now() - 30 * 86400000).toISOString();
+  const [dismissalsResult, signalRepliesResult, contentDirectivesResult] = await Promise.all([
+    supabase
+      .from("signal_dismissals")
+      .select("original_text, category")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .limit(20),
+    supabase
+      .from("signal_replies")
+      .select("signal_text, reply, scope")
+      .eq("user_id", userId)
+      .gte("created_at", thirtyDaysAgoDate)
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("content_directives")
+      .select("directive, platforms")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .limit(10),
+  ]);
 
   // Compute top performers vs bottom performers
   const enrichedAnalytics = (analytics ?? []).map((a) => ({
@@ -323,6 +359,20 @@ async function gatherStrategyContext(userId: string) {
           feedback: f.content,
           postBody: (f.context as Record<string, unknown>)?.postBody ?? null,
         })),
+    },
+    // Unified OS feedback — signals, dismissals, and directives from across the entire system
+    unifiedFeedback: {
+      dismissedTopics: (dismissalsResult.data ?? []).map((d) => d.original_text),
+      broadDirectives: (signalRepliesResult.data ?? [])
+        .filter((r) => r.scope === "broad")
+        .map((r) => r.reply),
+      specificFeedback: (signalRepliesResult.data ?? [])
+        .filter((r) => r.scope === "specific")
+        .map((r) => ({ signal: r.signal_text, reply: r.reply })),
+      contentDirectives: (contentDirectivesResult.data ?? []).map((d) => ({
+        directive: d.directive,
+        platforms: d.platforms,
+      })),
     },
   };
 }
