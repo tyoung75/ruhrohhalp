@@ -96,6 +96,7 @@ interface AnalyticsResponse {
     avg_engagement: number;
   }>;
   queue_status: Record<string, number>;
+  last_fetched_at: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2004,7 +2005,7 @@ function AnalyticsTab() {
     );
   }
 
-  const { overview, top_posts, daily_trend, platforms, queue_status } = data;
+  const { overview, top_posts, daily_trend, platforms, queue_status, last_fetched_at } = data;
 
   // Find max impressions for the bar chart scaling
   const maxImpressions = Math.max(...daily_trend.map((d) => d.impressions), 1);
@@ -2034,6 +2035,13 @@ function AnalyticsTab() {
             {d}d
           </button>
         ))}
+        {last_fetched_at && (
+          <span style={{
+            fontFamily: C.mono, fontSize: 10, color: C.textDim, marginLeft: 4,
+          }}>
+            Last pull: {new Date(last_fetched_at).toLocaleString()}
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <button
           onClick={handleScrapeFollowers}
