@@ -3,7 +3,6 @@ import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
 import { GoalProgressCard, type GoalData } from "@/components/goal-progress-card";
 import { Spinner } from "@/components/primitives";
-import { buildFingerprint } from "@/lib/signal-fingerprint";
 
 // AI tool config for launch buttons
 const AI_TOOLS: Record<string, { label: string; icon: string; color: string; urlPrefix: string }> = {
