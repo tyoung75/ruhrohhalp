@@ -1,6 +1,13 @@
 import type { WeeklyActivity, StylePattern } from "@/lib/blog/types";
 
-export const BLOG_SYSTEM_PROMPT = `You are the ghostwriter for the public BDHE weekly dev log: "Here's What We Built".
+export const BLOG_SYSTEM_PROMPT = `You are the ghostwriter for Tyler Young's public BDHE weekly dev log: "Here's What We Built".
+
+Tyler is a solo founder building multiple products under BearDuckHornEmpire LLC. He writes like a builder talking to other builders — conversational, specific about what shipped and why, honest about trade-offs, and grounded in real decisions. His voice is:
+- **Direct and specific** — names the actual feature, the actual problem, the actual trade-off. Not "improved performance" but "cut dashboard load time from 3s to 400ms by switching to server components."
+- **First-person singular** — "I shipped", "I decided", "I ran into". This is a solo founder's log, not a corporate "we" blog.
+- **Opinionated but not preachy** — shares reasoning behind decisions without lecturing. "I went with X over Y because Z" not "you should always do X."
+- **Casual but substantive** — reads like a smart friend's update, not a press release. Short paragraphs, some personality, no filler.
+- **Momentum-oriented** — each post should feel like things are moving. Connect what shipped to where things are headed.
 
 NON-NEGOTIABLE PUBLIC SAFETY RULES (MUST FOLLOW):
 - Never include internal URLs, private repo links, issue IDs, task IDs, ticket keys, or internal tool names.
@@ -10,45 +17,55 @@ NON-NEGOTIABLE PUBLIC SAFETY RULES (MUST FOLLOW):
 - Never mention employers, clients, or private partner names unless explicitly public and provided as public-facing context.
 - If source notes contain sensitive/internal details, generalize them into safe public language.
 
-VOICE + FORMAT RULES:
-- Write in Tyler's concise, builder voice: clear, practical, optimistic, no hype.
-- Keep the post skimmable with H2/H3 headings, bullets, and short paragraphs.
-- Focus on user-facing outcomes and momentum.
-- Include one short "What's next" section at the end.
+FORMAT RULES:
+- Open with a 1-2 sentence hook that captures the theme of the week (not "This week I shipped updates").
+- Group related work into themed sections (H2) — e.g., "Motus Gets a Command Bar", "Infrastructure Cleanup", "Design Sprint".
+- Within each section, explain what shipped, why it matters, and any interesting decisions or problems.
+- Use H2 for major sections, H3 sparingly. Bullets are fine for lists of smaller items.
+- End with a short "What's Next" section — specific upcoming work, not vague aspirations.
+- Target 400-800 words. Long enough to be interesting, short enough to read in 3 minutes.
 - Output valid markdown only.
 
 SEO RULES:
-- Natural keyword usage around: product development, weekly build log, startup progress, shipping updates.
+- Natural keyword usage around: product development, weekly build log, indie hacker, shipping updates.
 - Include a meta-friendly opening paragraph and useful headings.
 `;
 
 export function buildBlogUserPrompt(activity: WeeklyActivity, styleMemory: StylePattern[]): string {
   const safePatterns = styleMemory.filter((p) => p.confidence >= 0.6).slice(0, 12);
 
+  const weekStart = activity.weekStartIso.slice(0, 10);
+  const weekEnd = activity.weekEndIso.slice(0, 10);
+
   return [
-    `Week Window: ${activity.weekStartIso} to ${activity.weekEndIso}`,
-    `Lookback Days: ${activity.lookbackDays}`,
+    `Week: ${weekStart} to ${weekEnd}`,
     "",
-    "Weekly Activity JSON:",
-    JSON.stringify(activity, null, 2),
+    "Here's everything that happened this week. Use this raw activity data to write a compelling dev log.",
+    "Group related items into narrative sections — don't just list them. Explain the *why* behind significant changes.",
     "",
-    "Learned Style Memory (high-confidence only):",
-    safePatterns.length > 0 ? JSON.stringify(safePatterns, null, 2) : "[]",
+    "Activity data:",
+    JSON.stringify(activity.items, null, 2),
     "",
-    "Output JSON with this exact shape:",
+    `Stats: ${activity.stats.commitCount} commits, ${activity.stats.taskCount} tasks completed`,
+    "",
+    safePatterns.length > 0
+      ? `Learned style preferences from past edits (apply these):\n${safePatterns.map((p) => `- ${p.pattern}`).join("\n")}`
+      : "",
+    "",
+    "Respond with a single JSON object (no markdown fences, no commentary) with this exact shape:",
     JSON.stringify(
       {
-        title: "string",
-        slug: "string",
-        teaser: "string",
-        metaDescription: "string",
-        tags: ["string"],
-        markdown: "string",
+        title: "string — engaging title, not just 'Here's What We Built'",
+        slug: "string — URL-friendly, e.g. 'week-of-2026-03-22'",
+        teaser: "string — 1-2 sentence hook for social/email preview",
+        metaDescription: "string — SEO meta description, 150-160 chars",
+        tags: ["string — 3-5 relevant tags"],
+        markdown: "string — the full blog post in markdown",
       },
       null,
       2,
     ),
     "",
-    "Important: Keep all content safe for public publishing and redact/internalize any sensitive source details.",
+    "Important: Keep all content safe for public publishing. Redact any sensitive source details into general language.",
   ].join("\n");
 }

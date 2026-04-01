@@ -15,13 +15,13 @@ export async function POST(request: NextRequest) {
   if (authError) return authError;
 
   const body = await request.json().catch(() => ({}));
-  const lookbackDays = Number(body.lookback_days ?? 7);
+  const lookbackDays = body.lookback_days ? Number(body.lookback_days) : undefined;
   const dryRun = Boolean(body.dry_run ?? false);
   const force = Boolean(body.force ?? false);
 
   const idempotencyKey = force
     ? undefined
-    : `weekly-dev-log:${new Date().toISOString().slice(0, 10)}:${lookbackDays}:${dryRun}`;
+    : `weekly-dev-log:${new Date().toISOString().slice(0, 10)}:${lookbackDays ?? "sun"}:${dryRun}`;
 
   const result = await runJob(
     "weekly-dev-log",

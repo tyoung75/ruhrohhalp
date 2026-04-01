@@ -125,19 +125,51 @@ function dedupeAndGroup(commits: ActivityItem[], tasks: ActivityItem[]): Activit
   return [...tasks, ...grouped].sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
 }
 
-export async function gatherWeeklyActivity(lookbackDays = 7): Promise<WeeklyActivity> {
+/**
+ * Compute the Sunday-to-Sunday window ending on or before `now`.
+ * "Most recent Sunday" = the last Sunday at-or-before now.
+ * "Previous Sunday" = 7 days before that.
+ */
+function sundayToSundayWindow(now: Date): { start: Date; end: Date } {
+  const day = now.getUTCDay(); // 0 = Sunday
+  const end = new Date(now);
+  end.setUTCDate(now.getUTCDate() - day); // most recent Sunday
+  end.setUTCHours(23, 59, 59, 999);
+
+  const start = new Date(end);
+  start.setUTCDate(end.getUTCDate() - 7); // previous Sunday
+  start.setUTCHours(0, 0, 0, 0);
+
+  return { start, end };
+}
+
+export async function gatherWeeklyActivity(lookbackDays?: number): Promise<WeeklyActivity> {
   const now = new Date();
-  const since = new Date(now);
-  since.setUTCDate(now.getUTCDate() - lookbackDays);
-  const sinceIso = since.toISOString();
+
+  let sinceDate: Date;
+  let untilDate: Date;
+
+  if (lookbackDays) {
+    // Legacy: explicit lookback from now
+    sinceDate = new Date(now);
+    sinceDate.setUTCDate(now.getUTCDate() - lookbackDays);
+    untilDate = now;
+  } else {
+    // Default: previous Sunday → most recent Sunday
+    const window = sundayToSundayWindow(now);
+    sinceDate = window.start;
+    untilDate = window.end;
+  }
+
+  const sinceIso = sinceDate.toISOString();
 
   const [commits, tasks] = await Promise.all([fetchGithubCommits(sinceIso), fetchCompletedTasks(sinceIso)]);
   const items = dedupeAndGroup(commits, tasks);
 
   return {
-    lookbackDays,
+    lookbackDays: lookbackDays ?? Math.round((untilDate.getTime() - sinceDate.getTime()) / (1000 * 60 * 60 * 24)),
     weekStartIso: sinceIso,
-    weekEndIso: now.toISOString(),
+    weekEndIso: untilDate.toISOString(),
     items,
     stats: {
       commitCount: commits.length,

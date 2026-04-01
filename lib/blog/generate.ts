@@ -4,16 +4,31 @@ import type { BlogPost, StylePattern, WeeklyActivity } from "@/lib/blog/types";
 
 function fallbackPost(activity: WeeklyActivity): BlogPost {
   const date = new Date(activity.weekStartIso).toISOString().slice(0, 10);
+
+  const byProject = new Map<string, typeof activity.items>();
+  for (const item of activity.items.slice(0, 20)) {
+    const key = item.project;
+    const list = byProject.get(key) ?? [];
+    list.push(item);
+    byProject.set(key, list);
+  }
+
+  const projectNames: Record<string, string> = { motus: "Motus", thestayed: "The Stayed", bdhe: "BDHE", other: "Other" };
+  let sections = "";
+  for (const [project, items] of byProject.entries()) {
+    sections += `\n## ${projectNames[project] ?? project}\n\n`;
+    for (const item of items.slice(0, 6)) {
+      sections += `- **${item.title}**${item.summary !== item.title ? ` — ${item.summary}` : ""}\n`;
+    }
+  }
+
   return {
-    title: `Here's What We Built — Week of ${date}`,
-    slug: `weekly-build-${date}`,
-    teaser: "A quick look at what we shipped this week.",
-    metaDescription: "Weekly build log covering shipped updates and product progress.",
-    tags: ["weekly build log", "product development", "shipping"],
-    markdown: `## Here's What We Built\n\nThis week we shipped updates across our products and internal systems.\n\n### Highlights\n${activity.items
-      .slice(0, 8)
-      .map((item) => `- ${item.title}`)
-      .join("\n")}\n\n### What's next\n- Keep tightening the feedback loop and ship the next tranche of improvements.`,
+    title: `Week of ${date} — Build Log`,
+    slug: `week-of-${date}`,
+    teaser: `${activity.stats.taskCount} tasks completed and ${activity.stats.commitCount} commits shipped this week.`,
+    metaDescription: `Weekly build log for the week of ${date}. ${activity.stats.taskCount} tasks shipped across multiple projects.`,
+    tags: ["weekly build log", "product development", "indie hacker", "shipping"],
+    markdown: `# Week of ${date} — Build Log\n\nBusy week — ${activity.stats.taskCount} tasks completed and ${activity.stats.commitCount} commits pushed across ${byProject.size} project${byProject.size === 1 ? "" : "s"}.\n${sections}\n## What's Next\n\nMore to come next week. Stay tuned.`,
   };
 }
 
@@ -29,17 +44,21 @@ export async function generateBlogPost(activity: WeeklyActivity, styleMemory: St
     messages: [{ role: "user", content: buildBlogUserPrompt(activity, styleMemory) }],
   });
 
-  const text = message.content
+  const raw = message.content
     .filter((c: Record<string, unknown>) => c.type === "text")
     .map((c: Record<string, unknown>) => c.text as string)
     .join("\n")
     .trim();
 
+  // Strip markdown code fences if the model wraps JSON in ```json ... ```
+  const text = raw.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+
   try {
     const parsed = JSON.parse(text) as BlogPost;
     if (!parsed?.markdown || !parsed?.title) throw new Error("Invalid blog payload");
     return parsed;
-  } catch {
+  } catch (err) {
+    console.error("[weekly-dev-log] Failed to parse blog JSON:", err, "\nRaw response:", raw.slice(0, 500));
     return fallbackPost(activity);
   }
 }
