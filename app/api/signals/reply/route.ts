@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { buildFingerprint } from "@/lib/signal-fingerprint";
 
 /**
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   const appliedParam = url.searchParams.get("applied");
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50"), 250);
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   let query = supabase
     .from("signal_replies")
@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
   }
 
   const fingerprint = buildFingerprint(signal_text);
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data, error } = await supabase
     .from("signal_replies")
@@ -94,7 +94,10 @@ export async function POST(request: NextRequest) {
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("[signal_replies.insert]", JSON.stringify(error));
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ reply: data }, { status: 201 });
 }
@@ -121,7 +124,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "ids array is required" }, { status: 400 });
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { error } = await supabase
     .from("signal_replies")

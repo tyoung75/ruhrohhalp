@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { buildFingerprint } from "@/lib/signal-fingerprint";
 
 /**
@@ -14,7 +14,7 @@ export async function GET() {
   const { user, response } = await requireUser();
   if (response || !user) return response;
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data, error } = await supabase
     .from("signal_dismissals")
@@ -53,9 +53,9 @@ export async function POST(request: NextRequest) {
   }
 
   const fingerprint = buildFingerprint(text);
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
-  // Upsert: if already dismissed, just return success
+  // Try insert first; if duplicate, just return success
   const { data, error } = await supabase
     .from("signal_dismissals")
     .upsert(
@@ -68,16 +68,21 @@ export async function POST(request: NextRequest) {
         active: true,
         created_at: new Date().toISOString(),
       },
-      { onConflict: "user_id,fingerprint", ignoreDuplicates: true }
+      { onConflict: "user_id,fingerprint" }
     )
-    .select()
-    .single();
+    .select();
 
-  if (error && !error.message.includes("duplicate")) {
+  // If upsert returned data, use first row; otherwise treat as success (already dismissed)
+  if (error) {
+    // Ignore duplicate-key errors — the signal is already dismissed
+    if (error.message.includes("duplicate") || error.code === "23505") {
+      return NextResponse.json({ dismissal: null, fingerprint, already_dismissed: true }, { status: 200 });
+    }
+    console.error("[signal_dismissals.upsert]", JSON.stringify(error));
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ dismissal: data, fingerprint }, { status: 201 });
+  return NextResponse.json({ dismissal: data?.[0] ?? null, fingerprint }, { status: 201 });
 }
 
 /**
@@ -102,7 +107,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "id or fingerprint is required" }, { status: 400 });
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   let query = supabase
     .from("signal_dismissals")
@@ -112,7 +117,7 @@ export async function DELETE(request: NextRequest) {
   if (id) {
     query = query.eq("id", id);
   } else {
-    query = query.eq("fingerprint", fingerprint);
+    query = query.eq("fingerprint", fingerprint!);
   }
 
   const { error } = await query;

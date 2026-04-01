@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * GET /api/tasks/[id]/replies
@@ -15,7 +15,7 @@ export async function GET(
   if (response || !user) return response;
 
   const { id: taskId } = await params;
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data, error } = await supabase
     .from("task_replies")
@@ -57,7 +57,7 @@ export async function POST(
     return NextResponse.json({ error: "reply is required" }, { status: 400 });
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   // Verify the task exists and belongs to the user
   const { data: task, error: taskErr } = await supabase
@@ -82,7 +82,10 @@ export async function POST(
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("[task_replies.insert]", JSON.stringify(error));
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ reply: data }, { status: 201 });
 }
