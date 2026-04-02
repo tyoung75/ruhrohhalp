@@ -5,12 +5,13 @@ import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
 import { useMobile } from "@/lib/useMobile";
+import { BrandsDashboard } from "@/components/brands/BrandsDashboard";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type Tab = "queue" | "analytics" | "history" | "strategy";
+type Tab = "queue" | "analytics" | "history" | "strategy" | "brands";
 
 interface QueueItem {
   id: string;
@@ -108,6 +109,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "analytics", label: "Analytics", icon: "◈" },
   { id: "history", label: "History", icon: "◷" },
   { id: "strategy", label: "Strategy", icon: "◉" },
+  { id: "brands", label: "Brands", icon: "◎" },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -240,6 +242,7 @@ export default function CreatorPage() {
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "history" && <HistoryTab />}
         {tab === "strategy" && <StrategyTab />}
+        {tab === "brands" && <BrandsDashboard />}
       </div>
     </div>
   );
