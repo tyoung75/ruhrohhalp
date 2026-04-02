@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { calculateNetWorth, calculateCashFlow } from "@/lib/finance";
+import { calculateNetWorth, calculateCashFlow, buildWealthAdvisorSummary } from "@/lib/finance";
 
 /**
  * GET /api/finance
@@ -16,7 +16,7 @@ export async function GET() {
 
   const supabase = await createClient();
 
-  const [accountsRes, holdingsRes, incomeRes, debtsRes, contribsRes, rsusRes, alertsRes, snapshotsRes, configRes] =
+  const [accountsRes, holdingsRes, incomeRes, debtsRes, contribsRes, rsusRes, alertsRes, snapshotsRes, configRes, statementsRes] =
     await Promise.all([
       supabase.from("financial_accounts").select("*").eq("user_id", user.id).order("owner").order("institution"),
       supabase.from("financial_holdings").select("*").eq("user_id", user.id).order("symbol"),
@@ -27,6 +27,7 @@ export async function GET() {
       supabase.from("financial_alerts").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("financial_snapshots").select("*").eq("user_id", user.id).order("snapshot_date", { ascending: false }).limit(90),
       supabase.from("financial_config").select("*").eq("user_id", user.id),
+      supabase.from("financial_statement_ingestions").select("*").eq("user_id", user.id).order("uploaded_at", { ascending: false }).limit(30),
     ]);
 
   const accounts = accountsRes.data ?? [];
@@ -38,6 +39,7 @@ export async function GET() {
   const alerts = alertsRes.data ?? [];
   const snapshots = snapshotsRes.data ?? [];
   const config = configRes.data ?? [];
+  const statements = statementsRes.data ?? [];
 
   const taxRate = Number(config.find((c) => c.key === "tax_rate")?.value ?? "0.30");
   const monthlyExpenses = Number(config.find((c) => c.key === "monthly_expenses")?.value ?? "0");
@@ -92,6 +94,12 @@ export async function GET() {
     netWorth: Number(s.net_worth), cashPosition: Number(s.cash_position),
     breakdown: s.breakdown, createdAt: s.created_at,
   });
+  const mapStatement = (s: any) => ({
+    id: s.id, userId: s.user_id, accountName: s.account_name, institution: s.institution,
+    statementMonth: s.statement_month, fileName: s.file_name, contentType: s.content_type,
+    bytes: Number(s.bytes ?? 0), ingestionStatus: s.ingestion_status, ingestionNotes: s.ingestion_notes,
+    extractedText: s.extracted_text, uploadedAt: s.uploaded_at, updatedAt: s.updated_at,
+  });
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   const mappedAccounts = accounts.map(mapAccount);
@@ -99,9 +107,18 @@ export async function GET() {
   const mappedDebts = debts.map(mapDebt);
   const mappedContributions = contributions.map(mapContribution);
   const mappedRSUs = rsuVests.map(mapRSU);
+  const mappedStatements = statements.map(mapStatement);
 
   const summary = calculateNetWorth(mappedAccounts, mappedDebts, mappedRSUs);
   const cashFlow = calculateCashFlow(mappedIncome, mappedDebts, mappedContributions, annualSalary, monthlyExpenses, taxRate);
+  const wealthAdvisor = buildWealthAdvisorSummary({
+    summary,
+    cashFlow,
+    debts: mappedDebts,
+    holdings: holdings.map(mapHolding),
+    contributions: mappedContributions,
+    statements: mappedStatements,
+  });
 
   return NextResponse.json({
     accounts: mappedAccounts,
@@ -112,8 +129,10 @@ export async function GET() {
     rsuVests: mappedRSUs,
     alerts: alerts.map(mapAlert),
     snapshots: snapshots.map(mapSnapshot),
+    statements: mappedStatements,
     summary,
     cashFlow,
+    wealthAdvisor,
     config: Object.fromEntries(config.map((c) => [c.key, c.value])),
   });
 }

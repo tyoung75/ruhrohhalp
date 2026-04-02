@@ -94,6 +94,17 @@ function hardSplit(text: string): string[] {
   let line = "";
 
   for (const word of words) {
+    if (word.length > MAX_CHUNK_CHARS) {
+      if (line) {
+        chunks.push(line);
+        line = "";
+      }
+      for (let i = 0; i < word.length; i += MAX_CHUNK_CHARS) {
+        chunks.push(word.slice(i, i + MAX_CHUNK_CHARS));
+      }
+      continue;
+    }
+
     if (line.length + word.length + 1 <= MAX_CHUNK_CHARS) {
       line = line ? `${line} ${word}` : word;
     } else {
