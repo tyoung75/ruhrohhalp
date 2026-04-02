@@ -920,6 +920,7 @@ function QueueTab() {
   const [replyOpenId, setReplyOpenId] = useState<string | null>(null);
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
   const [scheduleDate, setScheduleDate] = useState("");
+  const [bestHours, setBestHours] = useState<number[]>([8, 12, 18]);
   const [postsPerJob, setPostsPerJob] = useState(2);
   const [savingPostsPerJob, setSavingPostsPerJob] = useState(false);
   const [postsPerJobMessage, setPostsPerJobMessage] = useState<string | null>(null);
@@ -973,6 +974,10 @@ function QueueTab() {
   useEffect(() => {
     fetchQueue();
     fetchSettings();
+    // Fetch optimal posting hours from analytics
+    api<{ best_hours: number[] }>("/api/creator/optimal-hours?platform=threads")
+      .then((res) => { if (res.best_hours?.length) setBestHours(res.best_hours); })
+      .catch(() => {});
   }, [fetchQueue, fetchSettings]);
 
   async function updateItem(id: string, updates: Record<string, unknown>) {
@@ -1827,14 +1832,23 @@ function QueueTab() {
                                 setSchedulingId(null);
                               } else {
                                 setSchedulingId(item.id);
-                                // Pre-fill with existing schedule or default to tomorrow 9am
+                                // Pre-fill with existing schedule or default to next optimal hour
                                 if (item.scheduled_for) {
                                   setScheduleDate(new Date(item.scheduled_for).toISOString().slice(0, 16));
                                 } else {
-                                  const tomorrow = new Date();
-                                  tomorrow.setDate(tomorrow.getDate() + 1);
-                                  tomorrow.setHours(9, 0, 0, 0);
-                                  setScheduleDate(tomorrow.toISOString().slice(0, 16));
+                                  // Find the next upcoming optimal hour (today or tomorrow)
+                                  const now = new Date();
+                                  const currentHour = now.getHours();
+                                  const nextBestHour = bestHours.find((h) => h > currentHour);
+                                  const target = new Date();
+                                  if (nextBestHour !== undefined) {
+                                    target.setHours(nextBestHour, 0, 0, 0);
+                                  } else {
+                                    // All optimal hours passed today — use first optimal hour tomorrow
+                                    target.setDate(target.getDate() + 1);
+                                    target.setHours(bestHours[0] ?? 8, 0, 0, 0);
+                                  }
+                                  setScheduleDate(target.toISOString().slice(0, 16));
                                 }
                               }
                             }}
@@ -1944,7 +1958,7 @@ function QueueTab() {
                       }}
                     />
                     <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint }}>
-                      Post will auto-publish at the scheduled time.
+                      Peak engagement hours: {bestHours.map((h) => `${h > 12 ? h - 12 : h}${h >= 12 ? "pm" : "am"}`).join(", ")}
                     </span>
                   </div>
                 )}

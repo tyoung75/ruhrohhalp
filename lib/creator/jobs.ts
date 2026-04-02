@@ -32,12 +32,16 @@ const DEFAULT_POSTS_PER_JOB = 2;
  * 7. Brand voice alignment           — weighted 20%
  * 8. Timeliness (current events)     — weighted 15%
  */
+/** Hardcoded fallback peak hours when no analytics data is available. */
+const DEFAULT_PEAK_HOURS = [7, 8, 12, 13, 17, 18, 19, 21, 22];
+
 function scorePost(
   post: Record<string, unknown>,
   alreadySelectedTypes: Set<string>,
   typeEngagement: Map<string, number>,
   medianEngagement: number,
-  staleAfterDays: number
+  staleAfterDays: number,
+  peakHours: number[] = DEFAULT_PEAK_HOURS
 ): number {
   // 1. Agent confidence (default 0.5 if not scored)
   const confidence = (post.confidence_score as number) ?? 0.5;
@@ -47,11 +51,9 @@ function scorePost(
   const diversityBonus = alreadySelectedTypes.has(postType) ? 0 : 1;
 
   // 3. Time-of-day fit: posts scheduled closer to peak hours score higher
-  // Peak Threads hours (ET): 7-9, 12-13, 17-19, 21-22
   const scheduledHour = post.scheduled_for
     ? new Date(post.scheduled_for as string).getHours()
     : 12;
-  const peakHours = [7, 8, 12, 13, 17, 18, 19, 21, 22];
   const timeFit = peakHours.includes(scheduledHour) ? 1 : 0.5;
 
   // 4. Post length: short punchy posts (50-200 chars) tend to perform best on Threads
@@ -110,7 +112,8 @@ function selectTopPosts(
   limit: number,
   typeEngagement: Map<string, number>,
   medianEngagement: number,
-  staleAfterDays: number
+  staleAfterDays: number,
+  peakHours: number[] = DEFAULT_PEAK_HOURS
 ): Array<Record<string, unknown>> {
   const selected: Array<Record<string, unknown>> = [];
   const selectedTypes = new Set<string>();
@@ -125,7 +128,8 @@ function selectTopPosts(
         selectedTypes,
         typeEngagement,
         medianEngagement,
-        staleAfterDays
+        staleAfterDays,
+        peakHours
       );
       if (score > bestScore) {
         bestScore = score;
@@ -258,10 +262,57 @@ export async function publishQueuedPosts(
     ? allEngagements[Math.floor(allEngagements.length / 2)]
     : 0;
 
+  // Compute peak hours from real analytics data (hour of day → avg engagement)
+  let peakHours = DEFAULT_PEAK_HOURS;
+  try {
+    // Join analytics with content_queue to get publish hours
+    const { data: postedPosts } = await supabase
+      .from("content_queue")
+      .select("id, scheduled_for, updated_at")
+      .eq("user_id", userId)
+      .eq("status", "posted")
+      .not("scheduled_for", "is", null)
+      .limit(200);
+
+    if (postedPosts?.length) {
+      const postIds = postedPosts.map((p: Record<string, unknown>) => p.id as string);
+      const { data: hourlyAnalytics } = await supabase
+        .from("post_analytics")
+        .select("content_queue_id, engagement_rate")
+        .in("content_queue_id", postIds);
+
+      if (hourlyAnalytics?.length) {
+        const postHourMap = new Map<string, number>(
+          postedPosts.map((p: Record<string, unknown>) => [
+            p.id as string,
+            new Date(((p.scheduled_for as string) || (p.updated_at as string))).getHours(),
+          ])
+        );
+        const hourlyStats = new Map<number, { total: number; count: number }>();
+        for (const row of hourlyAnalytics as Record<string, unknown>[]) {
+          const hour = postHourMap.get(row.content_queue_id as string);
+          if (hour === undefined) continue;
+          const s = hourlyStats.get(hour) ?? { total: 0, count: 0 };
+          s.total += (row.engagement_rate as number) ?? 0;
+          s.count++;
+          hourlyStats.set(hour, s);
+        }
+        const ranked = Array.from(hourlyStats.entries())
+          .filter(([, s]) => s.count >= 2)
+          .sort((a, b) => (b[1].total / b[1].count) - (a[1].total / a[1].count));
+        if (ranked.length >= 3) {
+          peakHours = ranked.slice(0, 5).map(([h]) => h);
+        }
+      }
+    }
+  } catch {
+    // Fall back to defaults silently
+  }
+
   // Smart-rank and select the best posts for this run
   const postsToPublish = options.manual
     ? candidates
-    : selectTopPosts(candidates, remainingSlots, typeEngagement, medianEngagement, staleAfterDays);
+    : selectTopPosts(candidates, remainingSlots, typeEngagement, medianEngagement, staleAfterDays, peakHours);
 
   const skipped = candidates.length - postsToPublish.length;
   const results: Array<{ id: string; success: boolean; error?: string }> = [];
