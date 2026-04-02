@@ -73,7 +73,12 @@ export default function UsagePage() {
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16 }}>
             <div style={{ fontSize: 12, color: C.textFaint, letterSpacing: 0.3, textTransform: "uppercase", marginBottom: 12 }}>By Model</div>
             {usage.models.length === 0 ? (
-              <div style={{ fontSize: 12, color: C.textDim }}>No AI usage yet. It will populate after your next model calls.</div>
+              <div style={{ fontSize: 12, color: C.textDim, lineHeight: 1.6 }}>
+                No AI usage recorded yet. Usage is tracked automatically going forward as you use the app.
+                <span style={{ display: "block", marginTop: 8, color: C.textFaint, fontSize: 11 }}>
+                  Note: Usage tracking started when the activity logging system was deployed. Historical usage from before that point is not available for backfill since the app calls AI providers directly (no billing API to pull from).
+                </span>
+              </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {usage.models.map((model) => {
