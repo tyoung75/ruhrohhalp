@@ -57,13 +57,21 @@ export async function POST() {
       actionsTaken.replied.push({ brand: matched.brand_name, classification });
     }
 
+    // Include deals past their next_action_date (not just 10-day-old follow-ups)
+    const today = new Date().toISOString().slice(0, 10);
+    const sentNeedingAction = active.filter(
+      (d) => ["sent", "follow_up_1"].includes(d.status) && d.next_action_date && d.next_action_date <= today && d.follow_up_count < 2,
+    );
+    const dueFollowUps = await getDueFollowUps(user.id);
+
     const targets = [
       ...(await getReplied(user.id)),
-      ...(await getDueFollowUps(user.id)),
+      ...dueFollowUps,
+      ...sentNeedingAction.filter((d) => !dueFollowUps.some((f) => f.id === d.id)),
       ...(await getProspects(user.id)),
     ]
       .filter((d) => d.status !== "form_submitted")
-      .slice(0, 2);
+      .slice(0, 3);
 
     for (const target of targets) {
       if (!target.contact_email) continue;
