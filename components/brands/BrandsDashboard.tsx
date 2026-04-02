@@ -16,12 +16,27 @@ interface RunResponse {
   actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[] };
 }
 
+const EMPTY_BRAND_FORM = {
+  brand_name: "",
+  contact_email: "",
+  contact_name: "",
+  relationship_notes: "",
+  product_usage: "",
+  angle: "",
+  priority: "P1" as const,
+  status: "prospect" as const,
+  dont_say: [] as string[],
+};
+
 export function BrandsDashboard() {
   const [deals, setDeals] = useState<BrandDeal[]>([]);
   const [summary, setSummary] = useState<PipelineSummary | null>(null);
   const [selected, setSelected] = useState<DealDetailResponse | null>(null);
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState(EMPTY_BRAND_FORM);
+  const [adding, setAdding] = useState(false);
 
   async function fetchDeals() {
     const [dealsRes, summaryRes] = await Promise.all([
@@ -63,6 +78,34 @@ export function BrandsDashboard() {
     }
   }
 
+  async function addBrand() {
+    if (!addForm.brand_name.trim()) return;
+    setAdding(true);
+    try {
+      await api("/api/brands", {
+        method: "POST",
+        body: JSON.stringify({
+          brand_name: addForm.brand_name.trim(),
+          contact_email: addForm.contact_email.trim() || null,
+          contact_name: addForm.contact_name.trim() || null,
+          relationship_notes: addForm.relationship_notes.trim() || null,
+          product_usage: addForm.product_usage.trim() || null,
+          angle: addForm.angle.trim() || null,
+          priority: addForm.priority,
+          status: "prospect",
+          dont_say: addForm.dont_say,
+        }),
+      });
+      setAddForm(EMPTY_BRAND_FORM);
+      setShowAddForm(false);
+      window.dispatchEvent(new CustomEvent("brands:refresh"));
+    } catch (error) {
+      setRunResult(error instanceof Error ? error.message : "Failed to add brand");
+    } finally {
+      setAdding(false);
+    }
+  }
+
   async function openDeal(id: string) {
     const detail = await api<DealDetailResponse>(`/api/brands/${id}`);
     setSelected(detail);
@@ -70,9 +113,88 @@ export function BrandsDashboard() {
 
   return (
     <main style={{ background: C.bg, minHeight: "100%", color: C.text }}>
-      <h1 style={{ fontFamily: C.serif, color: C.cream, marginTop: 0 }}>Brand Outreach Pipeline</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h1 style={{ fontFamily: C.serif, color: C.cream, margin: 0 }}>Brand Outreach Pipeline</h1>
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          style={{
+            background: showAddForm ? C.border : C.cl,
+            color: showAddForm ? C.textDim : C.bg,
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 16px",
+            fontFamily: C.mono,
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          {showAddForm ? "Cancel" : "+ Add Brand"}
+        </button>
+      </div>
+
+      {showAddForm && (
+        <div style={{ marginBottom: 16, padding: 14, border: `1px solid ${C.border}`, borderRadius: 10, background: C.surface }}>
+          <div style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim, marginBottom: 10 }}>New brand prospect</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <input placeholder="Brand name *" value={addForm.brand_name} onChange={(e) => setAddForm({ ...addForm, brand_name: e.target.value })} style={{ background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
+            <input placeholder="Contact email" value={addForm.contact_email} onChange={(e) => setAddForm({ ...addForm, contact_email: e.target.value })} style={{ background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
+            <input placeholder="Contact name" value={addForm.contact_name} onChange={(e) => setAddForm({ ...addForm, contact_name: e.target.value })} style={{ background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
+            <select value={addForm.priority} onChange={(e) => setAddForm({ ...addForm, priority: e.target.value as "P0" | "P1" | "P2" })} style={{ background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
+              <option value="P0">P0 — High priority</option>
+              <option value="P1">P1 — Normal</option>
+              <option value="P2">P2 — Low priority</option>
+            </select>
+          </div>
+          <input placeholder="Product usage — how you already use their product" value={addForm.product_usage} onChange={(e) => setAddForm({ ...addForm, product_usage: e.target.value })} style={{ width: "100%", boxSizing: "border-box", background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 13, marginBottom: 10 }} />
+          <input placeholder="Angle — your pitch hook for this brand" value={addForm.angle} onChange={(e) => setAddForm({ ...addForm, angle: e.target.value })} style={{ width: "100%", boxSizing: "border-box", background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 13, marginBottom: 10 }} />
+          <textarea placeholder="Relationship notes — any existing connection or context" value={addForm.relationship_notes} onChange={(e) => setAddForm({ ...addForm, relationship_notes: e.target.value })} rows={2} style={{ width: "100%", boxSizing: "border-box", background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 13, marginBottom: 10, resize: "vertical" }} />
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={() => void addBrand()}
+              disabled={adding || !addForm.brand_name.trim()}
+              style={{
+                background: addForm.brand_name.trim() ? C.cl : C.border,
+                color: addForm.brand_name.trim() ? C.bg : C.textDim,
+                border: "none",
+                borderRadius: 8,
+                padding: "10px 20px",
+                fontFamily: C.mono,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: addForm.brand_name.trim() ? "pointer" : "default",
+              }}
+            >
+              {adding ? "Adding..." : "Add to Pipeline"}
+            </button>
+            <button
+              onClick={() => {
+                if (!addForm.brand_name.trim()) return;
+                void (async () => {
+                  await addBrand();
+                  void runPipeline();
+                })();
+              }}
+              disabled={adding || running || !addForm.brand_name.trim()}
+              style={{
+                background: "transparent",
+                color: addForm.brand_name.trim() ? C.cl : C.textDim,
+                border: `1px solid ${addForm.brand_name.trim() ? C.cl : C.border}`,
+                borderRadius: 8,
+                padding: "10px 20px",
+                fontFamily: C.mono,
+                fontSize: 12,
+                cursor: addForm.brand_name.trim() ? "pointer" : "default",
+              }}
+            >
+              {adding || running ? "Working..." : "Add + Draft Email Now"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ marginBottom: 14, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface }}>
-        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim, marginBottom: 8 }}>Manual pipeline run</div>
+        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim, marginBottom: 8 }}>Run pipeline on all prospects</div>
         <button
           onClick={() => void runPipeline()}
           disabled={running}
