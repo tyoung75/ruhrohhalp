@@ -6,6 +6,12 @@ import { useMobile } from "@/lib/useMobile";
 
 const SETTINGS_SECTIONS = [
   {
+    href: "/settings/usage",
+    label: "AI Usage & Cost",
+    icon: "◎",
+    description: "View token usage, estimated costs per model, and optimization recommendations for the last 30 days.",
+  },
+  {
     href: "/settings/ingestion",
     label: "Ingestion Pipeline",
     icon: "⟳",
