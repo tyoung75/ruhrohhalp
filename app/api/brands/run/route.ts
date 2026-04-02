@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { callClaude } from "@/lib/processors/claude";
@@ -17,8 +17,6 @@ import {
 } from "@/lib/brands/pipeline";
 import { BRAND_VOICE_SYSTEM_PROMPT, TYLER_STATS, buildFollowUpPrompt, buildInitialOutreachPrompt } from "@/lib/brands/voice";
 
-export const maxDuration = 60;
-
 function parseDraft(text: string) {
   const lines = text.split("\n");
   const subject = lines.find((line) => line.toLowerCase().startsWith("subject:"))?.replace(/^subject:\s*/i, "").trim() ?? "Brand x Tyler Young — Partnership";
@@ -27,17 +25,14 @@ function parseDraft(text: string) {
   return { subject, body };
 }
 
-/** Manual pipeline trigger — same logic as the cron but uses user auth instead of CRON_SECRET */
-export async function POST(request: NextRequest) {
+export async function POST() {
   const { user, response } = await requireUser();
   if (response || !user) return response;
 
-  const userId = user.id;
-  const actionsTaken: Record<string, unknown[]> = { replied: [], drafted: [], archived: [], skipped: [] };
+  const actionsTaken: Record<string, unknown[]> = { replied: [], drafted: [], archived: [] };
 
   try {
-    // 1. Check for replies from brand contacts
-    const active = await getActivePipeline(userId);
+    const active = await getActivePipeline(user.id);
     const emails = active.map((d) => d.contact_email).filter((e): e is string => Boolean(e));
 
     const replies = await searchForBrandReplies(emails);
@@ -58,36 +53,28 @@ export async function POST(request: NextRequest) {
         direction: "inbound",
         summary: reply.body.slice(0, 280),
       });
-      await createFollowUpTask(userId, { ...matched, next_action_date: new Date().toISOString().slice(0, 10), next_action: `Respond to ${matched.brand_name}` });
+      await createFollowUpTask(user.id, { ...matched, next_action_date: new Date().toISOString().slice(0, 10), next_action: `Respond to ${matched.brand_name}` });
       actionsTaken.replied.push({ brand: matched.brand_name, classification });
     }
 
-    // 2. Select targets for draft generation
-    // Include: prospects needing initial outreach, deals needing follow-ups, and replied deals needing responses
-    const prospects = await getProspects(userId);
-    const dueFollowUps = await getDueFollowUps(userId);
-    const replied = await getReplied(userId);
-
-    // Also include "sent" deals that have a next_action_date <= today (even if < 10 days)
+    // Include deals past their next_action_date (not just 10-day-old follow-ups)
     const today = new Date().toISOString().slice(0, 10);
-    const sentDealsNeedingAction = active.filter(
+    const sentNeedingAction = active.filter(
       (d) => ["sent", "follow_up_1"].includes(d.status) && d.next_action_date && d.next_action_date <= today && d.follow_up_count < 2,
     );
+    const dueFollowUps = await getDueFollowUps(user.id);
 
     const targets = [
-      ...replied,
+      ...(await getReplied(user.id)),
       ...dueFollowUps,
-      ...sentDealsNeedingAction.filter((d) => !dueFollowUps.some((f) => f.id === d.id)),
-      ...prospects,
+      ...sentNeedingAction.filter((d) => !dueFollowUps.some((f) => f.id === d.id)),
+      ...(await getProspects(user.id)),
     ]
       .filter((d) => d.status !== "form_submitted")
       .slice(0, 3);
 
     for (const target of targets) {
-      if (!target.contact_email) {
-        actionsTaken.skipped.push({ brand: target.brand_name, reason: "No contact email" });
-        continue;
-      }
+      if (!target.contact_email) continue;
       const emailType = !target.last_contact_date ? "initial" : target.follow_up_count === 0 ? "follow_up_1" : "follow_up_2";
       const prompt = emailType === "initial"
         ? buildInitialOutreachPrompt(target, TYLER_STATS)
@@ -130,26 +117,25 @@ export async function POST(request: NextRequest) {
         next_action_date: new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10),
       });
 
-      actionsTaken.drafted.push({ brand: target.brand_name, subject: parsed.subject, draftId: draft.draftId, preview: parsed.body.slice(0, 200) });
+      await createFollowUpTask(user.id, {
+        ...target,
+        next_action_date: new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10),
+        next_action: `Follow up with ${target.brand_name}`,
+      });
+
+      actionsTaken.drafted.push({ brand: target.brand_name, draftId: draft.draftId });
     }
 
-    // 3. Archive stale deals
-    const stale = await getStaleDeals(userId);
+    const stale = await getStaleDeals(user.id);
     for (const deal of stale) {
       await archiveDeal(deal.id, "No response after full outreach cadence");
       actionsTaken.archived.push({ brand: deal.brand_name });
     }
 
-    const summary = await getPipelineSummary(userId);
-
-    return NextResponse.json({
-      ok: true,
-      timestamp: new Date().toISOString(),
-      actions_taken: actionsTaken,
-      pipeline_status: summary,
-    });
+    const summary = await getPipelineSummary(user.id);
+    return NextResponse.json({ ok: true, actions_taken: actionsTaken, pipeline_status: summary });
   } catch (error) {
-    logError("brands.run-pipeline", error);
-    return NextResponse.json({ error: "Pipeline run failed", detail: String(error) }, { status: 500 });
+    logError("brands.run", error, { userId: user.id });
+    return NextResponse.json({ error: "Failed to run brand sourcing and drafting" }, { status: 500 });
   }
 }
