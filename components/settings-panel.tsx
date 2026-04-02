@@ -125,6 +125,63 @@ export function SettingsPanel({
             </div>
           </div>
 
+          <div style={{ background: C.card, borderRadius: 9, border: `1px solid ${C.border}`, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 12, color: C.textFaint, letterSpacing: 0.3, textTransform: "uppercase" }}>Usage (last 30 days)</div>
+            {usageLoading ? (
+              <div style={{ fontSize: 12, color: C.textDim }}>Loading usage analytics…</div>
+            ) : usage ? (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={{ padding: 8, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+                    <div style={{ fontSize: 10, color: C.textFaint }}>Total Tokens</div>
+                    <div style={{ fontSize: 16, color: C.cream, fontFamily: C.mono }}>{usage.totals.tokens.toLocaleString()}</div>
+                  </div>
+                  <div style={{ padding: 8, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+                    <div style={{ fontSize: 10, color: C.textFaint }}>Est. Cost</div>
+                    <div style={{ fontSize: 16, color: C.cream, fontFamily: C.mono }}>${usage.totals.estimatedCostUsd.toFixed(2)}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {usage.models.length === 0 ? (
+                    <div style={{ fontSize: 12, color: C.textDim }}>No AI usage yet. It will populate after your next model calls.</div>
+                  ) : (
+                    usage.models.slice(0, 6).map((model) => {
+                      const modelDef = MODELS[model.modelId];
+                      const provider = modelDef?.provider ? PROVIDERS[modelDef.provider] : null;
+                      return (
+                        <div key={model.modelId} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 8, display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
+                          <div>
+                            <div style={{ fontSize: 12, color: C.text }}>
+                              {provider ? <span style={{ color: provider.color }}>{provider.icon}</span> : null} {modelDef?.label ?? model.modelId}
+                            </div>
+                            <div style={{ fontSize: 10, color: C.textFaint }}>{model.calls} calls · {model.totalTokens.toLocaleString()} tokens</div>
+                          </div>
+                          <div style={{ fontSize: 12, color: C.cream, fontFamily: C.mono }}>${model.estimatedCostUsd.toFixed(2)}</div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {usage.recommendations.length > 0 ? (
+                  <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontSize: 11, color: C.textFaint }}>Optimization suggestions</div>
+                    {usage.recommendations.slice(0, 2).map((rec) => (
+                      <div key={`${rec.currentModelId}-${rec.suggestedModelId}`} style={{ fontSize: 11, color: C.textDim, lineHeight: 1.5 }}>
+                        Switch some <span style={{ color: C.text }}>{MODELS[rec.currentModelId]?.label ?? rec.currentModelId}</span> tasks to{" "}
+                        <span style={{ color: C.text }}>{MODELS[rec.suggestedModelId]?.label ?? rec.suggestedModelId}</span> to save about{" "}
+                        <span style={{ color: C.gem }}>${rec.estimatedMonthlySavingsUsd.toFixed(2)}</span>/month.
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div style={{ fontSize: 12, color: C.textDim }}>Usage metrics unavailable right now.</div>
+            )}
+          </div>
+
           {byokOrFree ? (
             <div style={{ background: C.card, borderRadius: 9, border: `1px solid ${C.border}`, padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
               {fields.map((f) => (
