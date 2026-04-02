@@ -136,6 +136,39 @@ export interface FinancialSnapshot {
   createdAt: string;
 }
 
+export interface FinancialStatementIngestion {
+  id: string;
+  userId: string;
+  accountName: string;
+  institution: string | null;
+  statementMonth: string;
+  fileName: string;
+  contentType: string | null;
+  bytes: number;
+  ingestionStatus: "queued" | "processed" | "failed";
+  ingestionNotes: string | null;
+  extractedText: string | null;
+  uploadedAt: string;
+  updatedAt: string;
+}
+
+export interface WealthAdvisorSummary {
+  generatedAt: string;
+  dailyBriefing: string[];
+  deepAnalysis: string[];
+  portfolioAlerts: string[];
+  underlyingInsights: string[];
+  optimizationPlan: string[];
+  taxOptimization: string[];
+  budgetOptimization: string[];
+  adaptationLoop: string[];
+  statementIngestion: {
+    recentStatements: number;
+    lastStatementAt: string | null;
+    latestAccounts: string[];
+  };
+}
+
 // ── Computed / derived types ────────────────────────────────
 
 export interface NetWorthSummary {
@@ -266,4 +299,6 @@ export interface FinancialDashboardData {
   summary: NetWorthSummary;
   cashFlow: CashFlowSummary;
   config: Record<string, string>;
+  statements?: FinancialStatementIngestion[];
+  wealthAdvisor?: WealthAdvisorSummary;
 }
