@@ -6,6 +6,13 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logError } from "@/lib/logger";
 
+function isMissingFinancialAdvisorMemoryTable(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  const message = "message" in error && typeof error.message === "string" ? error.message : "";
+  return code === "PGRST205" || /financial_advisor_memory|schema cache/i.test(message);
+}
+
 // ---------------------------------------------------------------------------
 // Direct DB context — supplement RAG with real task/goal/calendar data
 // ---------------------------------------------------------------------------
@@ -220,7 +227,14 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
   const cash = accountRows
     .filter((a) => a.account_type === "checking" || a.account_type === "savings")
     .reduce((sum, a) => sum + Number(a.balance ?? 0), 0);
-  const advisorPayload = financeAdvisorMemoryResult.data?.[0]?.content as { advisor?: { dailyBriefing?: string[] } } | undefined;
+  if (financeAdvisorMemoryResult.error && !isMissingFinancialAdvisorMemoryTable(financeAdvisorMemoryResult.error)) {
+    logError("briefing_daily_financial_advisor_memory_query_failed", financeAdvisorMemoryResult.error);
+  }
+  const advisorPayload = (
+    financeAdvisorMemoryResult.error && isMissingFinancialAdvisorMemoryTable(financeAdvisorMemoryResult.error)
+      ? undefined
+      : financeAdvisorMemoryResult.data?.[0]?.content
+  ) as { advisor?: { dailyBriefing?: string[] } } | undefined;
 
   return {
     openTasks: (tasksResult.data ?? []).map((t) => ({
