@@ -27,6 +27,7 @@ import type { HistoricalPriceData } from "@/app/api/finance/quotes/historical/ro
 import { runNetWorthForecast, rsuVestsToMonthOffsets, ASSET_CLASS_DEFAULTS } from "@/lib/forecast";
 import type { ForecastInput, AssetClassParams } from "@/lib/forecast";
 import { Spinner } from "@/components/primitives";
+import { WealthAdvisorSection } from "@/components/finance/WealthAdvisorSection";
 import { useMobile } from "@/lib/useMobile";
 import {
   AreaChart,
@@ -1911,21 +1912,21 @@ export default function FinancePage() {
   const { quotes, loading: quotesLoading, error: quotesError, fetchedAt, marketState, refetch: refetchQuotes } = useStockQuotes(symbols);
   const { historical: historicalData } = useHistoricalQuotes(symbols);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const result = await api<FinancialDashboardData>("/api/finance");
-        setData(result);
-        setNewSalary(parseInt(result.config?.annual_salary ?? "247800", 10));
-      } catch (err) {
-        console.error("Failed to load financial data:", err);
-      } finally {
-        setLoading(false);
-      }
+  const fetchFinanceData = useCallback(async () => {
+    try {
+      const result = await api<FinancialDashboardData>("/api/finance");
+      setData(result);
+      setNewSalary(parseInt(result.config?.annual_salary ?? "247800", 10));
+    } catch (err) {
+      console.error("Failed to load financial data:", err);
+    } finally {
+      setLoading(false);
     }
-
-    fetchData();
   }, []);
+
+  useEffect(() => {
+    fetchFinanceData();
+  }, [fetchFinanceData]);
 
   useEffect(() => {
     if (!data) return;
@@ -2050,6 +2051,8 @@ export default function FinancePage() {
 
         {/* Net Worth Forecast */}
         <ForecastSection data={data} />
+
+        <WealthAdvisorSection advisor={data.wealthAdvisor} statements={data.statements ?? []} onUploaded={fetchFinanceData} />
 
         {/* Live Holdings */}
         <LiveHoldingsSection

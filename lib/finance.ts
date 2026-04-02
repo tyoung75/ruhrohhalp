@@ -23,6 +23,8 @@ import type {
   HistoricalPrices,
   IncomeFrequency,
   Owner,
+  WealthAdvisorSummary,
+  FinancialStatementIngestion,
 } from "@/lib/types/finance";
 
 // ── Frequency multipliers (to monthly) ──────────────────────
@@ -573,4 +575,84 @@ export function formatDelta(n: number): string {
   if (!isFinite(n)) return "$—";
   const sign = n >= 0 ? "+" : "";
   return `${sign}${formatCurrency(n)}`;
+}
+
+export function buildWealthAdvisorSummary(params: {
+  summary: NetWorthSummary;
+  cashFlow: CashFlowSummary;
+  debts: FinancialDebt[];
+  holdings: FinancialHolding[];
+  contributions: FinancialContribution[];
+  statements: FinancialStatementIngestion[];
+  now?: Date;
+}): WealthAdvisorSummary {
+  const now = params.now ?? new Date();
+  const activeDebts = params.debts.filter((d) => d.status === "active");
+  const highAprDebts = activeDebts.filter((d) => d.apr >= 10).sort((a, b) => b.apr - a.apr);
+  const totalHoldings = params.holdings.reduce((sum, h) => sum + h.currentValue, 0);
+  const concentrated = params.holdings
+    .filter((h) => totalHoldings > 0 && h.currentValue / totalHoldings >= 0.15)
+    .sort((a, b) => b.currentValue - a.currentValue);
+  const recentStatements = params.statements.filter((s) => {
+    const uploaded = new Date(s.uploadedAt).getTime();
+    return uploaded >= now.getTime() - 45 * 24 * 60 * 60 * 1000;
+  });
+
+  const pctContrib = params.contributions.filter((c) => c.isActive && c.isPercentage);
+  const fixedContrib = params.contributions.filter((c) => c.isActive && !c.isPercentage);
+
+  return {
+    generatedAt: now.toISOString(),
+    dailyBriefing: [
+      params.cashFlow.monthlySurplus >= 0
+        ? `Monthly surplus is ${formatCurrency(params.cashFlow.monthlySurplus)}. Keep current allocation cadence and review for a rebalance only once per month.`
+        : `Monthly cash flow is short by ${formatCurrency(Math.abs(params.cashFlow.monthlySurplus))}. Pause non-tax-advantaged contributions until cash flow stabilizes.`,
+      concentrated.length > 0
+        ? `Concentration risk: ${concentrated[0].symbol} is ${((concentrated[0].currentValue / totalHoldings) * 100).toFixed(1)}% of tracked holdings.`
+        : "No single holding currently exceeds the 15% concentration threshold.",
+      recentStatements.length === 0
+        ? "No monthly statements ingested in the last 45 days. Upload statements to improve account-level recommendations."
+        : `${recentStatements.length} recent statement(s) ingested; advisor context is up to date for account-level analysis.`,
+    ],
+    deepAnalysis: [
+      `Net worth is ${formatCurrency(params.summary.netWorth)} with ${formatCurrency(params.summary.totalLiabilities)} liabilities.`,
+      `Savings rate is ${params.cashFlow.savingsRate.toFixed(1)}% with ${formatCurrency(params.cashFlow.monthlyContributions)} contributed monthly.`,
+      `Contribution mix: ${pctContrib.length} percentage-based and ${fixedContrib.length} fixed-dollar automations.`,
+    ],
+    portfolioAlerts: highAprDebts.length > 0
+      ? highAprDebts.slice(0, 3).map((d) => `${d.name} APR is ${d.apr.toFixed(2)}% — prioritize payoff ahead of new taxable investing.`)
+      : ["No high-APR debt alerts detected."],
+    underlyingInsights: [
+      params.summary.cashPosition < 6_000
+        ? "Emergency liquidity is thin relative to market volatility; keep at least one month of expenses in cash."
+        : "Cash reserve appears sufficient for short-term volatility tolerance.",
+      concentrated.length > 1
+        ? "Portfolio concentration spans multiple large positions; stage diversification with tax-aware sell windows."
+        : "Diversification is broadly balanced based on currently tracked holdings.",
+    ],
+    optimizationPlan: [
+      "Set a monthly rebalance cadence (not daily) with a target drift threshold of ±5% per account.",
+      "Route new contributions first to underweight long-term targets rather than selling appreciated positions.",
+      "Review each account separately (taxable, 401k, Roth IRA) before any allocation shift.",
+    ],
+    taxOptimization: [
+      "Prioritize tax-advantaged buckets first: 401k match → HSA (if available) → Roth/Backdoor Roth → taxable brokerage.",
+      "Use taxable accounts for tax-loss harvesting checks once per month and avoid wash-sale conflicts across all accounts.",
+      "Plan RSU vest handling in advance (withholding, sale-to-cover, diversification rules) before each vest date.",
+    ],
+    budgetOptimization: [
+      "Track recurring subscriptions and discretionary spend categories monthly; cut low-utility spend before reducing long-term investments.",
+      "Use a fixed spending guardrail tied to monthly surplus so investment automation remains consistent.",
+    ],
+    adaptationLoop: [
+      "Advisor updates recommendations using latest statements, portfolio performance, and your explicit feedback.",
+      "Feedback to include: risk comfort, liquidity targets, tax priorities, and why a recommendation was accepted or rejected.",
+      "Performance review cadence: monthly account-level scorecard and quarterly strategy reset.",
+    ],
+    statementIngestion: {
+      recentStatements: recentStatements.length,
+      lastStatementAt: params.statements[0]?.uploadedAt ?? null,
+      latestAccounts: Array.from(new Set(params.statements.slice(0, 5).map((s) => s.accountName))),
+    },
+  };
 }
