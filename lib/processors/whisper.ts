@@ -35,8 +35,8 @@ export function cleanTranscript(raw: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  // Capitalize first letter of each sentence after cleanup
-  text = text.replace(/(^|[.!?]\s+)([a-z])/g, (_, prefix, letter) => prefix + letter.toUpperCase());
+  // Capitalize first letter of each sentence and paragraph after cleanup
+  text = text.replace(/(^|[.!?]\s+|\n+)([a-z])/g, (_, prefix, letter) => prefix + letter.toUpperCase());
 
   return text;
 }
