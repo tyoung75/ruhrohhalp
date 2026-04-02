@@ -2,6 +2,11 @@ import type { PlannerItem } from "@/lib/types/domain";
 import type { Database } from "@/lib/types/db";
 
 export function dbTaskToPlannerItem(row: Database["public"]["Tables"]["tasks"]["Row"]): PlannerItem {
+  const extendedRow = row as Database["public"]["Tables"]["tasks"]["Row"] & {
+    leverage_reason?: string | null;
+    github_pr_url?: string | null;
+  };
+
   return {
     id: row.id,
     userId: row.user_id,
@@ -22,8 +27,8 @@ export function dbTaskToPlannerItem(row: Database["public"]["Tables"]["tasks"]["
     delegatedTo: row.delegated_to,
     isOpenLoop: row.is_open_loop,
     threadRef: row.thread_ref,
-    leverageReason: row.leverage_reason,
-    githubPrUrl: row.github_pr_url,
+    leverageReason: extendedRow.leverage_reason ?? "",
+    githubPrUrl: extendedRow.github_pr_url ?? null,
     linearIssueId: row.linear_issue_id,
     linearUrl: row.linear_url,
     linearSyncedAt: row.linear_synced_at,

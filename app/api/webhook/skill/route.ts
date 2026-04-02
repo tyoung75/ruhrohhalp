@@ -207,28 +207,33 @@ async function handleUpdateTaskState(
 
   // Auto-signal on task completion: insert goal_signal + outcome_signal
   if (newState === "done" && data.goal_id) {
-    supabase.from("goals").select("pillar_id").eq("id", data.goal_id).single().then(async ({ data: goal }) => {
-      if (!goal) return;
-      await Promise.all([
-        supabase.from("goal_signals").insert({
-          user_id: userId,
-          goal_id: data.goal_id,
-          pillar_id: goal.pillar_id,
-          signal_type: "task_completed",
-          content: `Task completed: ${data.title}`,
-          impact_score: 0.7,
-          source_ref: data.id,
-        }),
-        supabase.from("outcome_signals").insert({
-          pillar_id: goal.pillar_id,
-          goal_id: data.goal_id,
-          signal_type: "task_completed",
-          value: 1,
-          value_text: data.title,
-          source: "task_completion",
-        }),
-      ]);
-    }).catch(() => {});
+    void (async () => {
+      try {
+        const { data: goal } = await supabase.from("goals").select("pillar_id").eq("id", data.goal_id).single();
+        if (!goal) return;
+        await Promise.all([
+          supabase.from("goal_signals").insert({
+            user_id: userId,
+            goal_id: data.goal_id,
+            pillar_id: goal.pillar_id,
+            signal_type: "task_completed",
+            content: `Task completed: ${data.title}`,
+            impact_score: 0.7,
+            source_ref: data.id,
+          }),
+          supabase.from("outcome_signals").insert({
+            pillar_id: goal.pillar_id,
+            goal_id: data.goal_id,
+            signal_type: "task_completed",
+            value: 1,
+            value_text: data.title,
+            source: "task_completion",
+          }),
+        ]);
+      } catch {
+        // Non-blocking side effect.
+      }
+    })();
   }
 
   return NextResponse.json({

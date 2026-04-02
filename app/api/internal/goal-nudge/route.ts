@@ -84,7 +84,10 @@ export async function POST(request: NextRequest) {
           ? Math.floor((Date.now() - new Date(lastCheckinDate).getTime()) / 86400000)
           : null;
 
-        const pillarName = (goal.pillars as Record<string, unknown>)?.name ?? "Unknown";
+        const pillarData = goal.pillars as { name?: string } | Array<{ name?: string }> | null;
+        const pillarName = Array.isArray(pillarData)
+          ? (pillarData[0]?.name ?? "Unknown")
+          : (pillarData?.name ?? "Unknown");
 
         // Create activity log entry (surfaced in evening briefing)
         await supabase.from("activity_log").insert({
