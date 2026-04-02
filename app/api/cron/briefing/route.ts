@@ -315,16 +315,30 @@ function extractSection(text: string, heading: string): string[] {
   );
   const match = text.match(pattern);
   if (!match) return [];
-  return match[1]
-    .split("\n")
-    .map((line) =>
-      line
-        .replace(/^[\s]*(?:[-*]|\d+[.)]\s*)\s*/, "")  // strip list markers
-        .replace(/^\*\*|\*\*$/g, "")                    // strip leading/trailing bold **
-        .replace(/^\*|\*$/g, "")                         // strip leading/trailing italic *
-        .trim(),
-    )
-    .filter((line) => line.length > 0 && !line.startsWith("##") && !/^-{2,}$/.test(line));
+  const parsedItems: string[] = [];
+  const rawLines = match[1].split("\n");
+
+  for (const rawLine of rawLines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("##") || /^-{2,}$/.test(trimmed)) continue;
+
+    const isBullet = /^[\s]*(?:[-*•]|\d+[.)])\s+/.test(rawLine);
+    const cleanLine = trimmed
+      .replace(/^[\s]*(?:[-*•]|\d+[.)])\s+/, "") // strip list markers
+      .replace(/^\*\*|\*\*$/g, "") // strip leading/trailing bold **
+      .replace(/^\*|\*$/g, "") // strip leading/trailing italic *
+      .trim();
+    if (!cleanLine) continue;
+
+    if (isBullet || parsedItems.length === 0) {
+      parsedItems.push(cleanLine);
+    } else {
+      // Continuation line: append to previous bullet so task + rationale stay together.
+      parsedItems[parsedItems.length - 1] = `${parsedItems[parsedItems.length - 1]} ${cleanLine}`;
+    }
+  }
+
+  return parsedItems;
 }
 
 function parseDailySections(answer: string) {
