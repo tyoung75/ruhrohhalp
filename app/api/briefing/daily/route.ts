@@ -399,12 +399,25 @@ function extractSection(text: string, heading: string): string[] {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match && match[1]) {
-      const lines = match[1]
-        .split("\n")
-        .map((line) => line.replace(/^[\s]*(?:[-*•]|\d+[.)]\s)\s*/, "").trim())
-        .filter((line) => line.length > 0 && !line.startsWith("---"));
+      const parsedItems: string[] = [];
+      const rawLines = match[1].split("\n");
+      for (const rawLine of rawLines) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("---")) continue;
 
-      if (lines.length > 0) return lines;
+        const isBullet = /^[\s]*(?:[-*•]|\d+[.)])\s+/.test(rawLine);
+        const cleanLine = line.replace(/^[\s]*(?:[-*•]|\d+[.)])\s+/, "").trim();
+        if (!cleanLine) continue;
+
+        if (isBullet || parsedItems.length === 0) {
+          parsedItems.push(cleanLine);
+        } else {
+          // Continuation line: append to previous bullet so task + rationale stay together.
+          parsedItems[parsedItems.length - 1] = `${parsedItems[parsedItems.length - 1]} ${cleanLine}`;
+        }
+      }
+
+      if (parsedItems.length > 0) return parsedItems;
     }
   }
 

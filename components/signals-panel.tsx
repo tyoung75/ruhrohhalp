@@ -1219,7 +1219,7 @@ export function SignalsPanel() {
               </div>
               {activeFilter === "all" && (
                 <button
-                  onClick={generateBriefing}
+                  onClick={refreshSignals}
                   disabled={generating}
                   style={{
                     background: generating ? C.surface : C.cl,

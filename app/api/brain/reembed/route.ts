@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
       : ALL_TABLES;
 
     const supabase = createAdminClient();
-    const results: Record<string, { processed: number; errors: number }> = {};
+    const results: Record<string, { processed: number; errors: number; lastError: string }> = {};
 
     for (const def of tableDefs) {
       let processed = 0;
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
             break;
           }
 
-          textsToEmbed = rawRows.map((row: Record<string, unknown>) => {
+          textsToEmbed = (rawRows as unknown as Record<string, unknown>[]).map((row) => {
             const textParts = cols
               .filter((c) => c !== "id")
               .map((c) => (String(row[c] ?? "")).trim())
