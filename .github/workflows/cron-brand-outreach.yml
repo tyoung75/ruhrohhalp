@@ -1,0 +1,17 @@
+name: Brand Outreach Pipeline
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+jobs:
+  brand-outreach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run brand outreach pipeline
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X GET "https://www.ruhrohhalp.com/api/cron/brand-outreach" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "Response: $STATUS"
+          if [ "$STATUS" != "200" ]; then exit 1; fi
