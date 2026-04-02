@@ -1,0 +1,59 @@
+name: Brain Sync
+
+# Replaces the old Cowork morning brain-sync task.
+#
+# GitHub Actions cron is UTC. During EDT:
+#   09:00 UTC = 5:00 AM ET
+#
+# During EST this will fire at 4:00 AM ET unless the cron is adjusted seasonally.
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run synthesis without writing memories"
+        required: false
+        default: "true"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger brain-sync job
+        run: |
+          DRY_RUN="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}"
+
+          echo "Triggering brain-sync at $(date -u)"
+          echo "dry_run=$DRY_RUN"
+
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.RUHROHHALP_URL }}/api/jobs/brain-sync" \
+            -H "Content-Type: application/json" \
+            -H "x-webhook-secret: ${{ secrets.RUHROHHALP_SECRET }}" \
+            --data "{\"dry_run\": ${DRY_RUN}}" \
+            --max-time 300)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: brain-sync returned HTTP $http_code"
+            exit 1
+          fi
+
+          ok=$(echo "$body" | jq -r '.ok // false' 2>/dev/null)
+          if [ "$ok" != "true" ]; then
+            echo "ERROR: brain-sync job reported ok=false"
+            exit 1
+          fi
+
+          inserted=$(echo "$body" | jq -r '.inserted // 0' 2>/dev/null)
+          observations=$(echo "$body" | jq -r '.observation_count // 0' 2>/dev/null)
+          echo "✓ Brain-sync completed | observations=$observations inserted=$inserted"
