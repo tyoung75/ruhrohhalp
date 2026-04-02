@@ -1,24 +1,5 @@
-import { google } from "googleapis";
 import type { BlogPost } from "@/lib/blog/types";
-import { getGoogleOauthCredentials } from "@/lib/google/oauth";
-
-function getGmailClient() {
-  const oauth = getGoogleOauthCredentials();
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
-
-  if (!oauth || !refreshToken) {
-    return null;
-  }
-
-  const oauth2Client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-
-  return google.gmail({ version: "v1", auth: oauth2Client });
-}
-
-function encodeMessage(raw: string): string {
-  return Buffer.from(raw).toString("base64url");
-}
+import { getGmailClient, encodeMessage } from "@/lib/google/gmail";
 
 export async function createBlogDraftEmail(post: BlogPost, draftId: string, weekStartIso: string) {
   const gmail = getGmailClient();
