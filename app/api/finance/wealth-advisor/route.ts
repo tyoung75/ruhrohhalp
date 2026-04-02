@@ -7,6 +7,13 @@ import { callProvider } from "@/lib/ai/providers";
 import { buildWealthAdvisorSummary, calculateCashFlow, calculateNetWorth } from "@/lib/finance";
 import type { WealthAdvisorSummary } from "@/lib/types/finance";
 
+function isMissingFinancialAdvisorMemoryTable(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  const message = "message" in error && typeof error.message === "string" ? error.message : "";
+  return code === "PGRST205" || /financial_advisor_memory|schema cache/i.test(message);
+}
+
 function safeParseAdvisorResponse(raw: string): WealthAdvisorSummary | null {
   try {
     const parsed = JSON.parse(raw) as WealthAdvisorSummary;
@@ -96,7 +103,10 @@ export async function GET() {
     return NextResponse.json({ advisor: deterministic, source: "rules" });
   }
 
-  const latestMemories = (memoryRes.data ?? []).map((m) => ({
+  if (memoryRes.error && !isMissingFinancialAdvisorMemoryTable(memoryRes.error)) {
+    console.error("Failed to read financial_advisor_memory", memoryRes.error);
+  }
+  const latestMemories = ((memoryRes.error && isMissingFinancialAdvisorMemoryTable(memoryRes.error)) ? [] : (memoryRes.data ?? [])).map((m) => ({
     type: m.memory_type,
     title: m.title,
     createdAt: m.created_at,
@@ -139,7 +149,7 @@ Respect monthly decision cadence (do not recommend daily trading). Use historica
 
   const advisor = safeParseAdvisorResponse(raw) ?? deterministic;
 
-  await supabase.from("financial_advisor_memory").insert({
+  const { error: snapshotError } = await supabase.from("financial_advisor_memory").insert({
     user_id: user.id,
     memory_type: "advisor_snapshot",
     title: "wealth_advisor_snapshot",
@@ -151,6 +161,9 @@ Respect monthly decision cadence (do not recommend daily trading). Use historica
       },
     },
   });
+  if (snapshotError && !isMissingFinancialAdvisorMemoryTable(snapshotError)) {
+    console.error("Failed to store advisor snapshot", snapshotError);
+  }
 
   return NextResponse.json({ advisor, source: "chatgpt" });
 }
@@ -173,6 +186,11 @@ export async function POST(request: Request) {
     content: { feedback, decision, capturedAt: new Date().toISOString() },
   });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    if (isMissingFinancialAdvisorMemoryTable(error)) {
+      return NextResponse.json({ ok: true, skipped: "financial_advisor_memory_missing" });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }
