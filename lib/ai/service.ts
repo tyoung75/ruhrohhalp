@@ -31,6 +31,8 @@ export async function processInputWithDualAI(params: {
         apiKey: claudeKey,
         system: plannerSystemPrompt(ctxItems),
         messages: [{ role: "user", content: input }],
+        userId,
+        route: "planner.process",
       });
       claudeItems = parseJSONArray<typeof claudeItems[number]>(raw);
     } catch (error) {
@@ -209,5 +211,7 @@ export async function chatWithTaskAgent(params: {
     apiKey: key,
     system: params.system,
     messages: params.messages,
+    userId: params.userId,
+    route: "agent.chat",
   });
 }

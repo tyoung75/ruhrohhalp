@@ -10,11 +10,14 @@ export async function callProvider(params: {
   apiKey: string;
   system: string;
   messages: Message[];
+  userId?: string;
+  route?: string;
 }): Promise<string> {
-  const { provider, modelId, apiKey, system, messages } = params;
+  const { provider, modelId, apiKey, system, messages, userId, route = "unknown" } = params;
 
   if (provider === "claude") {
     const model = modelId || PROVIDER_DEFAULT_MODEL.claude;
+    const start = Date.now();
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -26,11 +29,24 @@ export async function callProvider(params: {
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error?.message ?? "Claude call failed");
+    const inputTokens = data.usage?.input_tokens ?? 0;
+    const outputTokens = data.usage?.output_tokens ?? 0;
+    void logProviderCall({
+      userId,
+      route,
+      provider,
+      model,
+      latencyMs: Date.now() - start,
+      inputTokens,
+      outputTokens,
+      error: null,
+    });
     return data.content?.find((c: { type: string }) => c.type === "text")?.text ?? "";
   }
 
   if (provider === "chatgpt") {
     const model = modelId || PROVIDER_DEFAULT_MODEL.chatgpt;
+    const start = Date.now();
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -45,10 +61,23 @@ export async function callProvider(params: {
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error?.message ?? "OpenAI call failed");
+    const inputTokens = data.usage?.prompt_tokens ?? 0;
+    const outputTokens = data.usage?.completion_tokens ?? 0;
+    void logProviderCall({
+      userId,
+      route,
+      provider,
+      model,
+      latencyMs: Date.now() - start,
+      inputTokens,
+      outputTokens,
+      error: null,
+    });
     return data.choices?.[0]?.message?.content ?? "";
   }
 
   const model = modelId || PROVIDER_DEFAULT_MODEL.gemini;
+  const start = Date.now();
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
@@ -66,6 +95,18 @@ export async function callProvider(params: {
   );
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error?.message ?? "Gemini call failed");
+  const inputTokens = data.usageMetadata?.promptTokenCount ?? 0;
+  const outputTokens = data.usageMetadata?.candidatesTokenCount ?? 0;
+  void logProviderCall({
+    userId,
+    route,
+    provider,
+    model,
+    latencyMs: Date.now() - start,
+    inputTokens,
+    outputTokens,
+    error: null,
+  });
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
@@ -164,6 +205,38 @@ export async function callAI(params: {
   // Log failure
   logAICall(route, model, 0, 0, lastError?.message ?? "Unknown error").catch(() => {});
   throw lastError ?? new Error("All AI call attempts failed");
+}
+
+async function logProviderCall(params: {
+  userId?: string;
+  route: string;
+  provider: AIProvider;
+  model: string;
+  latencyMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  error: string | null;
+}): Promise<void> {
+  if (!params.userId) return;
+  try {
+    const supabase = createAdminClient();
+    await supabase.from("activity_log").insert({
+      user_id: params.userId,
+      type: "ai_call",
+      payload: {
+        route: params.route,
+        provider: params.provider,
+        model: params.model,
+        latency_ms: params.latencyMs,
+        input_tokens: params.inputTokens,
+        output_tokens: params.outputTokens,
+        tokens_used: params.inputTokens + params.outputTokens,
+        error: params.error,
+      },
+    });
+  } catch {
+    // Logging failure should not propagate
+  }
 }
 
 async function logAICall(

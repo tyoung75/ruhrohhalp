@@ -6,6 +6,13 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logError } from "@/lib/logger";
 
+function isMissingFinancialAdvisorMemoryTable(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  const message = "message" in error && typeof error.message === "string" ? error.message : "";
+  return code === "PGRST205" || /financial_advisor_memory|schema cache/i.test(message);
+}
+
 // ---------------------------------------------------------------------------
 // Direct DB context — supplement RAG with real task/goal/calendar data
 // ---------------------------------------------------------------------------
@@ -27,6 +34,14 @@ interface DirectContext {
   todaysFocusTasks: string[];
   activeStrategyInsights: string[];
   contentDirectives: string[];
+  financeSnapshot: {
+    netWorth: number;
+    debt: number;
+    cash: number;
+    topHoldings: string[];
+    statementUploadsLast45d: number;
+    latestAdvisorTakeaways: string[];
+  } | null;
 }
 
 async function fetchDirectContext(userId: string): Promise<DirectContext> {
@@ -50,6 +65,11 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
     topRankedTasksResult,
     strategyInsightsResult,
     contentDirectivesResult,
+    financeAccountsResult,
+    financeDebtsResult,
+    financeHoldingsResult,
+    financeStatementsResult,
+    financeAdvisorMemoryResult,
   ] = await Promise.all([
     // Open tasks (not done/cancelled), ordered by priority
     supabase
@@ -164,7 +184,57 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
       .eq("user_id", userId)
       .eq("active", true)
       .limit(10),
+
+    supabase
+      .from("financial_accounts")
+      .select("balance, account_type")
+      .eq("user_id", userId),
+
+    supabase
+      .from("financial_debts")
+      .select("balance, status")
+      .eq("user_id", userId),
+
+    supabase
+      .from("financial_holdings")
+      .select("symbol, current_value")
+      .eq("user_id", userId)
+      .order("current_value", { ascending: false })
+      .limit(5),
+
+    supabase
+      .from("financial_statement_ingestions")
+      .select("uploaded_at")
+      .eq("user_id", userId)
+      .gte("uploaded_at", new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString()),
+
+    supabase
+      .from("financial_advisor_memory")
+      .select("memory_type, content")
+      .eq("user_id", userId)
+      .eq("memory_type", "advisor_snapshot")
+      .order("created_at", { ascending: false })
+      .limit(1),
   ]);
+
+  const accountRows = financeAccountsResult.data ?? [];
+  const debtRows = financeDebtsResult.data ?? [];
+  const holdingsRows = financeHoldingsResult.data ?? [];
+  const totalAssets = accountRows.reduce((sum, a) => sum + Number(a.balance ?? 0), 0);
+  const totalDebt = debtRows
+    .filter((d) => d.status === "active")
+    .reduce((sum, d) => sum + Number(d.balance ?? 0), 0);
+  const cash = accountRows
+    .filter((a) => a.account_type === "checking" || a.account_type === "savings")
+    .reduce((sum, a) => sum + Number(a.balance ?? 0), 0);
+  if (financeAdvisorMemoryResult.error && !isMissingFinancialAdvisorMemoryTable(financeAdvisorMemoryResult.error)) {
+    logError("briefing_daily_financial_advisor_memory_query_failed", financeAdvisorMemoryResult.error);
+  }
+  const advisorPayload = (
+    financeAdvisorMemoryResult.error && isMissingFinancialAdvisorMemoryTable(financeAdvisorMemoryResult.error)
+      ? undefined
+      : financeAdvisorMemoryResult.data?.[0]?.content
+  ) as { advisor?: { dailyBriefing?: string[] } } | undefined;
 
   return {
     openTasks: (tasksResult.data ?? []).map((t) => ({
@@ -217,6 +287,16 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
     todaysFocusTasks: (topRankedTasksResult.data ?? []).map((t) => t.title),
     activeStrategyInsights: (strategyInsightsResult.data ?? []).map((i) => i.content),
     contentDirectives: (contentDirectivesResult.data ?? []).map((d) => d.directive),
+    financeSnapshot: accountRows.length === 0
+      ? null
+      : {
+        netWorth: totalAssets - totalDebt,
+        debt: totalDebt,
+        cash,
+        topHoldings: holdingsRows.map((h) => `${h.symbol} ($${Number(h.current_value ?? 0).toLocaleString()})`),
+        statementUploadsLast45d: (financeStatementsResult.data ?? []).length,
+        latestAdvisorTakeaways: advisorPayload?.advisor?.dailyBriefing?.slice(0, 3) ?? [],
+      },
   };
 }
 
@@ -320,6 +400,18 @@ function formatDirectContext(ctx: DirectContext): string {
 
   if (ctx.contentDirectives.length > 0) {
     parts.push(`## ACTIVE CONTENT DIRECTIVES (strategy is already applying these)\n${ctx.contentDirectives.map((d) => `- ${d}`).join("\n")}`);
+  }
+
+  if (ctx.financeSnapshot) {
+    const financeLines = [
+      `- Net worth snapshot: $${ctx.financeSnapshot.netWorth.toLocaleString()}`,
+      `- Active debt: $${ctx.financeSnapshot.debt.toLocaleString()}`,
+      `- Cash position: $${ctx.financeSnapshot.cash.toLocaleString()}`,
+      `- Statement uploads (last 45d): ${ctx.financeSnapshot.statementUploadsLast45d}`,
+      ...(ctx.financeSnapshot.topHoldings.length > 0 ? [`- Top holdings: ${ctx.financeSnapshot.topHoldings.join(", ")}`] : []),
+      ...(ctx.financeSnapshot.latestAdvisorTakeaways.length > 0 ? [`- Latest advisor takeaways: ${ctx.financeSnapshot.latestAdvisorTakeaways.join(" | ")}`] : []),
+    ];
+    parts.push(`## FINANCIAL CONTEXT (include at least one finance-aware item in Insights when material)\n${financeLines.join("\n")}`);
   }
 
   return parts.join("\n\n");
