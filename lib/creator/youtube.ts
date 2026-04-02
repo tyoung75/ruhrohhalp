@@ -93,10 +93,21 @@ export class YouTubeAdapter implements PlatformAdapter {
     postId: string;
   }): Promise<PostMetrics> {
     const apiKey = process.env.YOUTUBE_API_KEY;
-    if (!apiKey) throw new Error("Missing YOUTUBE_API_KEY");
+    const authHeaders = !apiKey && params.accessToken
+      ? { Authorization: `Bearer ${params.accessToken}` }
+      : undefined;
+    if (!apiKey && !params.accessToken) {
+      throw new Error("Missing YouTube credentials (YOUTUBE_API_KEY or OAuth access token)");
+    }
 
+    const qs = new URLSearchParams({
+      part: "statistics",
+      id: params.postId,
+    });
+    if (apiKey) qs.set("key", apiKey);
     const res = await fetch(
-      `${YT_API}/videos?part=statistics&id=${params.postId}&key=${apiKey}`
+      `${YT_API}/videos?${qs.toString()}`,
+      authHeaders ? { headers: authHeaders } : undefined
     );
     const data = await res.json();
     const stats = data.items?.[0]?.statistics ?? {};
@@ -119,19 +130,35 @@ export class YouTubeAdapter implements PlatformAdapter {
   }): Promise<PlatformPost[]> {
     const apiKey = process.env.YOUTUBE_API_KEY;
     const channelId = params.userId || process.env.YOUTUBE_CHANNEL_ID;
-    if (!apiKey || !channelId) return [];
+    const authHeaders = !apiKey && params.accessToken
+      ? { Authorization: `Bearer ${params.accessToken}` }
+      : undefined;
+    if ((!apiKey && !params.accessToken) || !channelId) return [];
 
     // First get the uploads playlist ID
+    const channelQs = new URLSearchParams({
+      part: "contentDetails",
+      id: channelId,
+    });
+    if (apiKey) channelQs.set("key", apiKey);
     const channelRes = await fetch(
-      `${YT_API}/channels?part=contentDetails&id=${channelId}&key=${apiKey}`
+      `${YT_API}/channels?${channelQs.toString()}`,
+      authHeaders ? { headers: authHeaders } : undefined
     );
     const channelData = await channelRes.json();
     const uploadsPlaylist = channelData.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
     if (!uploadsPlaylist) return [];
 
     // Then list videos from uploads playlist
+    const itemQs = new URLSearchParams({
+      part: "snippet",
+      playlistId: uploadsPlaylist,
+      maxResults: String(params.limit ?? 10),
+    });
+    if (apiKey) itemQs.set("key", apiKey);
     const res = await fetch(
-      `${YT_API}/playlistItems?part=snippet&playlistId=${uploadsPlaylist}&maxResults=${params.limit ?? 10}&key=${apiKey}`
+      `${YT_API}/playlistItems?${itemQs.toString()}`,
+      authHeaders ? { headers: authHeaders } : undefined
     );
     const data = await res.json();
 
