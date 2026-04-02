@@ -11,10 +11,17 @@ interface DealDetailResponse {
   emails: Array<{ id: string; sent_at: string; email_type: string; direction: string; subject: string | null; summary: string | null }>;
 }
 
+interface RunResponse {
+  ok: boolean;
+  actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[] };
+}
+
 export function BrandsDashboard() {
   const [deals, setDeals] = useState<BrandDeal[]>([]);
   const [summary, setSummary] = useState<PipelineSummary | null>(null);
   const [selected, setSelected] = useState<DealDetailResponse | null>(null);
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState<string | null>(null);
 
   async function fetchDeals() {
     const [dealsRes, summaryRes] = await Promise.all([
@@ -42,6 +49,20 @@ export function BrandsDashboard() {
     return map;
   }, [deals]);
 
+  async function runPipeline() {
+    setRunning(true);
+    setRunResult(null);
+    try {
+      const result = await api<RunResponse>("/api/brands/run", { method: "POST" });
+      setRunResult(`Run complete: drafted ${result.actions_taken.drafted.length}, replies ${result.actions_taken.replied.length}, archived ${result.actions_taken.archived.length}`);
+      window.dispatchEvent(new CustomEvent("brands:refresh"));
+    } catch (error) {
+      setRunResult(error instanceof Error ? error.message : "Run failed");
+    } finally {
+      setRunning(false);
+    }
+  }
+
   async function openDeal(id: string) {
     const detail = await api<DealDetailResponse>(`/api/brands/${id}`);
     setSelected(detail);
@@ -50,6 +71,27 @@ export function BrandsDashboard() {
   return (
     <main style={{ background: C.bg, minHeight: "100%", color: C.text }}>
       <h1 style={{ fontFamily: C.serif, color: C.cream, marginTop: 0 }}>Brand Outreach Pipeline</h1>
+      <div style={{ marginBottom: 14, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface }}>
+        <div style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim, marginBottom: 8 }}>Manual pipeline run</div>
+        <button
+          onClick={() => void runPipeline()}
+          disabled={running}
+          style={{
+            width: "100%",
+            background: running ? C.border : C.cl,
+            color: running ? C.textDim : C.bg,
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 12px",
+            fontFamily: C.mono,
+            fontSize: 12,
+            cursor: running ? "default" : "pointer",
+          }}
+        >
+          {running ? "Running brand sourcing + drafts..." : "Run Sourcing + Drafts Now"}
+        </button>
+      </div>
+      {runResult && <div style={{ color: C.textDim, marginBottom: 10, fontSize: 12 }}>{runResult}</div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(150px, 1fr))", gap: 12, marginBottom: 16 }}>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, padding: 12, borderRadius: 10 }}>
