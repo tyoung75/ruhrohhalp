@@ -2629,16 +2629,11 @@ function HistoryTab() {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      api<QueueResponse>("/api/creator/queue?status=posted&limit=100"),
+      api<QueueResponse>("/api/creator/queue?status=posted&sort=recent&limit=200"),
       api<AnalyticsResponse>("/api/creator/analytics?days=30").catch(() => null),
     ])
       .then(([queueData, analyticsData]) => {
-        // Filter to last 30 days only
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).getTime();
-        const filtered = queueData.items.filter((item) => {
-          const postDate = new Date(item.scheduled_for ?? item.updated_at).getTime();
-          return postDate >= thirtyDaysAgo;
-        });
+        const filtered = queueData.items;
         setItems(filtered);
 
         // Build analytics lookup by matching post body (since we don't have direct content_queue_id mapping in top_posts)
@@ -2723,7 +2718,7 @@ function HistoryTab() {
   if (items.length === 0) {
     return (
       <div style={{ padding: 40, textAlign: "center", color: C.textDim, fontFamily: C.sans, fontSize: 13 }}>
-        No posted content in the last 30 days. Once posts are published, they&apos;ll appear here for review.
+        No posted content yet. Once posts are published, they&apos;ll appear here for review.
       </div>
     );
   }
@@ -2745,8 +2740,8 @@ function HistoryTab() {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {/* Sort controls + info */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim }}>Last 30 days</span>
-        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>&middot; {items.length} posts</span>
+        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim }}>Full history</span>
+        <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>&middot; showing {items.length} most recent</span>
         <div style={{ flex: 1 }} />
         <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint }}>Sort:</span>
         {([

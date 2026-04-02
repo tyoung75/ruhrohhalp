@@ -5,6 +5,7 @@
  *   ?status=draft,queued,posted,failed  (comma-separated, default: all)
  *   ?limit=50  (default 50, max 200)
  *   ?offset=0
+ *   ?sort=recent|scheduled  (default: scheduled)
  *
  * PATCH: Update a queue item (status, body, scheduled_for)
  *   { id, status?, body?, scheduled_for? }
@@ -24,6 +25,7 @@ export async function GET(request: NextRequest) {
   const statusFilter = url.searchParams.get("status")?.split(",").filter(Boolean);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? "50"), 200);
   const offset = Number(url.searchParams.get("offset") ?? "0");
+  const sort = url.searchParams.get("sort") === "recent" ? "recent" : "scheduled";
 
   const supabase = createAdminClient();
 
@@ -31,9 +33,17 @@ export async function GET(request: NextRequest) {
     .from("content_queue")
     .select("*", { count: "exact" })
     .eq("user_id", user.id)
-    .order("scheduled_for", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
+
+  if (sort === "recent") {
+    query = query
+      .order("scheduled_for", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
+  } else {
+    query = query
+      .order("scheduled_for", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false });
+  }
 
   if (statusFilter?.length) {
     query = query.in("status", statusFilter);
