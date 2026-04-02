@@ -49,6 +49,36 @@ interface DirectContext {
   brainDump: { goals: string | null; weekly_context: string | null; top_of_mind: string | null } | null;
 }
 
+
+interface BrandContext {
+  activeDeals: number;
+  estimatedLow: number;
+  estimatedHigh: number;
+  closedRevenue: number;
+  newReplies: string[];
+  dueToday: string[];
+}
+
+async function fetchBrandContext(userId: string): Promise<BrandContext> {
+  const supabase = createAdminClient();
+  const today = getTodayET();
+  const [activeRes, repliesRes, dueRes] = await Promise.all([
+    supabase.from("brand_deals").select("status, estimated_value_low, estimated_value_high, actual_value").eq("user_id", userId).neq("status", "archived"),
+    supabase.from("brand_deals").select("brand_name").eq("user_id", userId).eq("status", "replied").gte("last_reply_date", new Date(Date.now() - 86400000).toISOString()),
+    supabase.from("brand_deals").select("brand_name").eq("user_id", userId).eq("next_action_date", today),
+  ]);
+
+  const deals = activeRes.data ?? [];
+  return {
+    activeDeals: deals.filter((d) => d.status !== "closed_lost").length,
+    estimatedLow: deals.reduce((sum, d) => sum + (d.estimated_value_low ?? 0), 0),
+    estimatedHigh: deals.reduce((sum, d) => sum + (d.estimated_value_high ?? 0), 0),
+    closedRevenue: deals.reduce((sum, d) => sum + (d.actual_value ?? 0), 0),
+    newReplies: (repliesRes.data ?? []).map((d) => d.brand_name),
+    dueToday: (dueRes.data ?? []).map((d) => d.brand_name),
+  };
+}
+
 async function fetchDirectContext(userId: string): Promise<DirectContext> {
   const supabase = createAdminClient();
 
@@ -109,7 +139,7 @@ async function fetchDirectContext(userId: string): Promise<DirectContext> {
   };
 }
 
-function formatDirectContext(ctx: DirectContext): string {
+function formatDirectContext(ctx: DirectContext, brandCtx?: BrandContext): string {
   const parts: string[] = [];
 
   if (ctx.openTasks.length > 0) {
@@ -172,6 +202,15 @@ function formatDirectContext(ctx: DirectContext): string {
     }
   }
 
+
+  if (brandCtx) {
+    parts.push(`## Brand Pipeline
+- ${brandCtx.activeDeals} active deals, estimated $${brandCtx.estimatedLow}-$${brandCtx.estimatedHigh}/month pipeline
+- New replies: ${brandCtx.newReplies.length ? brandCtx.newReplies.join(", ") : "none"} — needs response
+- Follow-ups due today: ${brandCtx.dueToday.length ? brandCtx.dueToday.join(", ") : "none"}
+- Revenue closed: $${brandCtx.closedRevenue}`);
+  }
+
   return parts.join("\n\n");
 }
 
@@ -195,8 +234,8 @@ function buildDailyPrompt(directContext: string, period: "morning" | "evening"):
   const today = getTodayET();
   const periodLabel = period === "morning" ? "morning" : "evening";
   const periodGuidance = period === "morning"
-    ? "This is the MORNING briefing. Focus on what Tyler should tackle today — prioritize by urgency and impact."
-    : "This is the EVENING briefing. Focus on reflecting on today's progress, what shifted, and what needs attention tomorrow.";
+    ? "This is the MORNING briefing. Focus on what Tyler should tackle today — prioritize by urgency and impact. Surface any brand replies that need Tyler's response today. List follow-ups due."
+    : "This is the EVENING briefing. Focus on reflecting on today's progress, what shifted, and what needs attention tomorrow. Note any brand outreach drafts created today. Flag brands approaching the 21-day archive window.";
 
   return `You are generating Tyler Young's ${periodLabel} briefing. Review all stored memories, tasks, calendar events, emails, and project context across every venture (Motus, RuhrohHalp, Iron Passport, Caliber, thestayed).
 
@@ -449,8 +488,11 @@ export async function GET(request: NextRequest) {
   // 0. Fetch direct DB context (tasks, goals, feedback, brain dumps)
   let directContextStr = "";
   try {
-    const directCtx = await fetchDirectContext(TYLER_USER_ID);
-    directContextStr = formatDirectContext(directCtx);
+    const [directCtx, brandCtx] = await Promise.all([
+      fetchDirectContext(TYLER_USER_ID),
+      fetchBrandContext(TYLER_USER_ID),
+    ]);
+    directContextStr = formatDirectContext(directCtx, brandCtx);
   } catch (e) {
     logError("cron.direct-context", e);
   }
