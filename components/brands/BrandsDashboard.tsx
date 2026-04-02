@@ -11,6 +11,11 @@ interface DealDetailResponse {
   emails: Array<{ id: string; sent_at: string; email_type: string; direction: string; subject: string | null; summary: string | null }>;
 }
 
+interface RunResponse {
+  ok: boolean;
+  actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[] };
+}
+
 export function BrandsDashboard() {
   const [deals, setDeals] = useState<BrandDeal[]>([]);
   const [summary, setSummary] = useState<PipelineSummary | null>(null);
@@ -58,7 +63,7 @@ export function BrandsDashboard() {
             setRunning(true);
             setRunResult(null);
             try {
-              const result = await api<{ ok: boolean; actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[] } }>("/api/brands/run", { method: "POST" });
+              const result = await api<RunResponse>("/api/brands/run", { method: "POST" });
               setRunResult(`Run complete: drafted ${result.actions_taken.drafted.length}, replies ${result.actions_taken.replied.length}, archived ${result.actions_taken.archived.length}`);
               window.dispatchEvent(new CustomEvent("brands:refresh"));
             } catch (error) {
