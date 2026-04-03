@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { embedAndStore } from "@/lib/embedding/pipeline";
+import { logError } from "@/lib/logger";
 
 /**
  * GET /api/feedback
@@ -90,6 +92,22 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Embed into shared brain so feedback cascades to all systems
+  try {
+    const feedbackTag = action === "thumbs_up" ? "feedback:liked" : action === "thumbs_down" ? "feedback:disliked" : "feedback:correction";
+    await embedAndStore(
+      `[BRIEFING FEEDBACK: ${action.toUpperCase()}] Section: ${section}\n${note}`,
+      {
+        userId: user.id,
+        source: "manual",
+        sourceId: `briefing-feedback:${data.id}`,
+        category: "general",
+        importance: action === "thumbs_down" ? 8 : action === "thumbs_up" ? 6 : 7,
+        tags: [feedbackTag, "domain:briefing", "system:feedback"],
+      },
+    );
+  } catch (e) { logError("feedback.embed", e); }
 
   return NextResponse.json({ feedback: data }, { status: 201 });
 }
