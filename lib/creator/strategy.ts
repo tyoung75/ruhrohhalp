@@ -404,6 +404,17 @@ export async function generateStrategy(): Promise<StrategyOutput> {
     }
   }
 
+  // Ensure velocityRec is persisted as a velocity insight so getCurrentStrategy can retrieve it
+  const hasVelocityInsight = output.insights.some((i) => i.type === "velocity");
+  if (!hasVelocityInsight && output.velocityRec) {
+    output.insights.push({
+      type: "velocity",
+      content: `Post ${output.velocityRec.postsPerWeek}x/week across ${Object.keys(output.velocityRec.platformBreakdown ?? {}).join(", ")}`,
+      confidence: 0.85,
+      data: output.velocityRec as unknown as Record<string, unknown>,
+    });
+  }
+
   // Store new insights (deactivate old ones first)
   await storeInsights(output.insights);
 

@@ -340,9 +340,19 @@ Return 5-8 trends, each as a concise paragraph. Focus on actionable opportunitie
   );
 }
 
+function isMorningRun(): boolean {
+  const etHour = Number(
+    new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }),
+  );
+  return etHour < 12;
+}
+
 function isMondayMorningRun(): boolean {
-  const now = new Date();
-  return now.getUTCDay() === 1 && now.getUTCHours() < 12;
+  // Parse the current ET date/time to get day-of-week in ET (not UTC)
+  const etDayOfWeek = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "America/New_York" }),
+  ).getDay();
+  return etDayOfWeek === 1 && isMorningRun();
 }
 
 function extractSection(text: string, heading: string): string[] {
@@ -518,9 +528,9 @@ export async function GET(request: NextRequest) {
   // Run trend detection + briefing in parallel
   await Promise.allSettled([trendPromise, briefingPromise]);
 
-  // 3. Weekly synthesis (Monday morning only)
-  if (isMondayMorningRun()) {
-    let strategyContext = "";
+  // 3. Daily strategy refresh (every morning run)
+  let strategyContext = "";
+  if (isMorningRun()) {
     try {
       await generateStrategy();
       const strategy = await getCurrentStrategy();
@@ -534,7 +544,10 @@ export async function GET(request: NextRequest) {
       logError("cron.strategy-refresh", e);
       results.strategy_refresh = { error: "Strategy refresh failed" };
     }
+  }
 
+  // 4. Weekly synthesis (Monday morning only)
+  if (isMondayMorningRun()) {
     let trendingContext = "";
     try {
       trendingContext = await gatherTrendingContext();
