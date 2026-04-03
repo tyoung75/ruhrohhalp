@@ -35,6 +35,11 @@ function getPageContext(pathname: string): string {
   return "general";
 }
 
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
 export function ChiefOfStaff() {
   const pathname = usePathname();
   const pageContext = getPageContext(pathname);
@@ -47,30 +52,37 @@ export function ChiefOfStaff() {
   const [uploading, setUploading] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const expandedInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Auto-scroll to bottom
+  // Auto-scroll on new messages
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    }
+  }, [messages, loading]);
 
   // Focus input when opened
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 100);
+    if (open) setTimeout(() => expandedInputRef.current?.focus(), 120);
   }, [open]);
 
-  // Keyboard shortcut: Cmd/Ctrl+J to toggle
+  // Keyboard shortcuts: Cmd/Ctrl+K or Cmd/Ctrl+J toggles
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "j") {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "j" || e.key === "k")) {
         e.preventDefault();
         setOpen((prev) => !prev);
+      }
+      // Escape closes
+      if (e.key === "Escape" && open) {
+        setOpen(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [open]);
 
   async function send() {
     const text = input.trim();
@@ -84,23 +96,14 @@ export function ChiefOfStaff() {
     try {
       const res = await api<ChatResponse>("/api/chat", {
         method: "POST",
-        body: JSON.stringify({
-          message: text,
-          session_id: sessionId,
-          page_context: pageContext,
-        }),
+        body: JSON.stringify({ message: text, session_id: sessionId, page_context: pageContext }),
       });
-
       setSessionId(res.session_id);
-      const assistantMsg: ChatMessage = { role: "assistant", content: res.message, ts: new Date().toISOString() };
-      setMessages((prev) => [...prev, assistantMsg]);
-
-      // Dispatch refresh events in case the agent made changes
+      setMessages((prev) => [...prev, { role: "assistant", content: res.message, ts: new Date().toISOString() }]);
       window.dispatchEvent(new CustomEvent("tasks:refresh"));
       window.dispatchEvent(new CustomEvent("brands:refresh"));
     } catch (err) {
-      const errMsg: ChatMessage = { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Something went wrong"}`, ts: new Date().toISOString() };
-      setMessages((prev) => [...prev, errMsg]);
+      setMessages((prev) => [...prev, { role: "assistant", content: `Something went wrong: ${err instanceof Error ? err.message : "Unknown error"}`, ts: new Date().toISOString() }]);
     } finally {
       setLoading(false);
     }
@@ -110,64 +113,48 @@ export function ChiefOfStaff() {
     setSessionId(null);
     setMessages([]);
     setInput("");
-    setTimeout(() => inputRef.current?.focus(), 50);
+    setTimeout(() => expandedInputRef.current?.focus(), 50);
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
-
     try {
-      // Convert to base64 for the message
-      const reader = new FileReader();
-      reader.onload = () => {
-        const text = file.type.startsWith("image/")
-          ? `[Uploaded image: ${file.name} (${(file.size / 1024).toFixed(0)}KB)]`
-          : `[Uploaded file: ${file.name} (${(file.size / 1024).toFixed(0)}KB)]`;
-
-        setInput((prev) => prev ? `${prev} ${text}` : text);
-        setUploading(false);
-      };
-      reader.readAsDataURL(file);
-    } catch {
+      const label = file.type.startsWith("image/")
+        ? `[Image: ${file.name}]`
+        : `[File: ${file.name}]`;
+      setInput((prev) => prev ? `${prev} ${label}` : label);
+    } finally {
       setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
-
-    // Reset file input
-    if (fileRef.current) fileRef.current.value = "";
   }
 
-  // Collapsed bar
+  // ── Collapsed bar ──
   if (!open) {
     return (
-      <div
-        style={{
-          position: "fixed",
-          bottom: 0,
-          left: 200,
-          right: 0,
-          zIndex: 80,
-          background: C.surface,
-          borderTop: `1px solid ${C.border}`,
-          padding: "8px 16px",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
+      <div style={{
+        position: "fixed",
+        bottom: 0,
+        left: 200,
+        right: 0,
+        zIndex: 80,
+        background: `${C.surface}f0`,
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        borderTop: `1px solid ${C.border}`,
+        padding: "6px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+      }}>
         <button
           onClick={() => setOpen(true)}
-          style={{
-            background: "transparent",
-            border: "none",
-            color: C.cl,
-            fontSize: 16,
-            cursor: "pointer",
-            padding: "2px 6px",
-          }}
+          style={{ background: `${C.cl}18`, border: `1px solid ${C.cl}30`, borderRadius: 6, color: C.cl, fontSize: 12, cursor: "pointer", padding: "4px 8px", display: "flex", alignItems: "center", gap: 4 }}
         >
-          &#9670;
+          <span style={{ fontSize: 10 }}>&#9670;</span>
+          <span style={{ fontFamily: C.mono, fontSize: 9 }}>CoS</span>
         </button>
         <input
           ref={inputRef}
@@ -175,71 +162,82 @@ export function ChiefOfStaff() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onFocus={() => setOpen(true)}
-          onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) { e.preventDefault(); setOpen(true); void send(); } }}
-          placeholder="Ask your Chief of Staff anything... (Ctrl+J)"
-          style={{
-            flex: 1,
-            background: "transparent",
-            border: "none",
-            color: C.text,
-            fontSize: 13,
-            fontFamily: C.sans,
-            outline: "none",
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && input.trim()) {
+              e.preventDefault();
+              setOpen(true);
+              void send();
+            }
           }}
+          placeholder="Ask anything, create tasks, give feedback, adjust strategy..."
+          style={{ flex: 1, background: "transparent", border: "none", color: C.text, fontSize: 13, fontFamily: C.sans, outline: "none" }}
         />
-        <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint }}>
-          {pageContext}
-        </span>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+          <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, background: `${C.card}`, padding: "2px 6px", borderRadius: 4 }}>{pageContext}</span>
+          <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, opacity: 0.5 }}>Cmd+K</span>
+        </div>
       </div>
     );
   }
 
-  // Expanded panel
+  // ── Expanded panel ──
   return (
-    <div
-      style={{
-        position: "fixed",
-        bottom: 0,
-        right: 0,
-        width: 440,
-        maxWidth: "100vw",
-        height: "60vh",
-        maxHeight: 520,
-        zIndex: 90,
-        background: C.surface,
-        borderLeft: `1px solid ${C.border}`,
-        borderTop: `1px solid ${C.border}`,
-        borderTopLeftRadius: 12,
-        display: "flex",
-        flexDirection: "column",
-        boxShadow: "-4px -4px 20px #0004",
-      }}
-    >
+    <div style={{
+      position: "fixed",
+      bottom: 0,
+      right: 0,
+      width: 460,
+      maxWidth: "100vw",
+      height: "65vh",
+      maxHeight: 560,
+      zIndex: 90,
+      background: C.bg,
+      border: `1px solid ${C.border}`,
+      borderBottom: "none",
+      borderRight: "none",
+      borderTopLeftRadius: 16,
+      display: "flex",
+      flexDirection: "column",
+      boxShadow: "-8px -8px 32px #00000040",
+    }}>
       {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "10px 14px",
-          borderBottom: `1px solid ${C.border}`,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ color: C.cl, fontSize: 14 }}>&#9670;</span>
-          <span style={{ fontFamily: C.serif, fontStyle: "italic", color: C.cream, fontSize: 14 }}>Chief of Staff</span>
-          <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, background: C.card, padding: "2px 6px", borderRadius: 4 }}>{pageContext}</span>
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "12px 16px",
+        borderBottom: `1px solid ${C.border}`,
+        background: C.surface,
+        borderTopLeftRadius: 16,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: `${C.cl}18`, border: `1px solid ${C.cl}30`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ color: C.cl, fontSize: 12 }}>&#9670;</span>
+          </div>
+          <div>
+            <div style={{ fontFamily: C.serif, fontStyle: "italic", color: C.cream, fontSize: 14, lineHeight: 1 }}>Chief of Staff</div>
+            <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginTop: 2 }}>
+              {pageContext} context
+              {sessionId && <span> &middot; active session</span>}
+            </div>
+          </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <button
             onClick={newSession}
-            style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 4, padding: "2px 8px", fontFamily: C.mono, fontSize: 9, cursor: "pointer" }}
+            title="New conversation"
+            style={{ background: C.card, color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", fontFamily: C.mono, fontSize: 10, cursor: "pointer" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.cl; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; }}
           >
-            New
+            + New
           </button>
           <button
             onClick={() => setOpen(false)}
-            style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 4, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}
+            title="Minimize (Esc)"
+            style={{ background: C.card, color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 14, cursor: "pointer", lineHeight: 1 }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.cl; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; }}
           >
             &#8722;
           </button>
@@ -247,125 +245,182 @@ export function ChiefOfStaff() {
       </div>
 
       {/* Messages */}
-      <div
-        ref={scrollRef}
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "12px 14px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "16px 16px 8px", display: "flex", flexDirection: "column", gap: 12 }}>
         {messages.length === 0 && (
-          <div style={{ textAlign: "center", color: C.textFaint, fontSize: 12, marginTop: 40 }}>
-            <div style={{ fontSize: 28, marginBottom: 8 }}>&#9670;</div>
-            <div style={{ fontFamily: C.serif, fontStyle: "italic", color: C.textDim, fontSize: 14, marginBottom: 4 }}>Chief of Staff</div>
-            <div>Your EA, coach, strategist, and editor.</div>
-            <div style={{ marginTop: 8, fontFamily: C.mono, fontSize: 10 }}>Every conversation compounds into the brain.</div>
+          <div style={{ textAlign: "center", marginTop: 48, padding: "0 20px" }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: `${C.cl}12`, border: `1px solid ${C.cl}20`, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
+              <span style={{ color: C.cl, fontSize: 20 }}>&#9670;</span>
+            </div>
+            <div style={{ fontFamily: C.serif, fontStyle: "italic", color: C.cream, fontSize: 16, marginBottom: 6 }}>Chief of Staff</div>
+            <div style={{ color: C.textDim, fontSize: 12, lineHeight: 1.6, marginBottom: 16 }}>
+              Your EA, financial advisor, content strategist,<br />brand manager, career coach, and editor.
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+              {[
+                "What should I focus on today?",
+                "Draft outreach to Hyperice",
+                "How's my brand pipeline looking?",
+                "Create a task to review DexaFit results",
+              ].map((hint) => (
+                <button
+                  key={hint}
+                  onClick={() => { setInput(hint); setTimeout(() => expandedInputRef.current?.focus(), 50); }}
+                  style={{
+                    background: C.card,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 8,
+                    padding: "6px 12px",
+                    fontSize: 11,
+                    color: C.textDim,
+                    cursor: "pointer",
+                    fontFamily: C.sans,
+                    textAlign: "left",
+                    transition: "border-color 0.15s, color 0.15s",
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = `${C.cl}40`; (e.currentTarget as HTMLElement).style.color = C.text; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; (e.currentTarget as HTMLElement).style.color = C.textDim; }}
+                >
+                  {hint}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, marginTop: 16 }}>
+              Every conversation compounds into the brain.
+            </div>
           </div>
         )}
+
         {messages.map((msg, i) => (
-          <div
-            key={i}
-            style={{
-              alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-              maxWidth: "85%",
-              background: msg.role === "user" ? `${C.cl}14` : C.card,
-              border: `1px solid ${msg.role === "user" ? `${C.cl}30` : C.border}`,
-              borderRadius: 10,
-              padding: "8px 12px",
-              fontSize: 12,
-              lineHeight: 1.6,
+          <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start", gap: 3 }}>
+            <div style={{
+              maxWidth: "88%",
+              background: msg.role === "user" ? `${C.cl}10` : C.surface,
+              border: `1px solid ${msg.role === "user" ? `${C.cl}25` : C.border}`,
+              borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+              padding: "10px 14px",
+              fontSize: 13,
+              lineHeight: 1.65,
               color: C.text,
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
-            }}
-          >
-            {msg.content}
+            }}>
+              {msg.content}
+            </div>
+            <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint, padding: "0 4px" }}>
+              {formatTime(msg.ts)}
+            </span>
           </div>
         ))}
+
         {loading && (
-          <div style={{ alignSelf: "flex-start", color: C.textDim, fontSize: 12, fontFamily: C.mono }}>
-            thinking...
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0" }}>
+            <div style={{ display: "flex", gap: 4 }}>
+              {[0, 1, 2].map((i) => (
+                <div key={i} style={{
+                  width: 6, height: 6, borderRadius: "50%", background: C.cl,
+                  opacity: 0.4,
+                  animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
+                }} />
+              ))}
+            </div>
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim }}>thinking</span>
           </div>
         )}
       </div>
 
-      {/* Input */}
-      <div
-        style={{
-          padding: "10px 14px",
-          borderTop: `1px solid ${C.border}`,
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-        }}
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*,.pdf,.csv,.txt,.json"
-          onChange={(e) => void handleFileUpload(e)}
-          style={{ display: "none" }}
-        />
+      {/* Input area */}
+      <div style={{
+        padding: "12px 16px",
+        borderTop: `1px solid ${C.border}`,
+        background: C.surface,
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+      }}>
+        <input ref={fileRef} type="file" accept="image/*,.pdf,.csv,.txt,.json" onChange={(e) => void handleFileUpload(e)} style={{ display: "none" }} />
         <button
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
+          title="Attach file"
           style={{
-            background: "transparent",
+            background: C.card,
             border: `1px solid ${C.border}`,
-            borderRadius: 4,
+            borderRadius: 8,
             color: C.textDim,
-            padding: "4px 6px",
-            fontSize: 14,
+            padding: "8px",
+            fontSize: 15,
             cursor: "pointer",
             flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 34,
+            height: 34,
+            transition: "border-color 0.15s",
           }}
-          title="Upload file or image"
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.cl; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; }}
         >
-          {uploading ? "..." : "\u{1F4CE}"}
+          {uploading ? "\u2026" : "+"}
         </button>
         <input
-          ref={inputRef}
+          ref={expandedInputRef}
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && input.trim()) { e.preventDefault(); void send(); } }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && input.trim()) {
+              e.preventDefault();
+              void send();
+            }
+          }}
           placeholder="What do you need?"
           disabled={loading}
           style={{
             flex: 1,
             background: C.card,
             border: `1px solid ${C.border}`,
-            borderRadius: 8,
-            padding: "8px 12px",
+            borderRadius: 10,
+            padding: "9px 14px",
             fontSize: 13,
             color: C.text,
             fontFamily: C.sans,
             outline: "none",
+            transition: "border-color 0.15s",
           }}
+          onFocus={(e) => { (e.currentTarget as HTMLElement).style.borderColor = `${C.cl}50`; }}
+          onBlur={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; }}
         />
         <button
           onClick={() => void send()}
           disabled={loading || !input.trim()}
           style={{
-            background: input.trim() ? C.cl : C.border,
-            color: input.trim() ? C.bg : C.textDim,
+            background: input.trim() && !loading ? C.cl : C.border,
+            color: input.trim() && !loading ? "#fff" : C.textDim,
             border: "none",
-            borderRadius: 8,
-            padding: "8px 14px",
-            fontFamily: C.mono,
-            fontSize: 11,
-            fontWeight: 700,
-            cursor: input.trim() ? "pointer" : "default",
+            borderRadius: 10,
+            width: 34,
+            height: 34,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: input.trim() && !loading ? "pointer" : "default",
             flexShrink: 0,
+            fontSize: 14,
+            transition: "background 0.15s",
           }}
         >
-          {loading ? "..." : "Send"}
+          &#8593;
         </button>
       </div>
+
+      {/* Pulse animation for loading dots */}
+      <style>{`
+        @keyframes pulse {
+          0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+          40% { opacity: 1; transform: scale(1.1); }
+        }
+      `}</style>
     </div>
   );
 }

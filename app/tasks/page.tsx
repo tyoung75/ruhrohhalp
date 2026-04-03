@@ -7,7 +7,7 @@ import type { PlanTier, PlannerItem, ProcessInputResponse } from "@/lib/types/do
 import { C } from "@/lib/ui";
 import { TIERS } from "@/lib/tiers";
 import { MODELS, PROVIDERS } from "@/lib/ai/registry";
-import { CaptureBar } from "@/components/capture-bar";
+// CaptureBar removed — Chief of Staff handles task capture
 import { PlannerCard } from "@/components/planner-card";
 import { AgentTerminal } from "@/components/agent-terminal";
 import { useMobile } from "@/lib/useMobile";
@@ -342,10 +342,7 @@ export default function TasksPage() {
           </div>
         </div>
 
-        {/* Capture bar */}
-        <div style={{ padding: isMobile ? "10px 14px 8px" : "14px 18px 10px", flexShrink: 0 }}>
-          <CaptureBar onCapture={handleCapture} processing={processing} />
-        </div>
+        {/* Capture bar removed — use Chief of Staff (bottom bar or Ctrl+J) */}
 
         {/* Open / Done Tabs + AI filters */}
         <div style={{ padding: isMobile ? "0 14px 8px" : "0 18px 10px", flexShrink: 0 }}>

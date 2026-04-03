@@ -35,14 +35,14 @@ import { useState, useEffect } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { useMobile } from "@/lib/useMobile";
-import { CommandBar } from "@/components/command-bar";
+// CommandBar removed — Chief of Staff handles all input (Ctrl+J / Cmd+K)
 import { AgentStatus } from "@/components/agent-status";
 import { PillarHealth } from "@/components/pillar-health";
 import { TodaysFocus } from "@/components/todays-focus";
 import { SignalsPanel } from "@/components/signals-panel";
 import { BrainDumpModal } from "@/components/brain-dump-modal";
 import { BriefingView } from "@/components/briefing-view";
-import { CaptureBar } from "@/components/capture-bar";
+// CaptureBar removed — Chief of Staff handles task/note capture
 import { Spinner } from "@/components/primitives";
 
 function healthNumberToEnum(health: number): "strong" | "stable" | "at_risk" | "critical" {
@@ -119,10 +119,7 @@ export default function CommandConsolePage() {
         fontFamily: C.sans,
       }}
     >
-      {/* Command Bar — persistent at top */}
-      <div style={{ flexShrink: 0 }}>
-        <CommandBar />
-      </div>
+      {/* Command Bar removed — Chief of Staff (Ctrl+J) handles all input */}
 
       {/* Mobile section switcher */}
       {isMobile && (
@@ -252,40 +249,7 @@ export default function CommandConsolePage() {
               </button>
             </div>
 
-            {/* Quick Capture */}
-            <div style={{ padding: isMobile ? "12px 14px 0" : "16px 28px 0", maxWidth: isMobile ? undefined : 720 }}>
-              <CaptureBar onCapture={handleCapture} processing={processing} />
-              {processResult && (
-                <div
-                  style={{
-                    marginTop: 8,
-                    padding: "8px 12px",
-                    borderRadius: 6,
-                    background: processResult.count > 0 ? `${C.gpt}14` : `${C.reminder}14`,
-                    border: `1px solid ${processResult.count > 0 ? `${C.gpt}30` : `${C.reminder}30`}`,
-                    color: processResult.count > 0 ? C.gpt : C.reminder,
-                    fontFamily: C.mono,
-                    fontSize: 11,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <span>{processResult.message}</span>
-                  <button
-                    onClick={() => setProcessResult(null)}
-                    style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 14, padding: "0 4px" }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
-              {processing && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: C.textDim, fontFamily: C.mono, fontSize: 11 }}>
-                  <Spinner size={12} /> Processing your input into tasks...
-                </div>
-              )}
-            </div>
+            {/* Quick Capture removed — use Chief of Staff (bottom bar or Ctrl+J) */}
 
             {/* Tab content */}
             <div style={{ flex: 1, overflowY: isMobile ? undefined : "auto" }}>
