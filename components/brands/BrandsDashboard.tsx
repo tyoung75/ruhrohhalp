@@ -77,7 +77,7 @@ export function BrandsDashboard() {
   const [addingResearched, setAddingResearched] = useState(false);
   // Scout
   const [scouting, setScouting] = useState(false);
-  const [scoutFocus, setScoutFocus] = useState("");
+  const [scoutFocus] = useState("");
   const [scoutResults, setScoutResults] = useState<ScoutResult[]>([]);
   const [showScout, setShowScout] = useState(false);
   // Sidebar extras

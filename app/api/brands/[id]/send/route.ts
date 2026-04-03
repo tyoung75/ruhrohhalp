@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { getGmailClient, encodeMessage } from "@/lib/google/gmail";
+import { getGmailClient } from "@/lib/google/gmail";
 import { logError } from "@/lib/logger";
 
 /**
