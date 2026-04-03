@@ -63,7 +63,7 @@ const PLATFORMS: Omit<PlatformConnection, "connected" | "username">[] = [
   },
 ];
 
-const GMAIL_TOKEN_SCOPES = ["gmail.compose", "gmail.readonly"];
+const GMAIL_TOKEN_SCOPES = ["gmail.compose", "gmail.readonly", "calendar.readonly"];
 
 export default function IntegrationsPage() {
   const [connections, setConnections] = useState<Record<string, { connected: boolean; username?: string }>>({});
@@ -347,8 +347,9 @@ export default function IntegrationsPage() {
                 lineHeight: 1.5,
               }}
             >
-              Generate a Google refresh token for weekly dev-log Gmail drafts. The callback shows the token once so
-              you can copy it into Vercel as <code style={{ color: C.cream }}>GOOGLE_REFRESH_TOKEN</code>.
+              Generate a Google refresh token for weekly dev-log Gmail drafts and brain-sync. The callback shows the
+              token once so you can copy it into Vercel as{" "}
+              <code style={{ color: C.cream }}>GOOGLE_REFRESH_TOKEN</code>.
             </div>
           </div>
 

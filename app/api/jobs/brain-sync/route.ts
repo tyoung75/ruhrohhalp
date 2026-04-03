@@ -119,8 +119,12 @@ export async function POST(request: NextRequest) {
       const oauth = getGoogleClient();
 
       const [gmailSignals, calendarSignals, taskSignals] = await Promise.all([
-        fetchGmailSignals(oauth),
-        fetchCalendarSignals(oauth),
+        fetchGmailSignals(oauth).catch((error) => {
+          throw annotateSourceError("gmail", error);
+        }),
+        fetchCalendarSignals(oauth).catch((error) => {
+          throw annotateSourceError("calendar", error);
+        }),
         fetchTaskSignals(userId),
       ]);
 
@@ -214,6 +218,13 @@ function parseBoolean(value: unknown): boolean {
     return normalized === "true" || normalized === "1" || normalized === "yes";
   }
   return false;
+}
+
+function annotateSourceError(source: "gmail" | "calendar", error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `[brain-sync:${source}] ${message}. Reauthorize GOOGLE_REFRESH_TOKEN with both Gmail + Calendar read scopes.`,
+  );
 }
 
 function getGoogleClient() {
