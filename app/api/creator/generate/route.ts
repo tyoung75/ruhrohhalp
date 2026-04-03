@@ -211,15 +211,15 @@ async function gatherDailyContext(
 ) {
   const today = new Date().toISOString().split("T")[0];
 
-  // Recent posts (last 7 days) to avoid repetition
+  // Recent posts (last 14 days) — includes drafts to prevent regenerating similar content
   const { data: recentPosts } = await supabase
     .from("content_queue")
-    .select("body, platform, status, created_at")
+    .select("body, platform, status, created_at, topic")
     .eq("user_id", userId)
-    .in("status", ["posted", "queued", "approved"])
-    .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
+    .in("status", ["posted", "queued", "approved", "draft"])
+    .gte("created_at", new Date(Date.now() - 14 * 86400000).toISOString())
     .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(30);
 
   // Active goals and pillars
   const { data: goals } = await supabase
@@ -408,7 +408,11 @@ async function gatherDailyContext(
   return {
     date: today,
     dayOfWeek: new Date().toLocaleDateString("en-US", { weekday: "long" }),
-    recentPosts: recentPosts?.map((p: Record<string, unknown>) => p.body as string).slice(0, 10) ?? [],
+    recentPosts: recentPosts?.map((p: Record<string, unknown>) => {
+      const body = (p.body as string) ?? "";
+      const preview = body.startsWith("[") ? body.slice(0, 200) : body.slice(0, 150);
+      return `[${p.status}/${p.platform}] ${preview}`;
+    }).slice(0, 20) ?? [],
     activeGoals: goals ?? [],
     currentTasks: tasks ?? [],
     briefingSummary: briefing?.content_md?.slice(0, 500) ?? "",

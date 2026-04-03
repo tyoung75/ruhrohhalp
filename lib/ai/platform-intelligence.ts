@@ -62,10 +62,12 @@ export async function loadSystemContext(userId: string): Promise<SystemContext> 
       .single(),
     supabase
       .from("content_queue")
-      .select("topic, body")
+      .select("topic, body, status, platform")
       .eq("user_id", userId)
-      .in("status", ["draft", "queued", "approved"])
-      .limit(20),
+      .in("status", ["draft", "queued", "approved", "posted"])
+      .gte("created_at", new Date(Date.now() - 14 * 86400000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(30),
     // Fetch broad content directives from signal replies
     supabase
       .from("signal_replies")
@@ -81,7 +83,10 @@ export async function loadSystemContext(userId: string): Promise<SystemContext> 
     top_tasks: tasksRes.data ?? [],
     brain_dump_week: settingsRes.data?.brain_dump_week ?? null,
     top_of_mind: settingsRes.data?.top_of_mind ?? null,
-    queued_topics: (queuedRes.data ?? []).map(q => q.topic || q.body?.slice(0, 50) || ""),
+    queued_topics: (queuedRes.data ?? []).map(q => {
+      const preview = q.topic || (q.body?.startsWith("[") ? q.body?.slice(0, 120) : q.body?.slice(0, 80)) || "";
+      return `[${q.status}/${q.platform}] ${preview}`;
+    }),
     content_directives: (directivesRes.data ?? []).map(d => d.reply).filter(Boolean),
   };
 }
@@ -154,7 +159,8 @@ CONTEXT:
 - Top priorities: ${JSON.stringify(systemCtx.top_tasks.map(t => t.title))}
 - Brain dump: ${systemCtx.brain_dump_week || "none"}
 - Top of mind: ${systemCtx.top_of_mind || "none"}
-- Already queued topics: ${systemCtx.queued_topics.join(", ") || "none"}
+- RECENT POSTS (DO NOT DUPLICATE — never rewrite or rephrase any of these):
+${systemCtx.queued_topics.length ? systemCtx.queued_topics.map(t => `  ${t}`).join("\n") : "  none"}
 - Recent content performance patterns: ${JSON.stringify(performanceCtx.content_patterns)}${directivesBlock}
 
 PLATFORM RULES:
