@@ -22,17 +22,35 @@ jobs:
   collect:
     name: Collect post analytics
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
 
     steps:
       - name: Trigger analytics collection
         run: |
           echo "Triggering analytics collection at $(date -u)"
-          response=$(curl -s -w "\n%{http_code}" -X GET \
+
+          # curl can exit non-zero (e.g., timeout = 28) before we can print diagnostics.
+          # Temporarily disable errexit so we can capture and report those failures clearly.
+          set +e
+          response=$(curl -sS -w "\n%{http_code}" -X GET \
             "https://www.ruhrohhalp.com/api/cron/creator-analytics" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json" \
-            --max-time 120)
+            --connect-timeout 20 \
+            --max-time 300 \
+            --retry 2 \
+            --retry-all-errors \
+            --retry-delay 5)
+          curl_exit=$?
+          set -e
+
+          if [ "$curl_exit" -ne 0 ]; then
+            echo "ERROR: curl failed before an HTTP response was received (exit code: $curl_exit)"
+            if [ "$curl_exit" -eq 28 ]; then
+              echo "Hint: exit code 28 is an operation timeout (likely API route took too long or network stalled)."
+            fi
+            exit 1
+          fi
 
           http_code=$(echo "$response" | tail -n1)
           body=$(echo "$response" | sed '$d')
