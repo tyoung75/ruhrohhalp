@@ -104,9 +104,30 @@ Recommend brands that are:
       (r) => !existingBrands.some((name) => name.toLowerCase() === r.brand_name.toLowerCase()),
     );
 
+    // Persist scouted brands as 'scouted' status so they don't vanish
+    const now = new Date().toISOString();
+    for (const rec of filtered) {
+      await supabase.from("brand_deals").insert({
+        user_id: user.id,
+        brand_name: rec.brand_name,
+        contact_email: rec.contact_email,
+        status: "scouted",
+        priority: rec.priority,
+        relationship_type: rec.relationship_type,
+        product_usage: rec.product_usage,
+        angle: rec.angle,
+        estimated_value_low: rec.estimated_value_low,
+        estimated_value_high: rec.estimated_value_high,
+        scout_reason: rec.why,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       recommendations: filtered,
+      persisted: filtered.length,
       focus: focus || null,
       existing_count: existingBrands.length,
     });

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logError } from "@/lib/logger";
 import { callClaude } from "@/lib/processors/claude";
+import { gatherIntelligenceContext, reflectAndImprove } from "@/lib/intelligence";
+import { embedAndStore } from "@/lib/embedding/pipeline";
 import { createBrandDraft, searchForBrandReplies, classifyReply } from "@/lib/brands/gmail";
 import {
   archiveDeal,
@@ -138,11 +140,25 @@ export async function GET(request: NextRequest) {
 
     const summary = await getPipelineSummary(TYLER_USER_ID);
 
+    // System intelligence: reflect on recent feedback to improve future runs
+    let reflection: string | null = null;
+    try {
+      const ctx = await gatherIntelligenceContext(TYLER_USER_ID);
+      reflection = await reflectAndImprove("brand-outreach daily cron", ctx);
+      if (reflection) {
+        await embedAndStore(
+          `[SYSTEM INTELLIGENCE: brand-outreach]\n${reflection}`,
+          { userId: TYLER_USER_ID, source: "manual", sourceId: `intelligence:brand-outreach:${new Date().toISOString().slice(0, 10)}`, category: "general", importance: 7, tags: ["system:learning", "domain:brand", "system:feedback"] },
+        );
+      }
+    } catch (e) { logError("cron.brand-outreach.intelligence", e); }
+
     return NextResponse.json({
       ok: true,
       timestamp: new Date().toISOString(),
       actions_taken: actionsTaken,
       pipeline_status: summary,
+      system_reflection: reflection,
     });
   } catch (error) {
     logError("cron.brand-outreach", error);

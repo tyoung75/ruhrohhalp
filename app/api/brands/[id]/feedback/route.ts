@@ -93,13 +93,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       stored = row;
     }
 
-    // Embed into semantic memory
+    // Embed into semantic memory with UNIFIED tags so feedback cascades
+    // across content, brand, and strategy systems
     const tagMap: Record<string, string> = {
-      like: "brand:liked",
-      dislike: "brand:disliked",
-      correction: "brand:correction",
-      directive: "brand:directive",
-      voice_note: "brand:voice_note",
+      like: "feedback:liked",
+      dislike: "feedback:disliked",
+      correction: "feedback:correction",
+      directive: "feedback:directive",
+      voice_note: "feedback:correction",
     };
 
     const memoryText = [
@@ -118,8 +119,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         category: "general",
         importance: resolvedType === "directive" ? 9 : resolvedType === "dislike" ? 8 : 6,
         tags: [
-          tagMap[resolvedType] ?? "brand:reviewed",
-          "brand-outreach",
+          tagMap[resolvedType] ?? "feedback:correction",
+          "domain:brand",
+          "system:feedback",
           `brand:${deal.brand_name.toLowerCase().replace(/\s+/g, "-")}`,
         ],
       });
