@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client-api";
 import { C } from "@/lib/ui";
 import type { BrandDeal, BrandDealStatus, PipelineSummary } from "@/lib/types/brands";
@@ -8,7 +8,7 @@ import { PIPELINE_COLUMNS } from "@/lib/types/brands";
 
 interface DealDetailResponse {
   deal: BrandDeal;
-  emails: Array<{ id: string; sent_at: string; email_type: string; direction: string; subject: string | null; summary: string | null }>;
+  emails: Array<{ id: string; sent_at: string; email_type: string; direction: string; subject: string | null; summary: string | null; gmail_draft_id?: string | null }>;
 }
 
 interface RunResponse {
@@ -16,16 +16,49 @@ interface RunResponse {
   actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[] };
 }
 
-const EMPTY_BRAND_FORM = {
-  brand_name: "",
-  contact_email: "",
-  contact_name: "",
-  relationship_notes: "",
-  product_usage: "",
-  angle: "",
-  priority: "P1" as const,
-  dont_say: [] as string[],
-};
+interface ScoutResult {
+  brand_name: string;
+  contact_email: string | null;
+  why: string;
+  relationship_type: string;
+  product_usage: string;
+  angle: string;
+  estimated_value_low: number;
+  estimated_value_high: number;
+  priority: string;
+}
+
+interface ResearchResult {
+  brand_name: string;
+  contact_email: string | null;
+  contact_name: string | null;
+  contact_confidence: string;
+  priority: string;
+  relationship_type: string;
+  relationship_notes: string;
+  product_usage: string;
+  angle: string;
+  dont_say: string[];
+  estimated_value_low: number;
+  estimated_value_high: number;
+  deal_type: string;
+  outreach_strategy: {
+    approach: string;
+    best_contact_method: string;
+    alternative_contacts: string[];
+    timing_notes: string;
+    key_differentiators: string[];
+    suggested_subject: string;
+    talking_points: string[];
+  };
+}
+
+interface BrandFeedback {
+  id: string;
+  feedback_type: string;
+  content: string;
+  created_at: string;
+}
 
 type SetupState = "loading" | "ready" | "needs_setup" | "setup_running";
 
@@ -37,9 +70,25 @@ export function BrandsDashboard() {
   const [selected, setSelected] = useState<DealDetailResponse | null>(null);
   const [running, setRunning] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState(EMPTY_BRAND_FORM);
-  const [adding, setAdding] = useState(false);
+  // Research prompt box
+  const [promptText, setPromptText] = useState("");
+  const [researching, setResearching] = useState(false);
+  const [researchResult, setResearchResult] = useState<ResearchResult | null>(null);
+  const [addingResearched, setAddingResearched] = useState(false);
+  // Scout
+  const [scouting, setScouting] = useState(false);
+  const [scoutFocus, setScoutFocus] = useState("");
+  const [scoutResults, setScoutResults] = useState<ScoutResult[]>([]);
+  const [showScout, setShowScout] = useState(false);
+  // Sidebar extras
+  const [drafting, setDrafting] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [reviseText, setReviseText] = useState("");
+  const [revising, setRevising] = useState(false);
+  const [feedbacks, setFeedbacks] = useState<BrandFeedback[]>([]);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const promptRef = useRef<HTMLInputElement>(null);
 
   function showToast(message: string, type: "success" | "error" = "success") {
     setToast({ message, type });
@@ -119,34 +168,171 @@ export function BrandsDashboard() {
     }
   }
 
-  async function addBrand() {
-    if (!addForm.brand_name.trim()) return;
-    setAdding(true);
+  async function researchBrand() {
+    if (!promptText.trim()) return;
+    setResearching(true);
+    setResearchResult(null);
+    try {
+      const res = await api<{ ok: boolean; research: ResearchResult }>("/api/brands/research", {
+        method: "POST",
+        body: JSON.stringify({ prompt: promptText.trim() }),
+      });
+      setResearchResult(res.research);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Research failed", "error");
+    } finally {
+      setResearching(false);
+    }
+  }
+
+  async function addResearchedBrand() {
+    if (!researchResult) return;
+    setAddingResearched(true);
     try {
       await api("/api/brands", {
         method: "POST",
         body: JSON.stringify({
-          brand_name: addForm.brand_name.trim(),
-          contact_email: addForm.contact_email.trim() || null,
-          contact_name: addForm.contact_name.trim() || null,
-          relationship_notes: addForm.relationship_notes.trim() || null,
-          product_usage: addForm.product_usage.trim() || null,
-          angle: addForm.angle.trim() || null,
-          priority: addForm.priority,
+          brand_name: researchResult.brand_name,
+          contact_email: researchResult.contact_email,
+          contact_name: researchResult.contact_name,
+          contact_confidence: researchResult.contact_confidence,
+          relationship_notes: researchResult.relationship_notes,
+          product_usage: researchResult.product_usage,
+          angle: researchResult.angle,
+          priority: researchResult.priority,
+          dont_say: researchResult.dont_say,
+          estimated_value_low: researchResult.estimated_value_low,
+          estimated_value_high: researchResult.estimated_value_high,
+          deal_type: researchResult.deal_type,
+          relationship_type: researchResult.relationship_type,
           status: "prospect",
-          dont_say: addForm.dont_say,
         }),
       });
-      setAddForm(EMPTY_BRAND_FORM);
-      setShowAddForm(false);
-      showToast(`${addForm.brand_name.trim()} added to pipeline`, "success");
+      showToast(`${researchResult.brand_name} added to pipeline`, "success");
+      setResearchResult(null);
+      setPromptText("");
       window.dispatchEvent(new CustomEvent("brands:refresh"));
-      return true;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Failed to add brand", "error");
-      return false;
     } finally {
-      setAdding(false);
+      setAddingResearched(false);
+    }
+  }
+
+  async function scoutBrands() {
+    setScouting(true);
+    setScoutResults([]);
+    try {
+      const res = await api<{ ok: boolean; recommendations: ScoutResult[] }>("/api/brands/scout", {
+        method: "POST",
+        body: JSON.stringify({ focus: scoutFocus.trim() || undefined }),
+      });
+      setScoutResults(res.recommendations);
+      setShowScout(true);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Scout failed", "error");
+    } finally {
+      setScouting(false);
+    }
+  }
+
+  async function addScoutedBrand(scout: ScoutResult) {
+    try {
+      await api("/api/brands", {
+        method: "POST",
+        body: JSON.stringify({
+          brand_name: scout.brand_name,
+          contact_email: scout.contact_email,
+          relationship_type: scout.relationship_type,
+          product_usage: scout.product_usage,
+          angle: scout.angle,
+          priority: scout.priority,
+          estimated_value_low: scout.estimated_value_low,
+          estimated_value_high: scout.estimated_value_high,
+          status: "prospect",
+        }),
+      });
+      showToast(`${scout.brand_name} added`, "success");
+      setScoutResults((prev) => prev.filter((s) => s.brand_name !== scout.brand_name));
+      window.dispatchEvent(new CustomEvent("brands:refresh"));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Failed to add", "error");
+    }
+  }
+
+  async function generateDraft() {
+    if (!selected) return;
+    setDrafting(true);
+    try {
+      const res = await api<{ draft_preview: string; subject: string; gmail_draft_id: string | null }>(`/api/brands/${selected.deal.id}/draft`, { method: "POST" });
+      showToast(res.gmail_draft_id ? "Gmail draft created" : "Draft generated (no Gmail)", "success");
+      const detail = await api<DealDetailResponse>(`/api/brands/${selected.deal.id}`);
+      setSelected(detail);
+      window.dispatchEvent(new CustomEvent("brands:refresh"));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Draft failed", "error");
+    } finally {
+      setDrafting(false);
+    }
+  }
+
+  async function sendDraft() {
+    if (!selected) return;
+    setSending(true);
+    try {
+      await api(`/api/brands/${selected.deal.id}/send`, { method: "POST" });
+      showToast(`Email sent to ${selected.deal.contact_email}`, "success");
+      const detail = await api<DealDetailResponse>(`/api/brands/${selected.deal.id}`);
+      setSelected(detail);
+      window.dispatchEvent(new CustomEvent("brands:refresh"));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Send failed", "error");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function reviseDraft() {
+    if (!selected || !reviseText.trim()) return;
+    setRevising(true);
+    try {
+      await api(`/api/brands/${selected.deal.id}/revise`, {
+        method: "POST",
+        body: JSON.stringify({ feedback: reviseText.trim() }),
+      });
+      showToast("Draft revised", "success");
+      setReviseText("");
+      const detail = await api<DealDetailResponse>(`/api/brands/${selected.deal.id}`);
+      setSelected(detail);
+      window.dispatchEvent(new CustomEvent("brands:refresh"));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Revise failed", "error");
+    } finally {
+      setRevising(false);
+    }
+  }
+
+  async function loadFeedback(dealId: string) {
+    try {
+      const res = await api<{ feedback: BrandFeedback[] }>(`/api/brands/${dealId}/feedback`);
+      setFeedbacks(res.feedback ?? []);
+    } catch { setFeedbacks([]); }
+  }
+
+  async function submitFeedback(type: string, content: string) {
+    if (!selected || !content) return;
+    setSubmittingFeedback(true);
+    try {
+      await api(`/api/brands/${selected.deal.id}/feedback`, {
+        method: "POST",
+        body: JSON.stringify({ feedback_type: type, content }),
+      });
+      setFeedbackText("");
+      void loadFeedback(selected.deal.id);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Feedback failed", "error");
+    } finally {
+      setSubmittingFeedback(false);
     }
   }
 
@@ -154,6 +340,9 @@ export function BrandsDashboard() {
     try {
       const detail = await api<DealDetailResponse>(`/api/brands/${id}`);
       setSelected(detail);
+      setReviseText("");
+      setFeedbackText("");
+      void loadFeedback(id);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Failed to load deal", "error");
     }
@@ -212,16 +401,6 @@ export function BrandsDashboard() {
   }
 
   // --- Main dashboard ---
-  const inputStyle = {
-    background: C.card,
-    color: C.text,
-    border: `1px solid ${C.border}`,
-    borderRadius: 6,
-    padding: "8px 10px",
-    fontSize: 13,
-    outline: "none",
-  };
-
   return (
     <main style={{ background: C.bg, minHeight: "100%", color: C.text }}>
       {/* Toast notification */}
@@ -249,113 +428,106 @@ export function BrandsDashboard() {
       )}
 
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <h1 style={{ fontFamily: C.serif, color: C.cream, margin: 0, fontSize: 22 }}>Brand Outreach</h1>
         <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => void runPipeline()}
-            disabled={running}
-            style={{
-              background: "transparent",
-              color: running ? C.textDim : C.cl,
-              border: `1px solid ${running ? C.border : C.cl}`,
-              borderRadius: 8,
-              padding: "8px 14px",
-              fontFamily: C.mono,
-              fontSize: 11,
-              fontWeight: 600,
-              cursor: running ? "default" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            {running ? (
-              <>
-                <span style={{ display: "inline-block", animation: "spin 1s linear infinite", fontSize: 12 }}>&#8635;</span>
-                Running...
-              </>
-            ) : (
-              <>&#9654; Run Pipeline</>
-            )}
+          <button onClick={() => void scoutBrands()} disabled={scouting} style={{ background: "transparent", color: scouting ? C.textDim : C.gem, border: `1px solid ${scouting ? C.border : C.gem}`, borderRadius: 8, padding: "8px 14px", fontFamily: C.mono, fontSize: 11, fontWeight: 600, cursor: scouting ? "default" : "pointer" }}>
+            {scouting ? "Scouting..." : "Scout Brands"}
           </button>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            style={{
-              background: showAddForm ? C.border : C.cl,
-              color: showAddForm ? C.textDim : C.bg,
-              border: "none",
-              borderRadius: 8,
-              padding: "8px 14px",
-              fontFamily: C.mono,
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            {showAddForm ? "Cancel" : "+ Add Brand"}
+          <button onClick={() => void runPipeline()} disabled={running} style={{ background: "transparent", color: running ? C.textDim : C.cl, border: `1px solid ${running ? C.border : C.cl}`, borderRadius: 8, padding: "8px 14px", fontFamily: C.mono, fontSize: 11, fontWeight: 600, cursor: running ? "default" : "pointer" }}>
+            {running ? "Running..." : "Run Pipeline"}
           </button>
         </div>
       </div>
 
-      {/* Add Brand Form */}
-      {showAddForm && (
-        <div style={{ marginBottom: 16, padding: 16, border: `1px solid ${C.cl}30`, borderRadius: 10, background: C.surface }}>
-          <div style={{ fontFamily: C.mono, fontSize: 11, color: C.cl, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>New Brand Prospect</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-            <input placeholder="Brand name *" value={addForm.brand_name} onChange={(e) => setAddForm({ ...addForm, brand_name: e.target.value })} style={inputStyle} />
-            <input placeholder="Contact email" value={addForm.contact_email} onChange={(e) => setAddForm({ ...addForm, contact_email: e.target.value })} style={inputStyle} />
-            <input placeholder="Contact name" value={addForm.contact_name} onChange={(e) => setAddForm({ ...addForm, contact_name: e.target.value })} style={inputStyle} />
-            <select value={addForm.priority} onChange={(e) => setAddForm({ ...addForm, priority: e.target.value as "P0" | "P1" | "P2" })} style={inputStyle}>
-              <option value="P0">P0 — High priority</option>
-              <option value="P1">P1 — Normal</option>
-              <option value="P2">P2 — Low priority</option>
-            </select>
+      {/* Research Prompt Box */}
+      <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+        <input
+          ref={promptRef}
+          type="text"
+          value={promptText}
+          onChange={(e) => setPromptText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && promptText.trim()) { e.preventDefault(); void researchBrand(); } }}
+          placeholder="I want to work with Hyperice... or describe a brand to research"
+          disabled={researching}
+          style={{ flex: 1, background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", fontSize: 13, fontFamily: C.sans, outline: "none" }}
+        />
+        <button
+          onClick={() => void researchBrand()}
+          disabled={researching || !promptText.trim()}
+          style={{ background: promptText.trim() ? C.cl : C.border, color: promptText.trim() ? C.bg : C.textDim, border: "none", borderRadius: 8, padding: "10px 18px", fontFamily: C.mono, fontSize: 12, fontWeight: 700, cursor: promptText.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}
+        >
+          {researching ? "Researching..." : "Research"}
+        </button>
+      </div>
+
+      {/* Research Result Card */}
+      {researchResult && (
+        <div style={{ marginBottom: 16, padding: 16, border: `1px solid ${C.gem}40`, borderRadius: 10, background: C.surface }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontFamily: C.mono, fontSize: 10, color: C.gem, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Research Complete</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.cream }}>{researchResult.brand_name}</div>
+            </div>
+            <button onClick={() => setResearchResult(null)} style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>&#10005;</button>
           </div>
-          <input placeholder="Product usage — how you already use their product" value={addForm.product_usage} onChange={(e) => setAddForm({ ...addForm, product_usage: e.target.value })} style={{ ...inputStyle, width: "100%", boxSizing: "border-box", marginBottom: 10 }} />
-          <input placeholder="Angle — your pitch hook for this brand" value={addForm.angle} onChange={(e) => setAddForm({ ...addForm, angle: e.target.value })} style={{ ...inputStyle, width: "100%", boxSizing: "border-box", marginBottom: 10 }} />
-          <textarea placeholder="Relationship notes — any existing connection or context" value={addForm.relationship_notes} onChange={(e) => setAddForm({ ...addForm, relationship_notes: e.target.value })} rows={2} style={{ ...inputStyle, width: "100%", boxSizing: "border-box", marginBottom: 12, resize: "vertical" }} />
-          <div style={{ display: "flex", gap: 10 }}>
-            <button
-              onClick={() => void addBrand()}
-              disabled={adding || !addForm.brand_name.trim()}
-              style={{
-                background: addForm.brand_name.trim() ? C.cl : C.border,
-                color: addForm.brand_name.trim() ? C.bg : C.textDim,
-                border: "none",
-                borderRadius: 8,
-                padding: "10px 20px",
-                fontFamily: C.mono,
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: addForm.brand_name.trim() ? "pointer" : "default",
-              }}
-            >
-              {adding ? "Adding..." : "Add to Pipeline"}
+          <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10, fontFamily: C.mono, padding: "2px 8px", borderRadius: 4, background: `${C.cl}15`, color: C.cl }}>{researchResult.priority}</span>
+            <span style={{ fontSize: 10, fontFamily: C.mono, padding: "2px 8px", borderRadius: 4, background: C.border, color: C.textDim }}>{researchResult.deal_type}</span>
+            <span style={{ fontSize: 10, fontFamily: C.mono, padding: "2px 8px", borderRadius: 4, background: C.border, color: C.textDim }}>${researchResult.estimated_value_low}–${researchResult.estimated_value_high}</span>
+            {researchResult.contact_email && <span style={{ fontSize: 10, fontFamily: C.mono, padding: "2px 8px", borderRadius: 4, background: `${C.gpt}15`, color: C.gpt }}>{researchResult.contact_email} ({researchResult.contact_confidence})</span>}
+          </div>
+          <div style={{ fontSize: 12, color: C.textDim, lineHeight: 1.6, marginBottom: 6 }}><strong style={{ color: C.textFaint, fontSize: 10, textTransform: "uppercase" }}>Angle</strong><br />{researchResult.angle}</div>
+          <div style={{ fontSize: 12, color: C.textDim, lineHeight: 1.6, marginBottom: 6 }}><strong style={{ color: C.textFaint, fontSize: 10, textTransform: "uppercase" }}>Product Usage</strong><br />{researchResult.product_usage}</div>
+          <div style={{ fontSize: 12, color: C.textDim, lineHeight: 1.6, marginBottom: 10 }}><strong style={{ color: C.textFaint, fontSize: 10, textTransform: "uppercase" }}>Strategy</strong><br />{researchResult.outreach_strategy.approach}</div>
+          {researchResult.outreach_strategy.key_differentiators.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <strong style={{ color: C.textFaint, fontSize: 10, textTransform: "uppercase" }}>Why Tyler Stands Out</strong>
+              {researchResult.outreach_strategy.key_differentiators.map((d, i) => (
+                <div key={i} style={{ fontSize: 11, color: C.text, marginTop: 3, paddingLeft: 10, borderLeft: `2px solid ${C.gem}30` }}>{d}</div>
+              ))}
+            </div>
+          )}
+          {researchResult.outreach_strategy.talking_points.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <strong style={{ color: C.textFaint, fontSize: 10, textTransform: "uppercase" }}>Talking Points</strong>
+              {researchResult.outreach_strategy.talking_points.map((p, i) => (
+                <div key={i} style={{ fontSize: 11, color: C.textDim, marginTop: 3, paddingLeft: 10, borderLeft: `2px solid ${C.cl}30` }}>{p}</div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => void addResearchedBrand()} disabled={addingResearched} style={{ background: C.cl, color: C.bg, border: "none", borderRadius: 8, padding: "10px 18px", fontFamily: C.mono, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              {addingResearched ? "Adding..." : "Add to Pipeline"}
             </button>
-            <button
-              onClick={() => {
-                if (!addForm.brand_name.trim()) return;
-                void (async () => {
-                  const ok = await addBrand();
-                  if (ok) void runPipeline();
-                })();
-              }}
-              disabled={adding || running || !addForm.brand_name.trim()}
-              style={{
-                background: "transparent",
-                color: addForm.brand_name.trim() ? C.cl : C.textDim,
-                border: `1px solid ${addForm.brand_name.trim() ? C.cl : C.border}`,
-                borderRadius: 8,
-                padding: "10px 20px",
-                fontFamily: C.mono,
-                fontSize: 12,
-                cursor: addForm.brand_name.trim() ? "pointer" : "default",
-              }}
-            >
-              {adding || running ? "Working..." : "Add + Draft Email"}
+            <button onClick={() => { void addResearchedBrand().then(() => { const deal = deals.find((d) => d.brand_name === researchResult?.brand_name); if (deal) void openDeal(deal.id); }); }} disabled={addingResearched} style={{ background: "transparent", color: C.cl, border: `1px solid ${C.cl}`, borderRadius: 8, padding: "10px 18px", fontFamily: C.mono, fontSize: 12, cursor: "pointer" }}>
+              Add + Draft Email
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Scout Results */}
+      {showScout && scoutResults.length > 0 && (
+        <div style={{ marginBottom: 16, padding: 16, border: `1px solid ${C.gem}40`, borderRadius: 10, background: C.surface }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontFamily: C.mono, fontSize: 10, color: C.gem, textTransform: "uppercase", letterSpacing: 0.5 }}>Scouted Prospects ({scoutResults.length})</div>
+            <button onClick={() => setShowScout(false)} style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 11 }}>&#10005;</button>
+          </div>
+          {scoutResults.map((scout, i) => (
+            <div key={i} style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: 8, padding: 10, marginBottom: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{scout.brand_name}</div>
+                <button onClick={() => void addScoutedBrand(scout)} style={{ background: `${C.cl}15`, color: C.cl, border: `1px solid ${C.cl}30`, borderRadius: 6, padding: "3px 10px", fontFamily: C.mono, fontSize: 10, cursor: "pointer" }}>+ Add</button>
+              </div>
+              <div style={{ fontSize: 11, color: C.gpt, marginTop: 4 }}>{scout.why}</div>
+              <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}><strong>Angle:</strong> {scout.angle}</div>
+              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                <span style={{ fontSize: 9, fontFamily: C.mono, color: C.cl }}>{scout.priority}</span>
+                <span style={{ fontSize: 9, fontFamily: C.mono, color: C.textFaint }}>${scout.estimated_value_low}–${scout.estimated_value_high}</span>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -428,48 +600,91 @@ export function BrandsDashboard() {
       </div>
 
       {/* Deal Detail Sidebar */}
-      {selected && (
-        <aside style={{ position: "fixed", top: 0, right: 0, width: 460, maxWidth: "100vw", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, padding: 20, overflowY: "auto", zIndex: 100, boxShadow: "-4px 0 20px #0004" }}>
+      {selected && (() => {
+        const latestOutbound = selected.emails.find((e) => e.direction === "outbound");
+        const hasDraft = latestOutbound?.gmail_draft_id;
+        return (
+        <aside style={{ position: "fixed", top: 0, right: 0, width: 480, maxWidth: "100vw", height: "100vh", background: C.surface, borderLeft: `1px solid ${C.border}`, padding: 20, overflowY: "auto", zIndex: 100, boxShadow: "-4px 0 20px #0004" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
             <h2 style={{ fontFamily: C.serif, color: C.cream, margin: 0, fontSize: 20 }}>{selected.deal.brand_name}</h2>
-            <button
-              onClick={() => setSelected(null)}
-              style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 14 }}
-            >
-              &#10005;
-            </button>
+            <button onClick={() => setSelected(null)} style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 14 }}>&#10005;</button>
           </div>
           <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
             {selected.deal.status && <span style={{ fontSize: 10, fontFamily: C.mono, padding: "3px 8px", borderRadius: 4, background: `${C.cl}15`, color: C.cl }}>{selected.deal.status}</span>}
-            {selected.deal.priority && <span style={{ fontSize: 10, fontFamily: C.mono, padding: "3px 8px", borderRadius: 4, background: `${C.border}`, color: C.textDim }}>{selected.deal.priority}</span>}
-            {selected.deal.deal_type && <span style={{ fontSize: 10, fontFamily: C.mono, padding: "3px 8px", borderRadius: 4, background: `${C.border}`, color: C.textDim }}>{selected.deal.deal_type}</span>}
+            {selected.deal.priority && <span style={{ fontSize: 10, fontFamily: C.mono, padding: "3px 8px", borderRadius: 4, background: C.border, color: C.textDim }}>{selected.deal.priority}</span>}
+            {selected.deal.deal_type && <span style={{ fontSize: 10, fontFamily: C.mono, padding: "3px 8px", borderRadius: 4, background: C.border, color: C.textDim }}>{selected.deal.deal_type}</span>}
           </div>
           {selected.deal.relationship_notes && <div style={{ color: C.textDim, fontSize: 12, lineHeight: 1.6, marginBottom: 8 }}><strong style={{ color: C.textFaint, fontSize: 10, textTransform: "uppercase" }}>Relationship</strong><br />{selected.deal.relationship_notes}</div>}
           {selected.deal.product_usage && <div style={{ color: C.textDim, fontSize: 12, lineHeight: 1.6, marginBottom: 8 }}><strong style={{ color: C.textFaint, fontSize: 10, textTransform: "uppercase" }}>Product Usage</strong><br />{selected.deal.product_usage}</div>}
           {selected.deal.angle && <div style={{ color: C.textDim, fontSize: 12, lineHeight: 1.6, marginBottom: 14 }}><strong style={{ color: C.textFaint, fontSize: 10, textTransform: "uppercase" }}>Angle</strong><br />{selected.deal.angle}</div>}
-          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-            <button
-              onClick={async () => {
-                await api(`/api/brands/${selected.deal.id}/draft`, { method: "POST" });
-                showToast("Draft created", "success");
-                window.dispatchEvent(new CustomEvent("brands:refresh"));
-              }}
-              style={{ background: C.cl, color: C.bg, border: "none", borderRadius: 8, padding: "8px 14px", fontFamily: C.mono, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-            >
-              Draft Email
+
+          {/* Actions: Draft / Send / Archive */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+            <button onClick={() => void generateDraft()} disabled={drafting} style={{ background: C.cl, color: C.bg, border: "none", borderRadius: 8, padding: "8px 14px", fontFamily: C.mono, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+              {drafting ? "Drafting..." : latestOutbound ? "Redraft" : "Draft Email"}
             </button>
-            <button
-              onClick={async () => {
-                await api(`/api/brands/${selected.deal.id}`, { method: "DELETE", body: JSON.stringify({ reason: "Archived from brands UI" }) });
-                setSelected(null);
-                showToast("Deal archived", "success");
-                window.dispatchEvent(new CustomEvent("brands:refresh"));
-              }}
-              style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 14px", fontFamily: C.mono, fontSize: 11, cursor: "pointer" }}
-            >
+            {hasDraft && (
+              <button onClick={() => void sendDraft()} disabled={sending} style={{ background: C.gpt, color: C.bg, border: "none", borderRadius: 8, padding: "8px 14px", fontFamily: C.mono, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                {sending ? "Sending..." : "Send Email"}
+              </button>
+            )}
+            <button onClick={async () => { await api(`/api/brands/${selected.deal.id}`, { method: "DELETE", body: JSON.stringify({ reason: "Archived from brands UI" }) }); setSelected(null); showToast("Deal archived", "success"); window.dispatchEvent(new CustomEvent("brands:refresh")); }} style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 14px", fontFamily: C.mono, fontSize: 11, cursor: "pointer" }}>
               Archive
             </button>
           </div>
+
+          {/* Latest Draft Preview */}
+          {latestOutbound && (
+            <div style={{ marginBottom: 16, border: `1px solid ${C.cl}30`, borderRadius: 8, background: C.card, padding: 12 }}>
+              <div style={{ fontFamily: C.mono, fontSize: 10, color: C.cl, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Latest Draft</div>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{latestOutbound.subject ?? "(no subject)"}</div>
+              {latestOutbound.summary && <div style={{ color: C.textDim, fontSize: 12, lineHeight: 1.5 }}>{latestOutbound.summary}</div>}
+              {hasDraft && <div style={{ marginTop: 6, fontFamily: C.mono, fontSize: 9, color: C.gpt }}>Gmail draft ready to send</div>}
+
+              {/* Revise box */}
+              <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+                <input
+                  type="text"
+                  value={reviseText}
+                  onChange={(e) => setReviseText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && reviseText.trim()) { e.preventDefault(); void reviseDraft(); } }}
+                  placeholder="Make it shorter... add Berlin angle... less formal..."
+                  disabled={revising}
+                  style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 10px", fontSize: 11, color: C.text, outline: "none" }}
+                />
+                <button onClick={() => void reviseDraft()} disabled={revising || !reviseText.trim()} style={{ background: reviseText.trim() ? `${C.gold}20` : "transparent", color: reviseText.trim() ? C.gold : C.textDim, border: `1px solid ${reviseText.trim() ? `${C.gold}40` : C.border}`, borderRadius: 6, padding: "6px 10px", fontFamily: C.mono, fontSize: 10, cursor: reviseText.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>
+                  {revising ? "..." : "Revise"}
+                </button>
+              </div>
+              <div style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint, marginTop: 4 }}>Edit instructions are applied by the brand voice agent</div>
+            </div>
+          )}
+
+          {/* Feedback */}
+          <div style={{ marginBottom: 16, paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+            <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Feedback</div>
+            <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+              {(["like", "dislike"] as const).map((type) => (
+                <button key={type} onClick={() => void submitFeedback(type, type === "like" ? "Good approach for this brand" : "Wrong approach for this brand")} disabled={submittingFeedback} style={{ background: `${type === "like" ? C.gpt : C.reminder}10`, border: `1px solid ${type === "like" ? C.gpt : C.reminder}25`, borderRadius: 4, padding: "3px 10px", fontSize: 11, cursor: submittingFeedback ? "default" : "pointer" }}>
+                  {type === "like" ? "\u{1F44D}" : "\u{1F44E}"}
+                </button>
+              ))}
+            </div>
+            {feedbacks.slice(0, 3).map((fb) => (
+              <div key={fb.id} style={{ fontSize: 10, color: C.textDim, padding: "3px 8px", marginBottom: 3, borderLeft: `2px solid ${fb.feedback_type === "like" ? C.gpt : fb.feedback_type === "dislike" ? C.reminder : C.gold}30` }}>
+                [{fb.feedback_type}] {fb.content}
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+              <input type="text" value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && feedbackText.trim()) { e.preventDefault(); void submitFeedback("correction", feedbackText.trim()); } }} placeholder="Feedback on this brand approach..." disabled={submittingFeedback} style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "5px 8px", fontSize: 10, color: C.text, outline: "none" }} />
+              <button onClick={() => void submitFeedback("correction", feedbackText.trim())} disabled={submittingFeedback || !feedbackText.trim()} style={{ background: feedbackText.trim() ? `${C.cl}14` : "transparent", border: `1px solid ${feedbackText.trim() ? `${C.cl}30` : C.border}`, color: feedbackText.trim() ? C.cl : C.textDim, borderRadius: 4, padding: "4px 8px", fontSize: 9, fontFamily: C.mono, cursor: feedbackText.trim() ? "pointer" : "default" }}>
+                {submittingFeedback ? "..." : "Send"}
+              </button>
+            </div>
+            <div style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint, marginTop: 4 }}>Feedback trains the brand voice + scouting agents</div>
+          </div>
+
+          {/* Email History */}
           <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>Email History</div>
           {selected.emails.length === 0 && <div style={{ fontSize: 12, color: C.textDim }}>No emails yet</div>}
           {selected.emails.map((email) => (
@@ -486,7 +701,8 @@ export function BrandsDashboard() {
             </div>
           ))}
         </aside>
-      )}
+        );
+      })()}
     </main>
   );
 }
