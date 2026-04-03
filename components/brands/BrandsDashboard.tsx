@@ -16,18 +16,6 @@ interface RunResponse {
   actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[] };
 }
 
-interface ScoutResult {
-  brand_name: string;
-  contact_email: string | null;
-  why: string;
-  relationship_type: string;
-  product_usage: string;
-  angle: string;
-  estimated_value_low: number;
-  estimated_value_high: number;
-  priority: string;
-}
-
 interface ResearchResult {
   brand_name: string;
   contact_email: string | null;
@@ -77,9 +65,6 @@ export function BrandsDashboard() {
   const [addingResearched, setAddingResearched] = useState(false);
   // Scout
   const [scouting, setScouting] = useState(false);
-  const [scoutFocus] = useState("");
-  const [scoutResults, setScoutResults] = useState<ScoutResult[]>([]);
-  const [showScout, setShowScout] = useState(false);
   // Sidebar extras
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
@@ -221,14 +206,10 @@ export function BrandsDashboard() {
 
   async function scoutBrands() {
     setScouting(true);
-    setScoutResults([]);
     try {
-      const res = await api<{ ok: boolean; recommendations: ScoutResult[] }>("/api/brands/scout", {
-        method: "POST",
-        body: JSON.stringify({ focus: scoutFocus.trim() || undefined }),
-      });
-      setScoutResults(res.recommendations);
-      setShowScout(true);
+      const res = await api<{ ok: boolean; persisted: number }>("/api/brands/scout", { method: "POST" });
+      showToast(`${res.persisted} new brands scouted`, "success");
+      window.dispatchEvent(new CustomEvent("brands:refresh"));
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Scout failed", "error");
     } finally {
@@ -236,27 +217,22 @@ export function BrandsDashboard() {
     }
   }
 
-  async function addScoutedBrand(scout: ScoutResult) {
+  async function promoteDeal(id: string, status: string) {
     try {
-      await api("/api/brands", {
-        method: "POST",
-        body: JSON.stringify({
-          brand_name: scout.brand_name,
-          contact_email: scout.contact_email,
-          relationship_type: scout.relationship_type,
-          product_usage: scout.product_usage,
-          angle: scout.angle,
-          priority: scout.priority,
-          estimated_value_low: scout.estimated_value_low,
-          estimated_value_high: scout.estimated_value_high,
-          status: "prospect",
-        }),
-      });
-      showToast(`${scout.brand_name} added`, "success");
-      setScoutResults((prev) => prev.filter((s) => s.brand_name !== scout.brand_name));
+      await api(`/api/brands/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
       window.dispatchEvent(new CustomEvent("brands:refresh"));
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Failed to add", "error");
+      showToast(error instanceof Error ? error.message : "Update failed", "error");
+    }
+  }
+
+  async function delayDeal(id: string) {
+    try {
+      await api(`/api/brands/${id}`, { method: "PATCH", body: JSON.stringify({ status: "delayed", next_action: "Revisit later", next_action_date: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10) }) });
+      showToast("Brand delayed — will revisit in 30 days", "success");
+      window.dispatchEvent(new CustomEvent("brands:refresh"));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Update failed", "error");
     }
   }
 
@@ -507,30 +483,6 @@ export function BrandsDashboard() {
         </div>
       )}
 
-      {/* Scout Results */}
-      {showScout && scoutResults.length > 0 && (
-        <div style={{ marginBottom: 16, padding: 16, border: `1px solid ${C.gem}40`, borderRadius: 10, background: C.surface }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div style={{ fontFamily: C.mono, fontSize: 10, color: C.gem, textTransform: "uppercase", letterSpacing: 0.5 }}>Scouted Prospects ({scoutResults.length})</div>
-            <button onClick={() => setShowScout(false)} style={{ background: "transparent", color: C.textDim, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 11 }}>&#10005;</button>
-          </div>
-          {scoutResults.map((scout, i) => (
-            <div key={i} style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: 8, padding: 10, marginBottom: 6 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontWeight: 700, fontSize: 13 }}>{scout.brand_name}</div>
-                <button onClick={() => void addScoutedBrand(scout)} style={{ background: `${C.cl}15`, color: C.cl, border: `1px solid ${C.cl}30`, borderRadius: 6, padding: "3px 10px", fontFamily: C.mono, fontSize: 10, cursor: "pointer" }}>+ Add</button>
-              </div>
-              <div style={{ fontSize: 11, color: C.gpt, marginTop: 4 }}>{scout.why}</div>
-              <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}><strong>Angle:</strong> {scout.angle}</div>
-              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                <span style={{ fontSize: 9, fontFamily: C.mono, color: C.cl }}>{scout.priority}</span>
-                <span style={{ fontSize: 9, fontFamily: C.mono, color: C.textFaint }}>${scout.estimated_value_low}–${scout.estimated_value_high}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 18 }}>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, padding: 12, borderRadius: 10 }}>
@@ -566,32 +518,29 @@ export function BrandsDashboard() {
                   <div style={{ fontSize: 11, color: C.textFaint, textAlign: "center", padding: "12px 0" }}>No deals</div>
                 )}
                 {cards.map((deal) => (
-                  <button
-                    key={deal.id}
-                    onClick={() => void openDeal(deal.id)}
-                    style={{
-                      textAlign: "left",
-                      background: C.card,
-                      border: `1px solid ${C.border}`,
-                      borderRadius: 8,
-                      padding: 10,
-                      color: C.text,
-                      cursor: "pointer",
-                      width: "100%",
-                      transition: "border-color 0.15s",
-                    }}
+                  <div key={deal.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, transition: "border-color 0.15s" }}
                     onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = `${column.color}60`; }}
                     onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{deal.brand_name}</div>
-                      {deal.priority && <span style={{ fontFamily: C.mono, fontSize: 10, color: C.cl, background: `${C.cl}15`, padding: "1px 6px", borderRadius: 4 }}>{deal.priority}</span>}
-                    </div>
-                    <div style={{ color: C.textDim, fontSize: 11, marginTop: 4 }}>{deal.contact_email ?? "No contact"}</div>
-                    {(deal.estimated_value_low || deal.estimated_value_high) && (
-                      <div style={{ marginTop: 6, color: C.textFaint, fontSize: 10, fontFamily: C.mono }}>${deal.estimated_value_low ?? 0}–${deal.estimated_value_high ?? 0}</div>
+                    <button onClick={() => void openDeal(deal.id)} style={{ textAlign: "left", background: "transparent", border: "none", color: C.text, cursor: "pointer", width: "100%", padding: 0 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{deal.brand_name}</div>
+                        {deal.priority && <span style={{ fontFamily: C.mono, fontSize: 10, color: C.cl, background: `${C.cl}15`, padding: "1px 6px", borderRadius: 4 }}>{deal.priority}</span>}
+                      </div>
+                      <div style={{ color: C.textDim, fontSize: 11, marginTop: 4 }}>{deal.contact_email ?? "No contact"}</div>
+                      {deal.scout_reason && <div style={{ color: C.gem, fontSize: 10, marginTop: 4 }}>{deal.scout_reason}</div>}
+                      {(deal.estimated_value_low || deal.estimated_value_high) && (
+                        <div style={{ marginTop: 6, color: C.textFaint, fontSize: 10, fontFamily: C.mono }}>${deal.estimated_value_low ?? 0}–${deal.estimated_value_high ?? 0}</div>
+                      )}
+                    </button>
+                    {deal.status === "scouted" && (
+                      <div style={{ display: "flex", gap: 4, marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+                        <button onClick={() => void promoteDeal(deal.id, "prospect")} style={{ flex: 1, background: `${C.gpt}15`, color: C.gpt, border: `1px solid ${C.gpt}30`, borderRadius: 4, padding: "3px 0", fontFamily: C.mono, fontSize: 9, cursor: "pointer" }}>Pursue</button>
+                        <button onClick={() => void delayDeal(deal.id)} style={{ flex: 1, background: `${C.gold}10`, color: C.gold, border: `1px solid ${C.gold}25`, borderRadius: 4, padding: "3px 0", fontFamily: C.mono, fontSize: 9, cursor: "pointer" }}>Delay</button>
+                        <button onClick={async () => { await api(`/api/brands/${deal.id}`, { method: "DELETE", body: JSON.stringify({ reason: "Not interested — dismissed from scout" }) }); showToast(`${deal.brand_name} dismissed`, "success"); window.dispatchEvent(new CustomEvent("brands:refresh")); }} style={{ flex: 1, background: `${C.reminder}10`, color: C.reminder, border: `1px solid ${C.reminder}25`, borderRadius: 4, padding: "3px 0", fontFamily: C.mono, fontSize: 9, cursor: "pointer" }}>Pass</button>
+                      </div>
                     )}
-                  </button>
+                  </div>
                 ))}
               </div>
             </section>

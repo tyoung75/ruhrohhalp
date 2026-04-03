@@ -12,6 +12,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryBrain } from "@/lib/query";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { gatherIntelligenceContext, reflectAndImprove } from "@/lib/intelligence";
+import { embedAndStore } from "@/lib/embedding/pipeline";
 import { logError } from "@/lib/logger";
 import { getCurrentStrategy, generateStrategy, detectTrends } from "@/lib/creator/strategy";
 import { callClaude } from "@/lib/processors/claude";
@@ -568,6 +570,19 @@ export async function GET(request: NextRequest) {
       results.weekly = { error: "Weekly synthesis failed" };
     }
   }
+
+  // System intelligence: reflect on recent feedback to compound learning
+  try {
+    const ctx = await gatherIntelligenceContext(TYLER_USER_ID);
+    const reflection = await reflectAndImprove(`${period} briefing cron`, ctx);
+    if (reflection) {
+      await embedAndStore(
+        `[SYSTEM INTELLIGENCE: briefing]\n${reflection}`,
+        { userId: TYLER_USER_ID, source: "manual", sourceId: `intelligence:briefing:${getTodayET()}`, category: "general", importance: 7, tags: ["system:learning", "system:feedback"] },
+      );
+      results.system_reflection = reflection;
+    }
+  } catch (e) { logError("cron.briefing.intelligence", e); }
 
   return NextResponse.json(results);
 }

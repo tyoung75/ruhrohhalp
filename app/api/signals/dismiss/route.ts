@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildFingerprint } from "@/lib/signal-fingerprint";
+import { embedAndStore } from "@/lib/embedding/pipeline";
+import { logError } from "@/lib/logger";
 
 /**
  * GET /api/signals/dismiss
@@ -79,6 +81,21 @@ export async function POST(request: NextRequest) {
     console.error("[signal_dismissals.insert]", JSON.stringify(error));
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // Embed dismissal into shared brain so all systems learn what Tyler rejects
+  try {
+    await embedAndStore(
+      `[SIGNAL DISMISSED] ${text.slice(0, 300)}`,
+      {
+        userId: user.id,
+        source: "manual",
+        sourceId: `dismissal:${data.id}`,
+        category: "general",
+        importance: 7,
+        tags: ["feedback:disliked", "system:feedback", `domain:${source ?? "general"}`],
+      },
+    );
+  } catch (e) { logError("signal.dismiss.embed", e); }
 
   return NextResponse.json({ dismissal: data, fingerprint }, { status: 201 });
 }

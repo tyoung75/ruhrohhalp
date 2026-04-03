@@ -12,6 +12,7 @@ import { Spinner } from "@/components/primitives";
 import { NavSidebar } from "@/components/NavSidebar";
 import { PricingModal } from "@/components/pricing-modal";
 import { SettingsPanel } from "@/components/settings-panel";
+import { ChiefOfStaff } from "@/components/chief-of-staff";
 import { useMobile } from "@/lib/useMobile";
 
 /** Routes that should be publicly accessible without auth */
@@ -374,11 +375,12 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
               Local dev mode for <span style={{ color: C.cream }}>{localEmail}</span>. Agent chat, billing, and synced settings are disabled.
             </div>
           )}
-          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", paddingBottom: 42 }}>
             {children}
           </div>
         </div>
       </div>
+      {!localMode && <ChiefOfStaff />}
     </div>
   );
 }

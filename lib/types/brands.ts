@@ -1,4 +1,5 @@
 export type BrandDealStatus =
+  | "scouted"
   | "prospect"
   | "draft_ready"
   | "sent"
@@ -10,7 +11,8 @@ export type BrandDealStatus =
   | "referral_active"
   | "closed_won"
   | "closed_lost"
-  | "archived";
+  | "archived"
+  | "delayed";
 
 export type BrandPriority = "P0" | "P1" | "P2";
 export type ContactConfidence = "high" | "medium" | "low";
@@ -48,6 +50,7 @@ export interface BrandDeal {
   updated_at: string;
   archived_at: string | null;
   archive_reason: string | null;
+  scout_reason: string | null;
 }
 
 export interface BrandOutreachEmail {
@@ -79,6 +82,7 @@ export interface PipelineSummary {
 }
 
 export const PIPELINE_COLUMNS: { status: BrandDealStatus; label: string; color: string }[] = [
+  { status: "scouted", label: "Scouted", color: "#5d9ef8" },
   { status: "prospect", label: "Prospects", color: "#6B7280" },
   { status: "draft_ready", label: "Draft Ready", color: "#F59E0B" },
   { status: "sent", label: "Sent", color: "#3B82F6" },
