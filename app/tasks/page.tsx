@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient as createSupabaseClient } from "@/lib/supabase/client";
 import { api } from "@/lib/client-api";
-import type { PlanTier, PlannerItem, ProcessInputResponse } from "@/lib/types/domain";
+import type { PlanTier, PlannerItem } from "@/lib/types/domain";
 import { C } from "@/lib/ui";
 import { TIERS } from "@/lib/tiers";
 import { MODELS, PROVIDERS } from "@/lib/ai/registry";
@@ -19,47 +19,6 @@ function localModeEnabled() {
   return process.env.NODE_ENV !== "production";
 }
 
-function inferType(input: string): PlannerItem["type"] {
-  const text = input.toLowerCase();
-  if (text.startsWith("note:")) return "note";
-  if (text.startsWith("remind") || text.includes("reminder")) return "reminder";
-  if (text.startsWith("todo:") || text.startsWith("- ") || text.startsWith("[ ]")) return "todo";
-  return "task";
-}
-
-function createLocalPlannerItem(input: string, userEmail: string): PlannerItem {
-  const now = new Date().toISOString();
-  const title = input.split("\n")[0].trim().slice(0, 120) || "Untitled";
-  return {
-    id: crypto.randomUUID(),
-    userId: userEmail,
-    title,
-    description: input === title ? "" : input,
-    type: inferType(input),
-    priority: "medium",
-    howTo: "Local mode stores planner changes in your browser only.",
-    recommendedAI: "claude",
-    recommendedModel: "claude-sonnet-4-5",
-    aiReason: "Local mode uses a placeholder recommendation.",
-    selectedModel: null,
-    auditNotes: "",
-    memoryKey: "",
-    status: "open",
-    sourceText: input,
-    projectId: null,
-    delegatedTo: null,
-    isOpenLoop: false,
-    threadRef: null,
-    leverageReason: "",
-    githubPrUrl: null,
-    linearIssueId: null,
-    linearUrl: null,
-    linearSyncedAt: null,
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
 type ViewMode = "list" | "kanban";
 
 export default function TasksPage() {
@@ -67,9 +26,9 @@ export default function TasksPage() {
   const isMobile = useMobile();
 
   const [localMode, setLocalMode] = useState(false);
-  const [localEmail, setLocalEmail] = useState("");
+  const [, setLocalEmail] = useState("");
   const [items, setItems] = useState<PlannerItem[]>([]);
-  const [processing, setProcessing] = useState(false);
+  const [processing] = useState(false);
   const [activeAgent, setActiveAgent] = useState<PlannerItem | null>(null);
   const [filter, setFilter] = useState<"open" | "done">("open");
   const [aiFilter, setAiFilter] = useState<"all" | "claude" | "chatgpt" | "gemini">("all");
