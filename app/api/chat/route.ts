@@ -10,14 +10,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { queryBrain } from "@/lib/query";
-import { callClaude } from "@/lib/processors/claude";
 import { embedAndStore } from "@/lib/embedding/pipeline";
 import { logError } from "@/lib/logger";
 import { AI_MODELS } from "@/lib/ai-config";
 
 export const maxDuration = 60;
-
-const TYLER_USER_ID = "e3657b64-9c95-4d9a-ad12-304cf8e2f21e";
 
 const COS_SYSTEM_PROMPT = `You are Tyler Young's Chief of Staff — his EA, financial advisor, career coach, content strategist, brand outreach manager, and life OS operator.
 

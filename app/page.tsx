@@ -42,8 +42,7 @@ import { TodaysFocus } from "@/components/todays-focus";
 import { SignalsPanel } from "@/components/signals-panel";
 import { BrainDumpModal } from "@/components/brain-dump-modal";
 import { BriefingView } from "@/components/briefing-view";
-// CaptureBar removed — Chief of Staff handles task/note capture
-import { Spinner } from "@/components/primitives";
+// CaptureBar + Spinner removed — Chief of Staff handles task/note capture
 
 function healthNumberToEnum(health: number): "strong" | "stable" | "at_risk" | "critical" {
   if (health >= 75) return "strong";
@@ -59,28 +58,9 @@ export default function CommandConsolePage() {
   const [pillarsLoading, setPillarsLoading] = useState(true);
   const [showBrainDump, setShowBrainDump] = useState(false);
   const [centerTab, setCenterTab] = useState<"focus" | "briefing">("focus");
-  const [processing, setProcessing] = useState(false);
-  const [processResult, setProcessResult] = useState<{ count: number; message: string } | null>(null);
   const [mobileSection, setMobileSection] = useState<"focus" | "pillars" | "signals">("focus");
 
-  async function handleCapture(input: string) {
-    setProcessing(true);
-    setProcessResult(null);
-    try {
-      const result = await api<{ items: unknown[]; usageCount: number }>("/api/planner/process", {
-        method: "POST",
-        body: JSON.stringify({ input }),
-      });
-      const count = result.items?.length ?? 0;
-      setProcessResult({ count, message: `Created ${count} task${count !== 1 ? "s" : ""} from your input.` });
-      // Notify other components to refresh
-      window.dispatchEvent(new CustomEvent("tasks:refresh"));
-    } catch (error) {
-      setProcessResult({ count: 0, message: error instanceof Error ? error.message : "Could not process input" });
-    } finally {
-      setProcessing(false);
-    }
-  }
+
 
   useEffect(() => {
     async function loadPillars() {

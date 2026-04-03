@@ -150,28 +150,7 @@ export default function TasksPage() {
 
   const allowedModels = TIERS[tier].models;
 
-  async function handleCapture(input: string) {
-    setProcessing(true);
-    try {
-      if (localMode) {
-        const next = createLocalPlannerItem(input, localEmail);
-        setItems((prev) => [next, ...prev]);
-        setUsageCount((prev) => prev + 1);
-        return;
-      }
-      const result = await api<ProcessInputResponse>("/api/planner/process", {
-        method: "POST",
-        body: JSON.stringify({ input }),
-      });
-      setItems((prev) => [...result.items, ...prev]);
-      setUsageCount(result.usageCount);
-      setUsageLimit(result.usageLimit);
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Could not process input");
-    } finally {
-      setProcessing(false);
-    }
-  }
+  // handleCapture removed — Chief of Staff handles task capture
 
   async function updateTask(id: string, updates: Record<string, unknown>) {
     if (localMode) {

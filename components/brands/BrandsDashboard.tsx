@@ -16,18 +16,6 @@ interface RunResponse {
   actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[] };
 }
 
-interface ScoutResult {
-  brand_name: string;
-  contact_email: string | null;
-  why: string;
-  relationship_type: string;
-  product_usage: string;
-  angle: string;
-  estimated_value_low: number;
-  estimated_value_high: number;
-  priority: string;
-}
-
 interface ResearchResult {
   brand_name: string;
   contact_email: string | null;
