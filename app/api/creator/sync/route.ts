@@ -1,8 +1,9 @@
 /**
  * Sync external posts — POST /api/creator/sync
  *
- * Discovers posts made directly in the Threads app (outside Creator OS)
- * and imports them into content_queue so analytics are tracked for everything.
+ * Discovers posts made directly on connected platforms (Threads, Instagram,
+ * TikTok, YouTube — outside Creator OS) and imports them into content_queue
+ * so analytics are tracked for all creator content regardless of origin.
  */
 
 import { NextResponse } from "next/server";

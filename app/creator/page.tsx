@@ -22,6 +22,7 @@ interface QueueItem {
   status: string;
   post_id: string | null;
   post_url: string | null;
+  source: string | null;
   attempts: number;
   last_error: string | null;
   confidence_score: number | null;
@@ -75,8 +76,10 @@ interface AnalyticsResponse {
     avg_engagement_rate: number;
   };
   top_posts: Array<{
+    content_queue_id?: string;
     body: string;
     platform: string;
+    source?: string;
     impressions: number;
     likes: number;
     replies: number;
@@ -84,6 +87,16 @@ interface AnalyticsResponse {
     engagement_rate: number;
     created_at: string;
   }>;
+  all_post_analytics?: Array<{
+    content_queue_id: string;
+    platform: string;
+    impressions: number;
+    likes: number;
+    replies: number;
+    reposts: number;
+    engagement_rate: number;
+  }>;
+  source_breakdown?: Record<string, { posts: number; impressions: number; avgEngagement: number }>;
   daily_trend: Array<{
     date: string;
     impressions: number;
@@ -2433,6 +2446,40 @@ function AnalyticsTab() {
             )}
           </div>
 
+          {/* Content source breakdown */}
+          {data.source_breakdown && Object.keys(data.source_breakdown).length > 0 && (
+            <>
+              <SectionHeader>Content Sources</SectionHeader>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                {Object.entries(data.source_breakdown).map(([src, stats]) => (
+                  <div
+                    key={src}
+                    style={{
+                      background: C.card,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 8,
+                      padding: "10px 14px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontFamily: C.sans, fontSize: 13, color: C.cream }}>
+                          {src === "external" ? "External (manual posts)" : "Creator OS"}
+                        </div>
+                        <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
+                          {stats.posts} posts &middot; {stats.impressions.toLocaleString()} impressions
+                        </div>
+                      </div>
+                      <div style={{ fontFamily: C.mono, fontSize: 14, color: src === "external" ? "#f59e0b" : C.cl }}>
+                        {(stats.avgEngagement * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
           {/* Queue status */}
           <SectionHeader>Queue Status</SectionHeader>
           <div
@@ -2653,12 +2700,28 @@ function HistoryTab() {
         const filtered = queueData.items;
         setItems(filtered);
 
-        // Build analytics lookup by matching post body (since we don't have direct content_queue_id mapping in top_posts)
-        if (analyticsData?.top_posts) {
+        // Build analytics lookup from all_post_analytics (covers ALL posts, not just top 5)
+        if (analyticsData?.all_post_analytics) {
+          const aMap: typeof analyticsMap = {};
+          for (const metric of analyticsData.all_post_analytics) {
+            if (metric.content_queue_id) {
+              aMap[metric.content_queue_id] = {
+                impressions: metric.impressions,
+                likes: metric.likes,
+                replies: metric.replies,
+                reposts: metric.reposts,
+                engagement_rate: metric.engagement_rate,
+              };
+            }
+          }
+          setAnalyticsMap(aMap);
+        } else if (analyticsData?.top_posts) {
+          // Fallback: match by content_queue_id or body prefix
           const aMap: typeof analyticsMap = {};
           for (const post of analyticsData.top_posts) {
-            // Match by body prefix
-            const matchedItem = filtered.find((item) => item.body?.slice(0, 100) === post.body?.slice(0, 100));
+            const matchedItem = post.content_queue_id
+              ? filtered.find((item) => item.id === post.content_queue_id)
+              : filtered.find((item) => item.body?.slice(0, 100) === post.body?.slice(0, 100));
             if (matchedItem) {
               aMap[matchedItem.id] = {
                 impressions: post.impressions,
@@ -2832,6 +2895,19 @@ function HistoryTab() {
                   <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
                     {item.platform}
                   </span>
+                  {item.source === "external" && (
+                    <span style={{
+                      fontFamily: C.mono,
+                      fontSize: 9,
+                      color: "#f59e0b",
+                      background: "#f59e0b18",
+                      border: "1px solid #f59e0b40",
+                      padding: "1px 6px",
+                      borderRadius: 10,
+                    }}>
+                      External
+                    </span>
+                  )}
                   {item.post_url && (
                     <a
                       href={item.post_url}
