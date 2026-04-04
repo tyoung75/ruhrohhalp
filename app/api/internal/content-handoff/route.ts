@@ -15,11 +15,13 @@ export async function POST(request: NextRequest) {
     // Fetch queued content items ready for publishing
     // Only auto-publish Threads posts — other platforms stay as drafts for manual review
     // Limited to 2 per run to match the primary publish path (publishQueuedPosts)
+    const now = new Date().toISOString();
     const { data: items, error } = await supabase
       .from("content_queue")
       .select("id, user_id, platform, body, caption, title, hashtags, media_urls, platform_spec, attempts, max_attempts")
       .eq("status", "queued")
       .eq("platform", "threads")
+      .lte("scheduled_for", now)
       .order("scheduled_for", { ascending: true, nullsFirst: false })
       .limit(2);
 
