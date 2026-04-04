@@ -78,26 +78,39 @@ export async function POST(request: NextRequest) {
   const supabase = createAdminClient();
 
   try {
-    // 1. Load or create session
+    // 1. Load or create session (gracefully handle missing table)
     let session: { id: string; messages: ChatMessage[]; title: string };
+    const fallbackSession = () => ({ id: crypto.randomUUID(), messages: [] as ChatMessage[], title: "New conversation" });
 
-    if (sessionId) {
-      const { data } = await supabase.from("chat_sessions").select("id, messages, title").eq("id", sessionId).eq("user_id", user.id).single();
-      session = data ? { ...data, messages: (data.messages as ChatMessage[]) ?? [] } : { id: sessionId, messages: [], title: "New conversation" };
-    } else {
-      const { data: ns } = await supabase.from("chat_sessions").insert({ user_id: user.id, page_context: pageContext, messages: [], title: "New conversation" }).select("id, messages, title").single();
-      session = ns ? { ...ns, messages: (ns.messages as ChatMessage[]) ?? [] } : { id: crypto.randomUUID(), messages: [], title: "New conversation" };
+    try {
+      if (sessionId) {
+        const { data } = await supabase.from("chat_sessions").select("id, messages, title").eq("id", sessionId).eq("user_id", user.id).single();
+        session = data ? { ...data, messages: (data.messages as ChatMessage[]) ?? [] } : { id: sessionId, messages: [], title: "New conversation" };
+      } else {
+        const { data: ns } = await supabase.from("chat_sessions").insert({ user_id: user.id, page_context: pageContext, messages: [], title: "New conversation" }).select("id, messages, title").single();
+        session = ns ? { ...ns, messages: (ns.messages as ChatMessage[]) ?? [] } : fallbackSession();
+      }
+    } catch {
+      // chat_sessions table may not exist yet — operate without persistence
+      session = fallbackSession();
     }
 
     // 2. Gather page-specific context
     const contextParts: string[] = [];
 
-    // Base context — always loaded
-    const [tasksRes, goalsRes, brandsRes] = await Promise.all([
-      supabase.from("tasks").select("id, title, state, priority, due_date, identifier").eq("user_id", user.id).not("state", "in", '("done","cancelled")').order("priority_num", { ascending: true }).limit(12),
-      supabase.from("goals").select("title, status, progress_current, progress_target, target_date").eq("user_id", user.id).eq("status", "active").limit(8),
-      supabase.from("brand_deals").select("brand_name, status, priority, next_action, contact_email, scout_reason").eq("user_id", user.id).not("status", "in", '("archived","closed_lost")').limit(12),
+    // Base context — always loaded (catch errors for tables that may not exist yet)
+    const safeQuery = async <T>(fn: () => Promise<{ data: T | null }>) => { try { return (await fn()).data; } catch { return null; } };
+    const [tasks, goals, brands] = await Promise.all([
+      safeQuery(() => supabase.from("tasks").select("id, title, state, priority, due_date, identifier").eq("user_id", user.id).not("state", "in", '("done","cancelled")').order("priority_num", { ascending: true }).limit(12)),
+      safeQuery(() => supabase.from("goals").select("title, status, progress_current, progress_target, target_date").eq("user_id", user.id).eq("status", "active").limit(8)),
+      safeQuery(() => supabase.from("brand_deals").select("brand_name, status, priority, next_action, contact_email, scout_reason").eq("user_id", user.id).not("status", "in", '("archived","closed_lost")').limit(12)),
     ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tasksRes = { data: tasks as any[] | null };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const goalsRes = { data: goals as any[] | null };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const brandsRes = { data: brands as any[] | null };
 
     if (tasksRes.data?.length) {
       contextParts.push("## Open Tasks\n" + tasksRes.data.map((t) =>
@@ -115,17 +128,19 @@ export async function POST(request: NextRequest) {
       ).join("\n"));
     }
 
-    // Page-specific deep context
-    if (pageContext === "finance") {
-      const { data: accounts } = await supabase.from("financial_accounts").select("name, account_type, balance").eq("owner", "tyler").limit(8);
-      if (accounts?.length) contextParts.push("## Financial Accounts\n" + accounts.map((a) => `- ${a.name} (${a.account_type}): $${a.balance?.toLocaleString()}`).join("\n"));
-    }
-    if (pageContext === "creator") {
-      const { data: queue } = await supabase.from("content_queue").select("body, platform, status, content_type").eq("user_id", user.id).in("status", ["draft", "queued", "approved"]).order("created_at", { ascending: false }).limit(5);
-      if (queue?.length) contextParts.push("## Content Queue\n" + queue.map((q) => `- [${q.platform}/${q.status}] ${(q.body as string)?.slice(0, 80)}`).join("\n"));
-      const { data: directives } = await supabase.from("content_directives").select("directive").eq("user_id", user.id).eq("active", true).limit(5);
-      if (directives?.length) contextParts.push("## Active Directives\n" + directives.map((d) => `- ${d.directive}`).join("\n"));
-    }
+    // Page-specific deep context (safe — won't crash if tables missing)
+    try {
+      if (pageContext === "finance") {
+        const accts = await safeQuery(() => supabase.from("financial_accounts").select("name, account_type, balance").eq("owner", "tyler").limit(8));
+        if (accts?.length) contextParts.push("## Financial Accounts\n" + (accts as Array<{ name: string; account_type: string; balance: number }>).map((a) => `- ${a.name} (${a.account_type}): $${a.balance?.toLocaleString()}`).join("\n"));
+      }
+      if (pageContext === "creator") {
+        const queue = await safeQuery(() => supabase.from("content_queue").select("body, platform, status, content_type").eq("user_id", user.id).in("status", ["draft", "queued", "approved"]).order("created_at", { ascending: false }).limit(5));
+        if (queue?.length) contextParts.push("## Content Queue\n" + (queue as Array<{ platform: string; status: string; body: string }>).map((q) => `- [${q.platform}/${q.status}] ${(q.body as string)?.slice(0, 80)}`).join("\n"));
+        const dirs = await safeQuery(() => supabase.from("content_directives").select("directive").eq("user_id", user.id).eq("active", true).limit(5));
+        if (dirs?.length) contextParts.push("## Active Directives\n" + (dirs as Array<{ directive: string }>).map((d) => `- ${d.directive}`).join("\n"));
+      }
+    } catch { /* page-specific context is best-effort */ }
 
     // RAG brain search
     try {
@@ -149,8 +164,10 @@ export async function POST(request: NextRequest) {
     // 4. Tool-use loop (max 3 iterations)
     let finalReply = "";
     const actionsTaken: string[] = [];
-    let currentMessages = claudeMessages;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let currentMessages: any[] = [...claudeMessages];
     const tools = getClaudeTools();
+    const systemPrompt = `${COS_SYSTEM_PROMPT}\n\n--- CURRENT CONTEXT ---\n${contextParts.join("\n\n")}`;
 
     for (let i = 0; i < 4; i++) {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -159,7 +176,7 @@ export async function POST(request: NextRequest) {
         body: JSON.stringify({
           model: AI_MODELS.PRIMARY,
           max_tokens: 2048,
-          system: `${COS_SYSTEM_PROMPT}\n\n--- CURRENT CONTEXT ---\n${contextParts.join("\n\n")}`,
+          system: systemPrompt,
           messages: currentMessages,
           tools,
         }),
@@ -172,29 +189,32 @@ export async function POST(request: NextRequest) {
       const textBlocks = content.filter((c) => c.type === "text").map((c) => c.text ?? "");
       const toolUses = content.filter((c) => c.type === "tool_use");
 
-      if (toolUses.length === 0) {
+      if (toolUses.length === 0 || data.stop_reason === "end_turn") {
         // No tool calls — final response
         finalReply = textBlocks.join("\n");
         break;
       }
 
       // Execute tool calls
-      const toolResults: Array<{ type: "tool_result"; tool_use_id: string; content: string }> = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const toolResults: any[] = [];
       for (const tu of toolUses) {
         const result = await executeAction(user.id, tu.name!, tu.input ?? {});
         actionsTaken.push(result.ok ? result.message : `Failed: ${result.error}`);
         toolResults.push({ type: "tool_result", tool_use_id: tu.id!, content: JSON.stringify(result) });
       }
 
-      // Continue conversation with tool results
+      // Continue conversation: append assistant response (raw content blocks) + user tool_result
       currentMessages = [
         ...currentMessages,
-        { role: "assistant" as const, content: JSON.stringify(content) },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...toolResults.map((tr) => ({ role: "user" as const, content: tr.content })) as any,
+        { role: "assistant", content },
+        { role: "user", content: toolResults },
       ];
 
-      // If this was the last iteration, grab any text
+      // Capture any text from this turn too
+      if (textBlocks.length > 0) finalReply = textBlocks.join("\n");
+
+      // If this was the last iteration, we'll use whatever text we have
       if (i === 3) finalReply = textBlocks.join("\n") || "Actions completed.";
     }
 
@@ -208,7 +228,7 @@ export async function POST(request: NextRequest) {
 
     const title = session.messages.length === 0 ? message.slice(0, 60) + (message.length > 60 ? "..." : "") : session.title;
 
-    await supabase.from("chat_sessions").update({ messages: updatedMessages, title, updated_at: now }).eq("id", session.id);
+    try { await supabase.from("chat_sessions").update({ messages: updatedMessages, title, updated_at: now }).eq("id", session.id); } catch { /* table may not exist */ }
 
     // 6. Embed into brain
     try {
