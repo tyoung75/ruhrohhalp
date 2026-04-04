@@ -30,6 +30,12 @@ async function createTask(userId: string, args: { title: string; description?: s
       state: "unstarted",
       type: "task",
       source_text: `Chief of Staff: ${args.title}`,
+      recommended_ai: "claude",
+      recommended_model: "claude-sonnet-4-6",
+      ai_reason: "",
+      how_to: "",
+      audit_notes: "",
+      memory_key: "",
     })
     .select("id, identifier, title")
     .single();
@@ -271,6 +277,12 @@ async function setReminder(userId: string, args: { title: string; date: string; 
       state: "unstarted",
       type: "reminder",
       source_text: `Chief of Staff reminder: ${args.title}`,
+      recommended_ai: "claude",
+      recommended_model: "claude-sonnet-4-6",
+      ai_reason: "",
+      how_to: "",
+      audit_notes: "",
+      memory_key: "",
       ai_metadata: googleTaskId ? { google_task_id: googleTaskId, google_task_list: taskListName } : null,
     })
     .select("id, identifier, title")
