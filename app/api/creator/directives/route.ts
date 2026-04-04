@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { validateWebhookSecret } from "@/lib/webhook/auth";
 import { createClient } from "@/lib/supabase/server";
+import { embedAndStore } from "@/lib/embedding/pipeline";
+import { logError } from "@/lib/logger";
 
 /**
  * GET /api/creator/directives
@@ -109,6 +111,21 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Embed directive into shared brain — highest importance since directives are standing rules
+  try {
+    await embedAndStore(
+      `[CONTENT DIRECTIVE] ${directive.trim()}${platforms ? ` (platforms: ${platforms.join(", ")})` : ""}`,
+      {
+        userId: user.id,
+        source: "manual",
+        sourceId: `directive:${data.id}`,
+        category: "general",
+        importance: 9,
+        tags: ["feedback:directive", "domain:content", "system:feedback"],
+      },
+    );
+  } catch (e) { logError("directive.embed", e); }
 
   return NextResponse.json({ directive: data }, { status: 201 });
 }

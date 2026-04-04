@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildFingerprint } from "@/lib/signal-fingerprint";
+import { embedAndStore } from "@/lib/embedding/pipeline";
+import { logError } from "@/lib/logger";
 
 /**
  * GET /api/signals/reply
@@ -98,6 +100,21 @@ export async function POST(request: NextRequest) {
     console.error("[signal_replies.insert]", JSON.stringify(error));
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // Embed into shared brain so signal feedback compounds across all systems
+  try {
+    await embedAndStore(
+      `[SIGNAL REPLY] Signal: ${signal_text.slice(0, 200)}\nReply: ${reply.slice(0, 300)}`,
+      {
+        userId: user.id,
+        source: "manual",
+        sourceId: `signal-reply:${data.id}`,
+        category: "general",
+        importance: scope === "broad" ? 8 : 6,
+        tags: ["feedback:correction", "domain:briefing", "system:feedback"],
+      },
+    );
+  } catch (e) { logError("signal-reply.embed", e); }
 
   return NextResponse.json({ reply: data }, { status: 201 });
 }
