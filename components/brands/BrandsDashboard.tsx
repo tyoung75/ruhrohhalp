@@ -82,21 +82,31 @@ export function BrandsDashboard() {
 
   async function fetchDeals() {
     try {
-      const [dealsRes, summaryRes] = await Promise.all([
+      const [dealsResult, summaryResult] = await Promise.allSettled([
         api<{ deals: BrandDeal[] }>("/api/brands"),
         api<PipelineSummary>("/api/brands/summary"),
       ]);
-      setDeals(dealsRes.deals);
-      setSummary(summaryRes);
-      setSetupState("ready");
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "";
-      if (msg.includes("brand_deals") || msg.includes("schema cache")) {
-        setSetupState("needs_setup");
+
+      if (dealsResult.status === "fulfilled") {
+        setDeals(dealsResult.value.deals);
+        setSetupState("ready");
       } else {
+        const msg = dealsResult.reason instanceof Error ? dealsResult.reason.message : "";
+        if (msg.includes("brand_deals") || msg.includes("schema cache")) {
+          setSetupState("needs_setup");
+          return;
+        }
         setSetupState("ready");
         showToast(msg || "Failed to load deals", "error");
       }
+
+      if (summaryResult.status === "fulfilled") {
+        setSummary(summaryResult.value);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "";
+      setSetupState("ready");
+      showToast(msg || "Failed to load deals", "error");
     }
   }
 
