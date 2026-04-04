@@ -23,8 +23,8 @@ export async function POST(request: NextRequest) {
   const { user, response } = await requireUser();
   if (response || !user) return response;
 
-  const body = await request.json().catch(() => ({}));
-  const focus = (body.focus as string) ?? "";
+  const body = await request.json().catch(() => null);
+  const focus = (body?.focus as string) ?? "";
 
   try {
     const supabase = await createClient();
@@ -106,8 +106,9 @@ Recommend brands that are:
 
     // Persist scouted brands as 'scouted' status so they don't vanish
     const now = new Date().toISOString();
+    let persisted = 0;
     for (const rec of filtered) {
-      await supabase.from("brand_deals").insert({
+      const { error: insertErr } = await supabase.from("brand_deals").insert({
         user_id: user.id,
         brand_name: rec.brand_name,
         contact_email: rec.contact_email,
@@ -122,12 +123,17 @@ Recommend brands that are:
         created_at: now,
         updated_at: now,
       });
+      if (insertErr) {
+        logError("brands.scout.insert", new Error(insertErr.message), { brand: rec.brand_name });
+      } else {
+        persisted++;
+      }
     }
 
     return NextResponse.json({
       ok: true,
       recommendations: filtered,
-      persisted: filtered.length,
+      persisted,
       focus: focus || null,
       existing_count: existingBrands.length,
     });
