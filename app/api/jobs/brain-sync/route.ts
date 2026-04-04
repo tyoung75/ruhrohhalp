@@ -124,6 +124,9 @@ export async function POST(request: NextRequest) {
         fetchTaskSignals(userId),
       ]);
 
+      // Sync [RRH] calendar reminders back to tasks
+      await syncCalendarRemindersToTasks(supabase, calendarSignals, userId);
+
       const signals: BrainSyncSignals = {
         gmail: gmailSignals,
         calendar: calendarSignals,
@@ -332,6 +335,45 @@ async function fetchCalendarSignals(auth: ReturnType<typeof getGoogleClient>): P
       attendees: summarizeAttendees(event.attendees),
       description: truncate(cleanText(event.description ?? ""), 800),
     }));
+}
+
+/**
+ * Sync [RRH] calendar reminders back to tasks.
+ * If a past-due [RRH] event is found whose linked task is still open,
+ * create a goal signal to surface it in the briefing as an actionable reminder.
+ */
+async function syncCalendarRemindersToTasks(
+  supabase: ReturnType<typeof createAdminClient>,
+  calendarSignals: CalendarSignal[],
+  userId: string,
+) {
+  const today = new Date().toISOString().slice(0, 10);
+  const rrhEvents = calendarSignals.filter((e) => e.title.startsWith("[RRH") && !e.title.includes("\u2713"));
+
+  for (const event of rrhEvents) {
+    const eventDate = (event.start ?? "").slice(0, 10);
+    if (!eventDate || eventDate > today) continue; // not due yet
+
+    // Find linked open task
+    const cleanTitle = event.title.replace(/^\[RRH\]\s*/, "");
+    const { data: task } = await supabase
+      .from("tasks")
+      .select("id, state")
+      .eq("user_id", userId)
+      .ilike("title", `%${cleanTitle.slice(0, 40)}%`)
+      .not("state", "in", '("done","cancelled")')
+      .maybeSingle();
+
+    if (task) {
+      // Log as activity so briefing picks it up
+      await supabase.from("activity_log").insert({
+        user_id: userId,
+        type: "reminder_due",
+        entity_id: task.id,
+        payload: { title: cleanTitle, event_date: eventDate, calendar_event: event.id },
+      }).catch(() => {});
+    }
+  }
 }
 
 async function fetchTaskSignals(userId: string): Promise<TaskSignal[]> {

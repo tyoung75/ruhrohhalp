@@ -44,15 +44,15 @@ async function updateTask(userId: string, args: { task_id: string; state?: strin
   if (args.due_date) updates.due_date = args.due_date;
   if (args.title) updates.title = args.title;
 
-  // If completing/cancelling, check for linked calendar event and delete it
+  // If completing/cancelling, update linked calendar event title to show done
   if (args.state === "done" || args.state === "cancelled") {
     try {
-      const { data: task } = await supabase().from("tasks").select("ai_metadata").eq("id", args.task_id).eq("user_id", userId).single();
+      const { data: task } = await supabase().from("tasks").select("ai_metadata, title").eq("id", args.task_id).eq("user_id", userId).single();
       const calEventId = (task?.ai_metadata as Record<string, unknown> | null)?.calendar_event_id as string | undefined;
       if (calEventId) {
         const calendar = getCalendarClient();
         if (calendar) {
-          await calendar.events.delete({ calendarId: "primary", eventId: calEventId }).catch(() => {});
+          await calendar.events.patch({ calendarId: "primary", eventId: calEventId, requestBody: { summary: `[RRH \u2713] ${task?.title ?? "Done"}` } }).catch(() => {});
         }
       }
     } catch { /* best effort */ }
