@@ -229,7 +229,7 @@ async function findOrCreateTaskList(tasksApi: ReturnType<typeof google.tasks>, l
 async function setReminder(userId: string, args: { title: string; date: string; note?: string; list?: string }): Promise<ActionResult> {
   const results: string[] = [];
   let googleTaskId: string | null = null;
-  let taskListName = args.list ?? "General To-Do";
+  const taskListName = args.list ?? "General To-Do";
 
   // 1. Create Google Task (shows in Calendar with checkbox)
   // Requires https://www.googleapis.com/auth/tasks scope on the OAuth token.
