@@ -13,7 +13,7 @@ import { logError } from "@/lib/logger";
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 // ---------------------------------------------------------------------------
-// Publish queued posts (smart-ranked, 3/day limit for automated runs)
+// Publish queued posts (smart-ranked, 2/run limit for automated runs)
 // ---------------------------------------------------------------------------
 
 /** Default posts per job for automated publishing. Manual "Publish Now" can override. */
