@@ -111,7 +111,9 @@ export function ChiefOfStaff() {
       window.dispatchEvent(new CustomEvent("tasks:refresh"));
       window.dispatchEvent(new CustomEvent("brands:refresh"));
     } catch (err) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `Something went wrong: ${err instanceof Error ? err.message : "Unknown error"}`, ts: new Date().toISOString() }]);
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      const hint = errMsg.includes("fetch") || errMsg.includes("Request") ? " (likely timeout — try a shorter message or break it into parts)" : "";
+      setMessages((prev) => [...prev, { role: "assistant", content: `Something went wrong: ${errMsg}${hint}`, ts: new Date().toISOString() }]);
     } finally {
       setLoading(false);
     }
