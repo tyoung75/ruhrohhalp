@@ -12,6 +12,7 @@ interface Suggestion {
 }
 
 export function MediaPipeline() {
+  const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
@@ -64,7 +65,19 @@ export function MediaPipeline() {
 
   return (
     <div style={{ padding: 16 }}>
-      <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Media Pipeline — Upload + AI Analysis</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ fontFamily: C.mono, fontSize: 9, color: C.textFaint, textTransform: "uppercase", letterSpacing: 0.5 }}>Media Pipeline — Upload + AI Analysis</div>
+        <button
+          onClick={async () => {
+            setSyncing(true);
+            try { await api("/api/creator/media-sync", { method: "POST" }); } finally { setSyncing(false); }
+          }}
+          disabled={syncing}
+          style={{ background: C.card, color: syncing ? C.textDim : C.gem, border: `1px solid ${syncing ? C.border : C.gem}`, borderRadius: 6, padding: "4px 12px", fontFamily: C.mono, fontSize: 10, cursor: syncing ? "default" : "pointer" }}
+        >
+          {syncing ? "Syncing..." : "Sync Google Drive"}
+        </button>
+      </div>
 
       {/* Upload area */}
       <input ref={fileRef} type="file" accept="image/*" onChange={(e) => void handleFile(e)} style={{ display: "none" }} />

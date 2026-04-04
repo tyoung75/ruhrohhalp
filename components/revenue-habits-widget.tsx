@@ -29,6 +29,7 @@ interface HabitData {
 export function RevenueHabitsWidget() {
   const [revenue, setRevenue] = useState<RevenueData | null>(null);
   const [habits, setHabits] = useState<HabitData[]>([]);
+  const [logging, setLogging] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     api<RevenueData>("/api/revenue").then(setRevenue).catch(() => {});
@@ -72,7 +73,22 @@ export function RevenueHabitsWidget() {
           <div style={{ display: "grid", gap: 4 }}>
             {habits.map((h) => (
               <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 18, textAlign: "center", fontSize: 12 }}>{h.icon || "+"}</span>
+                <button
+                  onClick={async () => {
+                    if (h.completed_today || logging.has(h.id)) return;
+                    setLogging((prev) => new Set(prev).add(h.id));
+                    try {
+                      await api("/api/habits", { method: "POST", body: JSON.stringify({ action: "log", habit_id: h.id }) });
+                      setHabits((prev) => prev.map((hb) => hb.id === h.id ? { ...hb, completed_today: true, streak: hb.streak + 1, last_7_days: [today, ...hb.last_7_days] } : hb));
+                    } finally {
+                      setLogging((prev) => { const n = new Set(prev); n.delete(h.id); return n; });
+                    }
+                  }}
+                  disabled={h.completed_today || logging.has(h.id)}
+                  style={{ width: 20, height: 20, borderRadius: 4, border: `1px solid ${h.completed_today ? C.gpt : C.border}`, background: h.completed_today ? `${C.gpt}20` : "transparent", cursor: h.completed_today ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: h.completed_today ? C.gpt : C.textFaint, flexShrink: 0, padding: 0 }}
+                >
+                  {h.completed_today ? "\u2713" : h.icon || "+"}
+                </button>
                 <span style={{ fontSize: 11, color: C.text, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
                 {/* 7-day dots */}
                 <div style={{ display: "flex", gap: 2 }}>
