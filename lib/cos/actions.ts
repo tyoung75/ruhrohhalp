@@ -7,6 +7,8 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logError } from "@/lib/logger";
+import { google } from "googleapis";
+import { getGoogleOauthCredentials } from "@/lib/google/oauth";
 
 type ActionResult = { ok: true; message: string; data?: unknown } | { ok: false; error: string };
 
@@ -198,6 +200,88 @@ async function listHabits(userId: string): Promise<ActionResult> {
   return { ok: true, message: `${data?.length ?? 0} active habits`, data };
 }
 
+// ── Reminder Actions ──
+
+function getGoogleAuth() {
+  const oauth = getGoogleOauthCredentials();
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  if (!oauth || !refreshToken) return null;
+  const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
+  client.setCredentials({ refresh_token: refreshToken });
+  return client;
+}
+
+/**
+ * Find or create a Google Tasks list by name.
+ * Returns the task list ID.
+ */
+async function findOrCreateTaskList(tasksApi: ReturnType<typeof google.tasks>, listName: string): Promise<string> {
+  // Check existing lists
+  const { data: lists } = await tasksApi.tasklists.list({ maxResults: 100 });
+  const existing = (lists.items ?? []).find((l) => l.title?.toLowerCase() === listName.toLowerCase());
+  if (existing?.id) return existing.id;
+
+  // Create new list
+  const { data: created } = await tasksApi.tasklists.insert({ requestBody: { title: listName } });
+  return created.id!;
+}
+
+async function setReminder(userId: string, args: { title: string; date: string; note?: string; list?: string }): Promise<ActionResult> {
+  const results: string[] = [];
+  let googleTaskId: string | null = null;
+  const taskListName = args.list ?? "General To-Do";
+
+  // 1. Create Google Task (shows in Calendar with checkbox)
+  // Requires https://www.googleapis.com/auth/tasks scope on the OAuth token.
+  // Re-authorize at /api/auth/gmail if tasks aren't appearing.
+  try {
+    const auth = getGoogleAuth();
+    if (auth) {
+      const tasksApi = google.tasks({ version: "v1", auth });
+
+      // Find or create the appropriate list
+      const listId = await findOrCreateTaskList(tasksApi, taskListName);
+
+      const { data: gTask } = await tasksApi.tasks.insert({
+        tasklist: listId,
+        requestBody: {
+          title: args.title,
+          notes: args.note ?? `Set by Chief of Staff`,
+          due: `${args.date}T00:00:00.000Z`,
+        },
+      });
+      googleTaskId = gTask.id ?? null;
+      results.push(`Google Task created in "${taskListName}" list for ${args.date}`);
+    }
+  } catch (e) {
+    logError("cos.set_reminder.tasks", e);
+    results.push("Google Task creation failed");
+  }
+
+  // 2. Create ruhrohhalp task linked to the Google Task
+  const { data: task, error } = await supabase()
+    .from("tasks")
+    .insert({
+      user_id: userId,
+      title: args.title,
+      description: args.note ?? `Reminder: ${args.title}`,
+      priority: "high",
+      due_date: args.date,
+      status: "open",
+      state: "unstarted",
+      type: "reminder",
+      source_text: `Chief of Staff reminder: ${args.title}`,
+      ai_metadata: googleTaskId ? { google_task_id: googleTaskId, google_task_list: taskListName } : null,
+    })
+    .select("id, identifier, title")
+    .single();
+
+  if (error) return { ok: false, error: error.message };
+  results.push(`Task ${task.identifier ?? task.id}: ${task.title} (due ${args.date})`);
+
+  return { ok: true, message: results.join(". "), data: { task_id: task.id, google_task_id: googleTaskId } };
+}
+
 // ── People Actions ──
 
 async function addPerson(userId: string, args: { name: string; email?: string; company?: string; relationship?: string; notes?: string }): Promise<ActionResult> {
@@ -314,6 +398,16 @@ export const COS_ACTIONS: Record<string, {
     description: "List all active habits with their details",
     parameters: {},
     execute: (uid) => listHabits(uid),
+  },
+  set_reminder: {
+    description: "Set a reminder — creates a ruhrohhalp task AND a Google Task (shows in Calendar with a checkbox to mark complete). Assign to the most appropriate task list category.",
+    parameters: {
+      title: { type: "string", description: "What to be reminded about", required: true },
+      date: { type: "string", description: "Date in YYYY-MM-DD format", required: true },
+      note: { type: "string", description: "Optional extra context" },
+      list: { type: "string", description: "Google Tasks list name (e.g. 'General To-Do', 'Work', 'Travel', 'Subscriptions', 'Health'). Pick the best fit or create a new one if none fits." },
+    },
+    execute: (uid, args) => setReminder(uid, args as Parameters<typeof setReminder>[1]),
   },
   add_person: {
     description: "Add a person/contact to the relationship manager",
