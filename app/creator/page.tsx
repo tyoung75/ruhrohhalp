@@ -6,12 +6,14 @@ import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
 import { useMobile } from "@/lib/useMobile";
 import { BrandsDashboard } from "@/components/brands/BrandsDashboard";
+import { ContentCalendar } from "@/components/creator/ContentCalendar";
+import { MediaPipeline } from "@/components/creator/MediaPipeline";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type Tab = "queue" | "analytics" | "history" | "strategy" | "brands";
+type Tab = "queue" | "analytics" | "history" | "strategy" | "brands" | "calendar" | "media";
 
 interface QueueItem {
   id: string;
@@ -123,6 +125,8 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "history", label: "History", icon: "◷" },
   { id: "strategy", label: "Strategy", icon: "◉" },
   { id: "brands", label: "Brands", icon: "◎" },
+  { id: "calendar", label: "Calendar", icon: "▦" },
+  { id: "media", label: "Media", icon: "◧" },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -256,6 +260,8 @@ export default function CreatorPage() {
         {tab === "history" && <HistoryTab />}
         {tab === "strategy" && <StrategyTab />}
         {tab === "brands" && <BrandsDashboard />}
+        {tab === "calendar" && <ContentCalendar />}
+        {tab === "media" && <MediaPipeline />}
       </div>
     </div>
   );
