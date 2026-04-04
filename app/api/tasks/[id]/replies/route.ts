@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { embedAndStore } from "@/lib/embedding/pipeline";
+import { logError } from "@/lib/logger";
 
 /**
  * GET /api/tasks/[id]/replies
@@ -86,6 +88,22 @@ export async function POST(
     console.error("[task_replies.insert]", JSON.stringify(error));
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // Embed into shared brain so task feedback compounds across all systems
+  try {
+    const { data: taskDetail } = await supabase.from("tasks").select("title").eq("id", taskId).single();
+    await embedAndStore(
+      `[TASK FEEDBACK] Task: ${taskDetail?.title ?? taskId}\nFeedback: ${reply.trim()}`,
+      {
+        userId: user.id,
+        source: "manual",
+        sourceId: `task-reply:${data.id}`,
+        category: "general",
+        importance: 7,
+        tags: ["feedback:correction", "domain:task", "system:feedback"],
+      },
+    );
+  } catch (e) { logError("task-reply.embed", e); }
 
   return NextResponse.json({ reply: data }, { status: 201 });
 }

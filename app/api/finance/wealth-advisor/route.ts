@@ -3,6 +3,8 @@ import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { getTierForUser } from "@/lib/profile";
 import { getUserProviderKey } from "@/lib/ai/credentials";
+import { embedAndStore } from "@/lib/embedding/pipeline";
+import { logError } from "@/lib/logger";
 import { callProvider } from "@/lib/ai/providers";
 import { buildWealthAdvisorSummary, calculateCashFlow, calculateNetWorth } from "@/lib/finance";
 import type { WealthAdvisorSummary } from "@/lib/types/finance";
@@ -192,5 +194,21 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // Embed into shared brain so financial feedback informs all systems
+  try {
+    await embedAndStore(
+      `[FINANCIAL ADVISOR FEEDBACK]${decision ? ` Decision: ${decision}\n` : "\n"}${feedback}`,
+      {
+        userId: user.id,
+        source: "manual",
+        sourceId: `finance-feedback:${new Date().toISOString()}`,
+        category: "financial",
+        importance: 8,
+        tags: ["feedback:directive", "domain:finance", "system:feedback"],
+      },
+    );
+  } catch (e) { logError("finance.feedback.embed", e); }
+
   return NextResponse.json({ ok: true });
 }
