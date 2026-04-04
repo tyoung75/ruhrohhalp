@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
+import { runBgTask } from "@/lib/bg-tasks";
 import { Spinner } from "@/components/primitives";
 import { useMobile } from "@/lib/useMobile";
 import { BrandsDashboard } from "@/components/brands/BrandsDashboard";
@@ -1019,43 +1020,46 @@ function QueueTab() {
     );
   }
 
-  async function handleGenerate() {
+  function handleGenerate() {
     setSaving(true);
-    try {
-      await api("/api/creator/generate", { method: "POST" });
-      fetchQueue();
-    } catch (e) {
-      console.error("Generation failed:", e);
-    } finally {
-      setSaving(false);
-    }
+    runBgTask(
+      "Generating content",
+      async () => {
+        await api("/api/creator/generate", { method: "POST" });
+        fetchQueue();
+        return "Content generated";
+      },
+      { onSuccess: () => setSaving(false), onError: () => setSaving(false) },
+    );
   }
 
-  async function handlePublishNow() {
+  function handlePublishNow() {
     setSaving(true);
-    try {
-      await api("/api/creator/publish-now", { method: "POST" });
-      fetchQueue();
-    } catch (e) {
-      console.error("Publish failed:", e);
-    } finally {
-      setSaving(false);
-    }
+    runBgTask(
+      "Publishing posts",
+      async () => {
+        await api("/api/creator/publish-now", { method: "POST" });
+        fetchQueue();
+        return "Posts published";
+      },
+      { onSuccess: () => setSaving(false), onError: () => setSaving(false) },
+    );
   }
 
-  async function handlePublishSingle(postId: string) {
+  function handlePublishSingle(postId: string) {
     setPublishingId(postId);
-    try {
-      await api("/api/creator/publish-single", {
-        method: "POST",
-        body: JSON.stringify({ postId }),
-      });
-      fetchQueue();
-    } catch (e) {
-      console.error("Single publish failed:", e);
-    } finally {
-      setPublishingId(null);
-    }
+    runBgTask(
+      "Publishing post",
+      async () => {
+        await api("/api/creator/publish-single", {
+          method: "POST",
+          body: JSON.stringify({ postId }),
+        });
+        fetchQueue();
+        return "Post published";
+      },
+      { onSuccess: () => setPublishingId(null), onError: () => setPublishingId(null) },
+    );
   }
 
   const [syncing, setSyncing] = useState(false);
@@ -1064,26 +1068,25 @@ function QueueTab() {
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [generatedVariants, setGeneratedVariants] = useState<GeneratedVariant[]>([]);
 
-  async function handleSync() {
+  function handleSync() {
     setSyncing(true);
     setSyncResult(null);
-    try {
-      const result = await api<{ imported: number; errors: number }>("/api/creator/sync", {
-        method: "POST",
-      });
-      setSyncResult(
-        result.imported > 0
+    runBgTask(
+      "Syncing posts",
+      async () => {
+        const result = await api<{ imported: number; errors: number }>("/api/creator/sync", {
+          method: "POST",
+        });
+        const msg = result.imported > 0
           ? `Synced ${result.imported} external post${result.imported !== 1 ? "s" : ""}`
-          : "All posts already synced"
-      );
-      if (result.imported > 0) fetchQueue();
-    } catch (e) {
-      console.error("Sync failed:", e);
-      setSyncResult("Sync failed");
-    } finally {
-      setSyncing(false);
-      setTimeout(() => setSyncResult(null), 4000);
-    }
+          : "All posts already synced";
+        setSyncResult(msg);
+        if (result.imported > 0) fetchQueue();
+        setTimeout(() => setSyncResult(null), 4000);
+        return msg;
+      },
+      { onSuccess: () => setSyncing(false), onError: () => { setSyncing(false); setSyncResult("Sync failed"); setTimeout(() => setSyncResult(null), 4000); } },
+    );
   }
 
   async function handleUpdatePostsPerJob(newValue: number) {
@@ -2150,32 +2153,35 @@ function AnalyticsTab() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  async function handlePullAnalytics() {
+  function handlePullAnalytics() {
     setRefreshing(true);
     setRefreshResult(null);
-    try {
-      const res = await api<{ processed: number; errors: number; totalPosts?: number }>("/api/creator/analytics", { method: "POST" });
-      setRefreshResult(`Refreshed ${res.processed} post${res.processed !== 1 ? "s" : ""}${res.errors > 0 ? ` (${res.errors} errors)` : ""}`);
-      fetchData(); // Re-fetch after refresh
-    } catch (e) {
-      setRefreshResult(e instanceof Error ? e.message : "Refresh failed");
-    } finally {
-      setRefreshing(false);
-    }
+    runBgTask(
+      "Pulling analytics",
+      async () => {
+        const res = await api<{ processed: number; errors: number; totalPosts?: number }>("/api/creator/analytics", { method: "POST" });
+        const msg = `Refreshed ${res.processed} post${res.processed !== 1 ? "s" : ""}${res.errors > 0 ? ` (${res.errors} errors)` : ""}`;
+        setRefreshResult(msg);
+        fetchData();
+        return msg;
+      },
+      { onSuccess: () => setRefreshing(false), onError: (e) => { setRefreshing(false); setRefreshResult(e); } },
+    );
   }
 
-  async function handleScrapeFollowers() {
+  function handleScrapeFollowers() {
     setScrapingFollowers(true);
     setScrapeResult(null);
-    try {
-      await api<Record<string, unknown>>("/api/creator/followers", { method: "POST" });
-      setScrapeResult("Follower snapshot complete");
-      fetchData();
-    } catch (e) {
-      setScrapeResult(e instanceof Error ? e.message : "Scrape failed");
-    } finally {
-      setScrapingFollowers(false);
-    }
+    runBgTask(
+      "Scraping followers",
+      async () => {
+        await api<Record<string, unknown>>("/api/creator/followers", { method: "POST" });
+        setScrapeResult("Follower snapshot complete");
+        fetchData();
+        return "Follower snapshot complete";
+      },
+      { onSuccess: () => setScrapingFollowers(false), onError: (e) => { setScrapingFollowers(false); setScrapeResult(e); } },
+    );
   }
 
   if (loading) {

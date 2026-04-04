@@ -13,6 +13,7 @@ import { NavSidebar } from "@/components/NavSidebar";
 import { PricingModal } from "@/components/pricing-modal";
 import { SettingsPanel } from "@/components/settings-panel";
 import { ChiefOfStaff } from "@/components/chief-of-staff";
+import { BgTaskToasts } from "@/components/BgTaskToasts";
 import { useMobile } from "@/lib/useMobile";
 
 /** Routes that should be publicly accessible without auth */
@@ -381,6 +382,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       {!localMode && <ChiefOfStaff />}
+      <BgTaskToasts />
     </div>
   );
 }
