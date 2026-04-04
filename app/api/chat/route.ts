@@ -147,17 +147,19 @@ export async function POST(request: NextRequest) {
       }
     } catch { /* page-specific context is best-effort */ }
 
-    // RAG brain search
-    try {
-      const brain = await queryBrain(message, { userId: user.id, topK: 6, threshold: 0.55, maxTokens: 1024 });
-      if (brain.answer) contextParts.push("## Relevant Memories\n" + brain.answer);
-    } catch { /* best-effort */ }
+    // RAG brain search — skip for long messages to stay within timeout
+    if (message.length < 200) {
+      try {
+        const brain = await queryBrain(message, { userId: user.id, topK: 4, threshold: 0.6, maxTokens: 512 });
+        if (brain.answer) contextParts.push("## Relevant Memories\n" + brain.answer);
+      } catch { /* best-effort */ }
+    }
 
     contextParts.push(`\nCurrent page: ${pageContext}`);
     contextParts.push(`Current date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })}`);
 
     // 3. Build Claude messages
-    const recentMessages = session.messages.slice(-10);
+    const recentMessages = session.messages.slice(-6);
     const claudeMessages: Array<{ role: "user" | "assistant"; content: string }> = [
       ...recentMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
       { role: "user" as const, content: message },
@@ -166,24 +168,28 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
 
-    // 4. Tool-use loop (max 3 iterations)
+    // Detect if this is an action request or a thinking/strategy question
+    const actionWords = /\b(create|delete|remove|mark|done|complete|archive|add|update|set|remind|schedule|scout|approve|reject|edit|generate|log|cancel)\b/i;
+    const needsTools = actionWords.test(message) && message.length < 300;
+    const tools = needsTools ? getClaudeTools() : [];
+
+    // 4. Call Claude (tool loop only if action detected)
     let finalReply = "";
     const actionsTaken: string[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let currentMessages: any[] = [...claudeMessages];
-    const tools = getClaudeTools();
     const systemPrompt = `${COS_SYSTEM_PROMPT}\n\n--- CURRENT CONTEXT ---\n${contextParts.join("\n\n")}`;
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < (needsTools ? 2 : 1); i++) {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
           model: AI_MODELS.PRIMARY,
-          max_tokens: 2048,
+          max_tokens: 4096,
           system: systemPrompt,
           messages: currentMessages,
-          tools,
+          ...(tools.length > 0 ? { tools } : {}),
         }),
       });
 
@@ -220,7 +226,7 @@ export async function POST(request: NextRequest) {
       if (textBlocks.length > 0) finalReply = textBlocks.join("\n");
 
       // If this was the last iteration, we'll use whatever text we have
-      if (i === 3) finalReply = textBlocks.join("\n") || "Actions completed.";
+      if (i === 1) finalReply = textBlocks.join("\n") || "Actions completed.";
     }
 
     // 5. Update session
