@@ -1847,7 +1847,10 @@ function QueueTab() {
                                 setSchedulingId(item.id);
                                 // Pre-fill with existing schedule or default to next optimal hour
                                 if (item.scheduled_for) {
-                                  setScheduleDate(new Date(item.scheduled_for).toISOString().slice(0, 16));
+                                  // Convert UTC scheduled_for to local datetime-local string
+                                  const d = new Date(item.scheduled_for);
+                                  const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+                                  setScheduleDate(local);
                                 } else {
                                   // Find the next upcoming optimal hour (today or tomorrow)
                                   const now = new Date();
@@ -1861,7 +1864,9 @@ function QueueTab() {
                                     target.setDate(target.getDate() + 1);
                                     target.setHours(bestHours[0] ?? 8, 0, 0, 0);
                                   }
-                                  setScheduleDate(target.toISOString().slice(0, 16));
+                                  // Format as local datetime-local string (not UTC via toISOString)
+                                  const local = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}T${String(target.getHours()).padStart(2, "0")}:${String(target.getMinutes()).padStart(2, "0")}`;
+                                  setScheduleDate(local);
                                 }
                               }
                             }}
@@ -1937,7 +1942,7 @@ function QueueTab() {
                       type="datetime-local"
                       value={scheduleDate}
                       onChange={(e) => setScheduleDate(e.target.value)}
-                      min={new Date().toISOString().slice(0, 16)}
+                      min={(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}T${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`; })()}
                       style={{
                         background: C.surface,
                         border: `1px solid ${C.borderMid}`,
