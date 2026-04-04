@@ -27,15 +27,17 @@ export async function runJob(
       .from("job_runs")
       .select("id, status, result")
       .eq("idempotency_key", opts.idempotencyKey)
-      .in("status", ["completed", "running"])
       .maybeSingle();
 
     if (existing) {
       if (existing.status === "completed") {
         return (existing.result as JobResult) ?? { ok: true, cached: true };
       }
-      // Already running — don't double-execute
-      return { ok: true, skipped: true, reason: "already_running" };
+      if (existing.status === "running") {
+        return { ok: true, skipped: true, reason: "already_running" };
+      }
+      // Dead-letter or failed — delete the old row so we can retry cleanly
+      await supabase.from("job_runs").delete().eq("id", existing.id);
     }
   }
 
