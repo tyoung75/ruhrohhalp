@@ -44,6 +44,20 @@ async function updateTask(userId: string, args: { task_id: string; state?: strin
   if (args.due_date) updates.due_date = args.due_date;
   if (args.title) updates.title = args.title;
 
+  // If completing/cancelling, check for linked calendar event and delete it
+  if (args.state === "done" || args.state === "cancelled") {
+    try {
+      const { data: task } = await supabase().from("tasks").select("ai_metadata").eq("id", args.task_id).eq("user_id", userId).single();
+      const calEventId = (task?.ai_metadata as Record<string, unknown> | null)?.calendar_event_id as string | undefined;
+      if (calEventId) {
+        const calendar = getCalendarClient();
+        if (calendar) {
+          await calendar.events.delete({ calendarId: "primary", eventId: calEventId }).catch(() => {});
+        }
+      }
+    } catch { /* best effort */ }
+  }
+
   const { error } = await supabase().from("tasks").update(updates).eq("id", args.task_id).eq("user_id", userId);
   if (error) return { ok: false, error: error.message };
   return { ok: true, message: `Updated task ${args.task_id}: ${Object.keys(updates).filter(k => k !== "updated_at").join(", ")}` };
@@ -202,49 +216,70 @@ async function listHabits(userId: string): Promise<ActionResult> {
 
 // ── Reminder Actions ──
 
+function getCalendarClient() {
+  const oauth = getGoogleOauthCredentials();
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  if (!oauth || !refreshToken) return null;
+  const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
+  client.setCredentials({ refresh_token: refreshToken });
+  return google.calendar({ version: "v3", auth: client });
+}
+
 async function setReminder(userId: string, args: { title: string; date: string; note?: string }): Promise<ActionResult> {
   const results: string[] = [];
+  let calendarEventId: string | null = null;
 
-  // 1. Create ruhrohhalp task with due date
-  const taskResult = await createTask(userId, { title: args.title, description: args.note ?? `Reminder: ${args.title}`, priority: "high", due_date: args.date });
-  if (taskResult.ok) results.push(taskResult.message);
-
-  // 2. Create Google Calendar event with email + popup reminders
+  // 1. Create Google Calendar event with reminders
   try {
-    const oauth = getGoogleOauthCredentials();
-    const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
-    if (oauth && refreshToken) {
-      const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
-      client.setCredentials({ refresh_token: refreshToken });
-      const calendar = google.calendar({ version: "v3", auth: client });
-
-      await calendar.events.insert({
+    const calendar = getCalendarClient();
+    if (calendar) {
+      const event = await calendar.events.insert({
         calendarId: "primary",
         requestBody: {
-          summary: args.title,
-          description: args.note ?? `Reminder set by Chief of Staff: ${args.title}`,
+          summary: `[RRH] ${args.title}`,
+          description: `${args.note ?? args.title}\n\nSet by Chief of Staff. Linked to ruhrohhalp task.`,
           start: { date: args.date, timeZone: "America/New_York" },
           end: { date: args.date, timeZone: "America/New_York" },
           reminders: {
             useDefault: false,
             overrides: [
-              { method: "email", minutes: 1440 },  // 1 day before
-              { method: "popup", minutes: 60 },     // 1 hour before (morning of)
-              { method: "popup", minutes: 0 },      // at the time
+              { method: "email", minutes: 1440 },
+              { method: "popup", minutes: 60 },
+              { method: "popup", minutes: 0 },
             ],
           },
         },
       });
-      results.push(`Google Calendar event created for ${args.date} with email + popup reminders`);
-    } else {
-      results.push("Google Calendar not configured — task created as backup");
+      calendarEventId = event.data.id ?? null;
+      results.push(`Calendar event created for ${args.date} with email + popup reminders`);
     }
   } catch (e) {
     logError("cos.set_reminder.calendar", e);
-    results.push("Calendar event failed — task created as backup");
+    results.push("Calendar event failed");
   }
 
-  return { ok: true, message: results.join(". ") };
+  // 2. Create ruhrohhalp task linked to the calendar event
+  const { data: task, error } = await supabase()
+    .from("tasks")
+    .insert({
+      user_id: userId,
+      title: args.title,
+      description: `${args.note ?? `Reminder: ${args.title}`}${calendarEventId ? `\n\n[calendar:${calendarEventId}]` : ""}`,
+      priority: "high",
+      due_date: args.date,
+      status: "open",
+      state: "unstarted",
+      type: "reminder",
+      source_text: `Chief of Staff reminder: ${args.title}`,
+      ai_metadata: calendarEventId ? { calendar_event_id: calendarEventId } : null,
+    })
+    .select("id, identifier, title")
+    .single();
+
+  if (error) return { ok: false, error: error.message };
+  results.push(`Task ${task.identifier ?? task.id}: ${task.title} (due ${args.date})`);
+
+  return { ok: true, message: results.join(". "), data: { task_id: task.id, calendar_event_id: calendarEventId } };
 }
 
 // ── People Actions ──
