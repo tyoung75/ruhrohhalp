@@ -62,7 +62,7 @@ async function searchTasks(userId: string, args: { query: string }): Promise<Act
 
 async function scoutBrands(userId: string): Promise<ActionResult> {
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? "https://www.ruhrohhalp.com"}/api/brands/scout`, {
+    await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? "https://www.ruhrohhalp.com"}/api/brands/scout`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Cookie": `sb-user-id=${userId}` },
       body: JSON.stringify({}),
