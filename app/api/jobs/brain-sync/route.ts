@@ -339,8 +339,7 @@ async function fetchCalendarSignals(auth: ReturnType<typeof getGoogleClient>): P
 
 /**
  * Sync [RRH] calendar reminders back to tasks.
- * If a past-due [RRH] event is found whose linked task is still open,
- * create a goal signal to surface it in the briefing as an actionable reminder.
+ * Past-due [RRH] events with linked open tasks get surfaced in the briefing.
  */
 async function syncCalendarRemindersToTasks(
   supabase: ReturnType<typeof createAdminClient>,
@@ -348,31 +347,19 @@ async function syncCalendarRemindersToTasks(
   userId: string,
 ) {
   const today = new Date().toISOString().slice(0, 10);
-  const rrhEvents = calendarSignals.filter((e) => e.title.startsWith("[RRH") && !e.title.includes("\u2713"));
 
-  for (const event of rrhEvents) {
+  for (const event of calendarSignals) {
+    if (!event.title.startsWith("[RRH]")) continue;
     const eventDate = (event.start ?? "").slice(0, 10);
-    if (!eventDate || eventDate > today) continue; // not due yet
+    if (!eventDate || eventDate > today) continue;
 
-    // Find linked open task
-    const cleanTitle = event.title.replace(/^\[RRH\]\s*/, "");
-    const { data: task } = await supabase
-      .from("tasks")
-      .select("id, state")
-      .eq("user_id", userId)
-      .ilike("title", `%${cleanTitle.slice(0, 40)}%`)
-      .not("state", "in", '("done","cancelled")')
-      .maybeSingle();
-
-    if (task) {
-      // Log as activity so briefing picks it up
-      await supabase.from("activity_log").insert({
-        user_id: userId,
-        type: "reminder_due",
-        entity_id: task.id,
-        payload: { title: cleanTitle, event_date: eventDate, calendar_event: event.id },
-      }).catch(() => {});
-    }
+    const title = event.title.replace(/^\[RRH\]\s*/, "");
+    await supabase.from("activity_log").insert({
+      user_id: userId,
+      type: "reminder_due",
+      entity_id: null,
+      payload: { title, event_date: eventDate, calendar_event: event.id },
+    }).catch(() => {});
   }
 }
 

@@ -44,20 +44,6 @@ async function updateTask(userId: string, args: { task_id: string; state?: strin
   if (args.due_date) updates.due_date = args.due_date;
   if (args.title) updates.title = args.title;
 
-  // If completing/cancelling, update linked calendar event title to show done
-  if (args.state === "done" || args.state === "cancelled") {
-    try {
-      const { data: task } = await supabase().from("tasks").select("ai_metadata, title").eq("id", args.task_id).eq("user_id", userId).single();
-      const calEventId = (task?.ai_metadata as Record<string, unknown> | null)?.calendar_event_id as string | undefined;
-      if (calEventId) {
-        const calendar = getCalendarClient();
-        if (calendar) {
-          await calendar.events.patch({ calendarId: "primary", eventId: calEventId, requestBody: { summary: `[RRH \u2713] ${task?.title ?? "Done"}` } }).catch(() => {});
-        }
-      }
-    } catch { /* best effort */ }
-  }
-
   const { error } = await supabase().from("tasks").update(updates).eq("id", args.task_id).eq("user_id", userId);
   if (error) return { ok: false, error: error.message };
   return { ok: true, message: `Updated task ${args.task_id}: ${Object.keys(updates).filter(k => k !== "updated_at").join(", ")}` };
