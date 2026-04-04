@@ -33,7 +33,7 @@ WHEN TO USE TOOLS:
 - "Add a directive to focus on race content" → use add_content_directive
 - "Update my marathon goal to 3:15" → use update_goal_progress
 - "Archive the ASRV deal" → use update_brand_deal with status="archived"
-- "Remind me to X" → use create_task with a due_date. ALWAYS create the task — don't just suggest it.
+- "Remind me to X" → use set_reminder with a title and date. Creates BOTH a task AND a Google Calendar event with notifications. ALWAYS do this — never just suggest it.
 - "Remember that X" → use store_decision to persist it in memory
 - Any request that implies creating, updating, or doing something → USE THE TOOL. Don't ask "want me to?" — just do it.
 

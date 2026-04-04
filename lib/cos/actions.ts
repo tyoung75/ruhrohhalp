@@ -7,6 +7,8 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logError } from "@/lib/logger";
+import { google } from "googleapis";
+import { getGoogleOauthCredentials } from "@/lib/google/oauth";
 
 type ActionResult = { ok: true; message: string; data?: unknown } | { ok: false; error: string };
 
@@ -198,6 +200,53 @@ async function listHabits(userId: string): Promise<ActionResult> {
   return { ok: true, message: `${data?.length ?? 0} active habits`, data };
 }
 
+// ── Reminder Actions ──
+
+async function setReminder(userId: string, args: { title: string; date: string; note?: string }): Promise<ActionResult> {
+  const results: string[] = [];
+
+  // 1. Create ruhrohhalp task with due date
+  const taskResult = await createTask(userId, { title: args.title, description: args.note ?? `Reminder: ${args.title}`, priority: "high", due_date: args.date });
+  if (taskResult.ok) results.push(taskResult.message);
+
+  // 2. Create Google Calendar event with email + popup reminders
+  try {
+    const oauth = getGoogleOauthCredentials();
+    const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+    if (oauth && refreshToken) {
+      const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
+      client.setCredentials({ refresh_token: refreshToken });
+      const calendar = google.calendar({ version: "v3", auth: client });
+
+      await calendar.events.insert({
+        calendarId: "primary",
+        requestBody: {
+          summary: args.title,
+          description: args.note ?? `Reminder set by Chief of Staff: ${args.title}`,
+          start: { date: args.date, timeZone: "America/New_York" },
+          end: { date: args.date, timeZone: "America/New_York" },
+          reminders: {
+            useDefault: false,
+            overrides: [
+              { method: "email", minutes: 1440 },  // 1 day before
+              { method: "popup", minutes: 60 },     // 1 hour before (morning of)
+              { method: "popup", minutes: 0 },      // at the time
+            ],
+          },
+        },
+      });
+      results.push(`Google Calendar event created for ${args.date} with email + popup reminders`);
+    } else {
+      results.push("Google Calendar not configured — task created as backup");
+    }
+  } catch (e) {
+    logError("cos.set_reminder.calendar", e);
+    results.push("Calendar event failed — task created as backup");
+  }
+
+  return { ok: true, message: results.join(". ") };
+}
+
 // ── People Actions ──
 
 async function addPerson(userId: string, args: { name: string; email?: string; company?: string; relationship?: string; notes?: string }): Promise<ActionResult> {
@@ -314,6 +363,15 @@ export const COS_ACTIONS: Record<string, {
     description: "List all active habits with their details",
     parameters: {},
     execute: (uid) => listHabits(uid),
+  },
+  set_reminder: {
+    description: "Set a reminder for a specific date — creates a ruhrohhalp task AND a Google Calendar event with email/popup notifications so Tyler actually gets alerted",
+    parameters: {
+      title: { type: "string", description: "What to be reminded about", required: true },
+      date: { type: "string", description: "Date in YYYY-MM-DD format", required: true },
+      note: { type: "string", description: "Optional extra context" },
+    },
+    execute: (uid, args) => setReminder(uid, args as Parameters<typeof setReminder>[1]),
   },
   add_person: {
     description: "Add a person/contact to the relationship manager",
