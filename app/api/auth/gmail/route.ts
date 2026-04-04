@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
   const scopes = [
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/tasks",
   ].join(" ");
 
   const state = Buffer.from(

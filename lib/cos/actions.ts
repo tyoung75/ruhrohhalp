@@ -202,62 +202,76 @@ async function listHabits(userId: string): Promise<ActionResult> {
 
 // ── Reminder Actions ──
 
-function getCalendarClient() {
+function getGoogleAuth() {
   const oauth = getGoogleOauthCredentials();
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
   if (!oauth || !refreshToken) return null;
   const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
   client.setCredentials({ refresh_token: refreshToken });
-  return google.calendar({ version: "v3", auth: client });
+  return client;
 }
 
-async function setReminder(userId: string, args: { title: string; date: string; note?: string }): Promise<ActionResult> {
-  const results: string[] = [];
-  let calendarEventId: string | null = null;
+/**
+ * Find or create a Google Tasks list by name.
+ * Returns the task list ID.
+ */
+async function findOrCreateTaskList(tasksApi: ReturnType<typeof google.tasks>, listName: string): Promise<string> {
+  // Check existing lists
+  const { data: lists } = await tasksApi.tasklists.list({ maxResults: 100 });
+  const existing = (lists.items ?? []).find((l) => l.title?.toLowerCase() === listName.toLowerCase());
+  if (existing?.id) return existing.id;
 
-  // 1. Create Google Calendar event with reminders
+  // Create new list
+  const { data: created } = await tasksApi.tasklists.insert({ requestBody: { title: listName } });
+  return created.id!;
+}
+
+async function setReminder(userId: string, args: { title: string; date: string; note?: string; list?: string }): Promise<ActionResult> {
+  const results: string[] = [];
+  let googleTaskId: string | null = null;
+  let taskListName = args.list ?? "General To-Do";
+
+  // 1. Create Google Task (shows in Calendar with checkbox)
+  // Requires https://www.googleapis.com/auth/tasks scope on the OAuth token.
+  // Re-authorize at /api/auth/gmail if tasks aren't appearing.
   try {
-    const calendar = getCalendarClient();
-    if (calendar) {
-      const event = await calendar.events.insert({
-        calendarId: "primary",
+    const auth = getGoogleAuth();
+    if (auth) {
+      const tasksApi = google.tasks({ version: "v1", auth });
+
+      // Find or create the appropriate list
+      const listId = await findOrCreateTaskList(tasksApi, taskListName);
+
+      const { data: gTask } = await tasksApi.tasks.insert({
+        tasklist: listId,
         requestBody: {
-          summary: `[RRH] ${args.title}`,
-          description: `${args.note ?? args.title}\n\nSet by Chief of Staff. Linked to ruhrohhalp task.`,
-          start: { date: args.date, timeZone: "America/New_York" },
-          end: { date: args.date, timeZone: "America/New_York" },
-          reminders: {
-            useDefault: false,
-            overrides: [
-              { method: "email", minutes: 1440 },
-              { method: "popup", minutes: 60 },
-              { method: "popup", minutes: 0 },
-            ],
-          },
+          title: args.title,
+          notes: args.note ?? `Set by Chief of Staff`,
+          due: `${args.date}T00:00:00.000Z`,
         },
       });
-      calendarEventId = event.data.id ?? null;
-      results.push(`Calendar event created for ${args.date} with email + popup reminders`);
+      googleTaskId = gTask.id ?? null;
+      results.push(`Google Task created in "${taskListName}" list for ${args.date}`);
     }
   } catch (e) {
-    logError("cos.set_reminder.calendar", e);
-    results.push("Calendar event failed");
+    logError("cos.set_reminder.tasks", e);
+    results.push("Google Task creation failed");
   }
 
-  // 2. Create ruhrohhalp task linked to the calendar event
+  // 2. Create ruhrohhalp task linked to the Google Task
   const { data: task, error } = await supabase()
     .from("tasks")
     .insert({
       user_id: userId,
       title: args.title,
-      description: `${args.note ?? `Reminder: ${args.title}`}${calendarEventId ? `\n\n[calendar:${calendarEventId}]` : ""}`,
+      description: args.note ?? `Reminder: ${args.title}`,
       priority: "high",
       due_date: args.date,
       status: "open",
       state: "unstarted",
       type: "reminder",
       source_text: `Chief of Staff reminder: ${args.title}`,
-      ai_metadata: calendarEventId ? { calendar_event_id: calendarEventId } : null,
+      ai_metadata: googleTaskId ? { google_task_id: googleTaskId, google_task_list: taskListName } : null,
     })
     .select("id, identifier, title")
     .single();
@@ -265,7 +279,7 @@ async function setReminder(userId: string, args: { title: string; date: string; 
   if (error) return { ok: false, error: error.message };
   results.push(`Task ${task.identifier ?? task.id}: ${task.title} (due ${args.date})`);
 
-  return { ok: true, message: results.join(". "), data: { task_id: task.id, calendar_event_id: calendarEventId } };
+  return { ok: true, message: results.join(". "), data: { task_id: task.id, google_task_id: googleTaskId } };
 }
 
 // ── People Actions ──
@@ -386,11 +400,12 @@ export const COS_ACTIONS: Record<string, {
     execute: (uid) => listHabits(uid),
   },
   set_reminder: {
-    description: "Set a reminder for a specific date — creates a ruhrohhalp task AND a Google Calendar event with email/popup notifications so Tyler actually gets alerted",
+    description: "Set a reminder — creates a ruhrohhalp task AND a Google Task (shows in Calendar with a checkbox to mark complete). Assign to the most appropriate task list category.",
     parameters: {
       title: { type: "string", description: "What to be reminded about", required: true },
       date: { type: "string", description: "Date in YYYY-MM-DD format", required: true },
       note: { type: "string", description: "Optional extra context" },
+      list: { type: "string", description: "Google Tasks list name (e.g. 'General To-Do', 'Work', 'Travel', 'Subscriptions', 'Health'). Pick the best fit or create a new one if none fits." },
     },
     execute: (uid, args) => setReminder(uid, args as Parameters<typeof setReminder>[1]),
   },

@@ -338,28 +338,56 @@ async function fetchCalendarSignals(auth: ReturnType<typeof getGoogleClient>): P
 }
 
 /**
- * Sync [RRH] calendar reminders back to tasks.
- * Past-due [RRH] events with linked open tasks get surfaced in the briefing.
+ * Sync Google Tasks completion back to ruhrohhalp tasks.
+ * When a Google Task is marked complete in Calendar, find the linked
+ * ruhrohhalp task and mark it done too.
  */
 async function syncCalendarRemindersToTasks(
   supabase: ReturnType<typeof createAdminClient>,
-  calendarSignals: CalendarSignal[],
+  _calendarSignals: CalendarSignal[],
   userId: string,
 ) {
-  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const auth = getGoogleClient();
+    const tasksApi = google.tasks({ version: "v1", auth });
 
-  for (const event of calendarSignals) {
-    if (!event.title.startsWith("[RRH]")) continue;
-    const eventDate = (event.start ?? "").slice(0, 10);
-    if (!eventDate || eventDate > today) continue;
+    // Get all task lists
+    const { data: lists } = await tasksApi.tasklists.list({ maxResults: 100 });
 
-    const title = event.title.replace(/^\[RRH\]\s*/, "");
-    await supabase.from("activity_log").insert({
-      user_id: userId,
-      type: "reminder_due",
-      entity_id: null,
-      payload: { title, event_date: eventDate, calendar_event: event.id },
-    }).catch(() => {});
+    for (const list of lists.items ?? []) {
+      if (!list.id) continue;
+
+      // Get completed tasks from the last 7 days
+      const { data: completed } = await tasksApi.tasks.list({
+        tasklist: list.id,
+        showCompleted: true,
+        showHidden: true,
+        updatedMin: new Date(Date.now() - 7 * 86400000).toISOString(),
+      });
+
+      for (const gTask of completed.items ?? []) {
+        if (gTask.status !== "completed" || !gTask.id) continue;
+
+        // Find linked ruhrohhalp task via ai_metadata
+        const { data: rrhTask } = await supabase
+          .from("tasks")
+          .select("id, state")
+          .eq("user_id", userId)
+          .not("state", "in", '("done","cancelled")')
+          .contains("ai_metadata", { google_task_id: gTask.id })
+          .maybeSingle();
+
+        if (rrhTask) {
+          await supabase.from("tasks").update({
+            state: "done",
+            status: "done",
+            updated_at: new Date().toISOString(),
+          }).eq("id", rrhTask.id);
+        }
+      }
+    }
+  } catch {
+    // Google Tasks API may not be available — skip silently
   }
 }
 
