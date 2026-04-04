@@ -89,13 +89,23 @@ Recommend brands that are:
 
     const raw = await callClaude(systemPrompt, userPrompt, 2048);
 
-    // Parse the JSON response
+    // Parse the JSON response — extract the JSON array even if Claude adds surrounding text
     let recommendations: ScoutRecommendation[];
     try {
       const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-      recommendations = JSON.parse(cleaned);
-    } catch {
-      logError("brands.scout.parse", new Error("Failed to parse scout response"), { raw: raw.slice(0, 500) });
+      // Try direct parse first, then extract the JSON array from surrounding text
+      try {
+        recommendations = JSON.parse(cleaned);
+      } catch {
+        const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+        if (!arrayMatch) throw new Error("No JSON array found in response");
+        recommendations = JSON.parse(arrayMatch[0]);
+      }
+      if (!Array.isArray(recommendations)) {
+        throw new Error("Response is not an array");
+      }
+    } catch (parseErr) {
+      logError("brands.scout.parse", parseErr instanceof Error ? parseErr : new Error("Failed to parse scout response"), { raw: raw.slice(0, 500) });
       return NextResponse.json({ error: "Failed to parse brand recommendations", raw: raw.slice(0, 500) }, { status: 500 });
     }
 
