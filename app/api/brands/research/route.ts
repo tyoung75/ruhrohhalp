@@ -101,9 +101,15 @@ Research this brand and create a full outreach strategy. Be specific to Tyler's 
     let result;
     try {
       const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-      result = JSON.parse(cleaned);
-    } catch {
-      logError("brands.research.parse", new Error("Failed to parse"), { raw: raw.slice(0, 500) });
+      try {
+        result = JSON.parse(cleaned);
+      } catch {
+        const objMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (!objMatch) throw new Error("No JSON object found in response");
+        result = JSON.parse(objMatch[0]);
+      }
+    } catch (parseErr) {
+      logError("brands.research.parse", parseErr instanceof Error ? parseErr : new Error("Failed to parse"), { raw: raw.slice(0, 500) });
       return NextResponse.json({ error: "Failed to parse research results", raw: raw.slice(0, 500) }, { status: 500 });
     }
 

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
+import { runBgTask } from "@/lib/bg-tasks";
 import { Spinner } from "@/components/primitives";
 import { useMobile } from "@/lib/useMobile";
 import { BrandsDashboard } from "@/components/brands/BrandsDashboard";
@@ -24,6 +25,7 @@ interface QueueItem {
   status: string;
   post_id: string | null;
   post_url: string | null;
+  source: string | null;
   attempts: number;
   last_error: string | null;
   confidence_score: number | null;
@@ -77,8 +79,10 @@ interface AnalyticsResponse {
     avg_engagement_rate: number;
   };
   top_posts: Array<{
+    content_queue_id?: string;
     body: string;
     platform: string;
+    source?: string;
     impressions: number;
     likes: number;
     replies: number;
@@ -86,6 +90,16 @@ interface AnalyticsResponse {
     engagement_rate: number;
     created_at: string;
   }>;
+  all_post_analytics?: Array<{
+    content_queue_id: string;
+    platform: string;
+    impressions: number;
+    likes: number;
+    replies: number;
+    reposts: number;
+    engagement_rate: number;
+  }>;
+  source_breakdown?: Record<string, { posts: number; impressions: number; avgEngagement: number }>;
   daily_trend: Array<{
     date: string;
     impressions: number;
@@ -1012,43 +1026,46 @@ function QueueTab() {
     );
   }
 
-  async function handleGenerate() {
+  function handleGenerate() {
     setSaving(true);
-    try {
-      await api("/api/creator/generate", { method: "POST" });
-      fetchQueue();
-    } catch (e) {
-      console.error("Generation failed:", e);
-    } finally {
-      setSaving(false);
-    }
+    runBgTask(
+      "Generating content",
+      async () => {
+        await api("/api/creator/generate", { method: "POST" });
+        fetchQueue();
+        return "Content generated";
+      },
+      { onSuccess: () => setSaving(false), onError: () => setSaving(false) },
+    );
   }
 
-  async function handlePublishNow() {
+  function handlePublishNow() {
     setSaving(true);
-    try {
-      await api("/api/creator/publish-now", { method: "POST" });
-      fetchQueue();
-    } catch (e) {
-      console.error("Publish failed:", e);
-    } finally {
-      setSaving(false);
-    }
+    runBgTask(
+      "Publishing posts",
+      async () => {
+        await api("/api/creator/publish-now", { method: "POST" });
+        fetchQueue();
+        return "Posts published";
+      },
+      { onSuccess: () => setSaving(false), onError: () => setSaving(false) },
+    );
   }
 
-  async function handlePublishSingle(postId: string) {
+  function handlePublishSingle(postId: string) {
     setPublishingId(postId);
-    try {
-      await api("/api/creator/publish-single", {
-        method: "POST",
-        body: JSON.stringify({ postId }),
-      });
-      fetchQueue();
-    } catch (e) {
-      console.error("Single publish failed:", e);
-    } finally {
-      setPublishingId(null);
-    }
+    runBgTask(
+      "Publishing post",
+      async () => {
+        await api("/api/creator/publish-single", {
+          method: "POST",
+          body: JSON.stringify({ postId }),
+        });
+        fetchQueue();
+        return "Post published";
+      },
+      { onSuccess: () => setPublishingId(null), onError: () => setPublishingId(null) },
+    );
   }
 
   const [syncing, setSyncing] = useState(false);
@@ -1057,26 +1074,25 @@ function QueueTab() {
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [generatedVariants, setGeneratedVariants] = useState<GeneratedVariant[]>([]);
 
-  async function handleSync() {
+  function handleSync() {
     setSyncing(true);
     setSyncResult(null);
-    try {
-      const result = await api<{ imported: number; errors: number }>("/api/creator/sync", {
-        method: "POST",
-      });
-      setSyncResult(
-        result.imported > 0
+    runBgTask(
+      "Syncing posts",
+      async () => {
+        const result = await api<{ imported: number; errors: number }>("/api/creator/sync", {
+          method: "POST",
+        });
+        const msg = result.imported > 0
           ? `Synced ${result.imported} external post${result.imported !== 1 ? "s" : ""}`
-          : "All posts already synced"
-      );
-      if (result.imported > 0) fetchQueue();
-    } catch (e) {
-      console.error("Sync failed:", e);
-      setSyncResult("Sync failed");
-    } finally {
-      setSyncing(false);
-      setTimeout(() => setSyncResult(null), 4000);
-    }
+          : "All posts already synced";
+        setSyncResult(msg);
+        if (result.imported > 0) fetchQueue();
+        setTimeout(() => setSyncResult(null), 4000);
+        return msg;
+      },
+      { onSuccess: () => setSyncing(false), onError: () => { setSyncing(false); setSyncResult("Sync failed"); setTimeout(() => setSyncResult(null), 4000); } },
+    );
   }
 
   async function handleUpdatePostsPerJob(newValue: number) {
@@ -1840,7 +1856,10 @@ function QueueTab() {
                                 setSchedulingId(item.id);
                                 // Pre-fill with existing schedule or default to next optimal hour
                                 if (item.scheduled_for) {
-                                  setScheduleDate(new Date(item.scheduled_for).toISOString().slice(0, 16));
+                                  // Convert UTC scheduled_for to local datetime-local string
+                                  const d = new Date(item.scheduled_for);
+                                  const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+                                  setScheduleDate(local);
                                 } else {
                                   // Find the next upcoming optimal hour (today or tomorrow)
                                   const now = new Date();
@@ -1854,7 +1873,9 @@ function QueueTab() {
                                     target.setDate(target.getDate() + 1);
                                     target.setHours(bestHours[0] ?? 8, 0, 0, 0);
                                   }
-                                  setScheduleDate(target.toISOString().slice(0, 16));
+                                  // Format as local datetime-local string (not UTC via toISOString)
+                                  const local = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}T${String(target.getHours()).padStart(2, "0")}:${String(target.getMinutes()).padStart(2, "0")}`;
+                                  setScheduleDate(local);
                                 }
                               }
                             }}
@@ -1930,7 +1951,7 @@ function QueueTab() {
                       type="datetime-local"
                       value={scheduleDate}
                       onChange={(e) => setScheduleDate(e.target.value)}
-                      min={new Date().toISOString().slice(0, 16)}
+                      min={(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}T${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`; })()}
                       style={{
                         background: C.surface,
                         border: `1px solid ${C.borderMid}`,
@@ -2138,32 +2159,35 @@ function AnalyticsTab() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  async function handlePullAnalytics() {
+  function handlePullAnalytics() {
     setRefreshing(true);
     setRefreshResult(null);
-    try {
-      const res = await api<{ processed: number; errors: number; totalPosts?: number }>("/api/creator/analytics", { method: "POST" });
-      setRefreshResult(`Refreshed ${res.processed} post${res.processed !== 1 ? "s" : ""}${res.errors > 0 ? ` (${res.errors} errors)` : ""}`);
-      fetchData(); // Re-fetch after refresh
-    } catch (e) {
-      setRefreshResult(e instanceof Error ? e.message : "Refresh failed");
-    } finally {
-      setRefreshing(false);
-    }
+    runBgTask(
+      "Pulling analytics",
+      async () => {
+        const res = await api<{ processed: number; errors: number; totalPosts?: number }>("/api/creator/analytics", { method: "POST" });
+        const msg = `Refreshed ${res.processed} post${res.processed !== 1 ? "s" : ""}${res.errors > 0 ? ` (${res.errors} errors)` : ""}`;
+        setRefreshResult(msg);
+        fetchData();
+        return msg;
+      },
+      { onSuccess: () => setRefreshing(false), onError: (e) => { setRefreshing(false); setRefreshResult(e); } },
+    );
   }
 
-  async function handleScrapeFollowers() {
+  function handleScrapeFollowers() {
     setScrapingFollowers(true);
     setScrapeResult(null);
-    try {
-      await api<Record<string, unknown>>("/api/creator/followers", { method: "POST" });
-      setScrapeResult("Follower snapshot complete");
-      fetchData();
-    } catch (e) {
-      setScrapeResult(e instanceof Error ? e.message : "Scrape failed");
-    } finally {
-      setScrapingFollowers(false);
-    }
+    runBgTask(
+      "Scraping followers",
+      async () => {
+        await api<Record<string, unknown>>("/api/creator/followers", { method: "POST" });
+        setScrapeResult("Follower snapshot complete");
+        fetchData();
+        return "Follower snapshot complete";
+      },
+      { onSuccess: () => setScrapingFollowers(false), onError: (e) => { setScrapingFollowers(false); setScrapeResult(e); } },
+    );
   }
 
   if (loading) {
@@ -2439,6 +2463,40 @@ function AnalyticsTab() {
             )}
           </div>
 
+          {/* Content source breakdown */}
+          {data.source_breakdown && Object.keys(data.source_breakdown).length > 0 && (
+            <>
+              <SectionHeader>Content Sources</SectionHeader>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                {Object.entries(data.source_breakdown).map(([src, stats]) => (
+                  <div
+                    key={src}
+                    style={{
+                      background: C.card,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 8,
+                      padding: "10px 14px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontFamily: C.sans, fontSize: 13, color: C.cream }}>
+                          {src === "external" ? "External (manual posts)" : "Creator OS"}
+                        </div>
+                        <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
+                          {stats.posts} posts &middot; {stats.impressions.toLocaleString()} impressions
+                        </div>
+                      </div>
+                      <div style={{ fontFamily: C.mono, fontSize: 14, color: src === "external" ? "#f59e0b" : C.cl }}>
+                        {(stats.avgEngagement * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
           {/* Queue status */}
           <SectionHeader>Queue Status</SectionHeader>
           <div
@@ -2659,12 +2717,28 @@ function HistoryTab() {
         const filtered = queueData.items;
         setItems(filtered);
 
-        // Build analytics lookup by matching post body (since we don't have direct content_queue_id mapping in top_posts)
-        if (analyticsData?.top_posts) {
+        // Build analytics lookup from all_post_analytics (covers ALL posts, not just top 5)
+        if (analyticsData?.all_post_analytics) {
+          const aMap: typeof analyticsMap = {};
+          for (const metric of analyticsData.all_post_analytics) {
+            if (metric.content_queue_id) {
+              aMap[metric.content_queue_id] = {
+                impressions: metric.impressions,
+                likes: metric.likes,
+                replies: metric.replies,
+                reposts: metric.reposts,
+                engagement_rate: metric.engagement_rate,
+              };
+            }
+          }
+          setAnalyticsMap(aMap);
+        } else if (analyticsData?.top_posts) {
+          // Fallback: match by content_queue_id or body prefix
           const aMap: typeof analyticsMap = {};
           for (const post of analyticsData.top_posts) {
-            // Match by body prefix
-            const matchedItem = filtered.find((item) => item.body?.slice(0, 100) === post.body?.slice(0, 100));
+            const matchedItem = post.content_queue_id
+              ? filtered.find((item) => item.id === post.content_queue_id)
+              : filtered.find((item) => item.body?.slice(0, 100) === post.body?.slice(0, 100));
             if (matchedItem) {
               aMap[matchedItem.id] = {
                 impressions: post.impressions,
@@ -2838,6 +2912,19 @@ function HistoryTab() {
                   <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
                     {item.platform}
                   </span>
+                  {item.source === "external" && (
+                    <span style={{
+                      fontFamily: C.mono,
+                      fontSize: 9,
+                      color: "#f59e0b",
+                      background: "#f59e0b18",
+                      border: "1px solid #f59e0b40",
+                      padding: "1px 6px",
+                      borderRadius: 10,
+                    }}>
+                      External
+                    </span>
+                  )}
                   {item.post_url && (
                     <a
                       href={item.post_url}

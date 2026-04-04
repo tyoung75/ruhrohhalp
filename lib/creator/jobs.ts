@@ -13,7 +13,7 @@ import { logError } from "@/lib/logger";
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 // ---------------------------------------------------------------------------
-// Publish queued posts (smart-ranked, 3/day limit for automated runs)
+// Publish queued posts (smart-ranked, 2/run limit for automated runs)
 // ---------------------------------------------------------------------------
 
 /** Default posts per job for automated publishing. Manual "Publish Now" can override. */
@@ -52,7 +52,7 @@ function scorePost(
 
   // 3. Time-of-day fit: posts scheduled closer to peak hours score higher
   const scheduledHour = post.scheduled_for
-    ? new Date(post.scheduled_for as string).getHours()
+    ? new Date(post.scheduled_for as string).getUTCHours()
     : 12;
   const timeFit = peakHours.includes(scheduledHour) ? 1 : 0.5;
 
@@ -285,7 +285,7 @@ export async function publishQueuedPosts(
         const postHourMap = new Map<string, number>(
           postedPosts.map((p: Record<string, unknown>) => [
             p.id as string,
-            new Date(((p.scheduled_for as string) || (p.updated_at as string))).getHours(),
+            new Date(((p.scheduled_for as string) || (p.updated_at as string))).getUTCHours(),
           ])
         );
         const hourlyStats = new Map<number, { total: number; count: number }>();

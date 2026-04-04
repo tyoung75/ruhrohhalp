@@ -23,8 +23,8 @@ export async function POST(request: NextRequest) {
   const { user, response } = await requireUser();
   if (response || !user) return response;
 
-  const body = await request.json().catch(() => ({}));
-  const focus = (body.focus as string) ?? "";
+  const body = await request.json().catch(() => null);
+  const focus = (body?.focus as string) ?? "";
 
   try {
     const supabase = await createClient();
@@ -89,13 +89,23 @@ Recommend brands that are:
 
     const raw = await callClaude(systemPrompt, userPrompt, 2048);
 
-    // Parse the JSON response
+    // Parse the JSON response — extract the JSON array even if Claude adds surrounding text
     let recommendations: ScoutRecommendation[];
     try {
       const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-      recommendations = JSON.parse(cleaned);
-    } catch {
-      logError("brands.scout.parse", new Error("Failed to parse scout response"), { raw: raw.slice(0, 500) });
+      // Try direct parse first, then extract the JSON array from surrounding text
+      try {
+        recommendations = JSON.parse(cleaned);
+      } catch {
+        const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+        if (!arrayMatch) throw new Error("No JSON array found in response");
+        recommendations = JSON.parse(arrayMatch[0]);
+      }
+      if (!Array.isArray(recommendations)) {
+        throw new Error("Response is not an array");
+      }
+    } catch (parseErr) {
+      logError("brands.scout.parse", parseErr instanceof Error ? parseErr : new Error("Failed to parse scout response"), { raw: raw.slice(0, 500) });
       return NextResponse.json({ error: "Failed to parse brand recommendations", raw: raw.slice(0, 500) }, { status: 500 });
     }
 
@@ -106,8 +116,9 @@ Recommend brands that are:
 
     // Persist scouted brands as 'scouted' status so they don't vanish
     const now = new Date().toISOString();
+    let persisted = 0;
     for (const rec of filtered) {
-      await supabase.from("brand_deals").insert({
+      const { error: insertErr } = await supabase.from("brand_deals").insert({
         user_id: user.id,
         brand_name: rec.brand_name,
         contact_email: rec.contact_email,
@@ -122,12 +133,17 @@ Recommend brands that are:
         created_at: now,
         updated_at: now,
       });
+      if (insertErr) {
+        logError("brands.scout.insert", new Error(insertErr.message), { brand: rec.brand_name });
+      } else {
+        persisted++;
+      }
     }
 
     return NextResponse.json({
       ok: true,
       recommendations: filtered,
-      persisted: filtered.length,
+      persisted,
       focus: focus || null,
       existing_count: existingBrands.length,
     });

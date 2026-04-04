@@ -63,7 +63,7 @@ const PLATFORMS: Omit<PlatformConnection, "connected" | "username">[] = [
   },
 ];
 
-const GMAIL_TOKEN_SCOPES = ["gmail.compose", "gmail.readonly"];
+const GMAIL_TOKEN_SCOPES = ["gmail.compose", "gmail.readonly", "calendar.readonly"];
 
 export default function IntegrationsPage() {
   const [connections, setConnections] = useState<Record<string, { connected: boolean; username?: string }>>({});
@@ -347,8 +347,8 @@ export default function IntegrationsPage() {
                 lineHeight: 1.5,
               }}
             >
-              Generate a Google refresh token for Gmail drafts + Google Tasks (Chief of Staff reminders).
-              Includes scopes: gmail.compose, gmail.readonly, tasks.
+              Generate a Google refresh token for Gmail drafts, brain-sync, and Google Tasks (Chief of Staff reminders).
+              Includes scopes: gmail.compose, gmail.readonly, calendar.readonly, tasks.
               The callback shows the token once — copy it into Vercel as <code style={{ color: C.cream }}>GOOGLE_REFRESH_TOKEN</code>.
               <span style={{ display: "block", marginTop: 4, color: C.textFaint, fontSize: 10 }}>
                 Prerequisite: Enable the Tasks API in Google Cloud Console → APIs &amp; Services → Library.

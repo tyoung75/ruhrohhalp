@@ -118,13 +118,36 @@ export async function POST(request: NextRequest) {
       const userId = await resolveUserId();
       const oauth = getGoogleClient();
 
-      const [gmailSignals, calendarSignals, taskSignals] = await Promise.all([
+      // Use allSettled so one failing source doesn't kill the whole sync.
+      // Calendar scope issues (e.g. wrong OAuth client) should not prevent
+      // gmail + task signals from being synthesized.
+      const [gmailResult, calendarResult, taskResult] = await Promise.allSettled([
         fetchGmailSignals(oauth),
         fetchCalendarSignals(oauth),
         fetchTaskSignals(userId),
       ]);
 
-      // Sync [RRH] calendar reminders back to tasks
+      const warnings: string[] = [];
+
+      const gmailSignals = gmailResult.status === "fulfilled" ? gmailResult.value : [];
+      if (gmailResult.status === "rejected") {
+        logError("brain-sync.gmail", gmailResult.reason);
+        warnings.push(`gmail: ${gmailResult.reason instanceof Error ? gmailResult.reason.message : String(gmailResult.reason)}`);
+      }
+
+      const calendarSignals = calendarResult.status === "fulfilled" ? calendarResult.value : [];
+      if (calendarResult.status === "rejected") {
+        logError("brain-sync.calendar", calendarResult.reason);
+        warnings.push(`calendar: ${calendarResult.reason instanceof Error ? calendarResult.reason.message : String(calendarResult.reason)}`);
+      }
+
+      const taskSignals = taskResult.status === "fulfilled" ? taskResult.value : [];
+      if (taskResult.status === "rejected") {
+        logError("brain-sync.tasks", taskResult.reason);
+        warnings.push(`tasks: ${taskResult.reason instanceof Error ? taskResult.reason.message : String(taskResult.reason)}`);
+      }
+
+      // Sync Google Tasks completion back to ruhrohhalp tasks
       await syncCalendarRemindersToTasks(supabase, calendarSignals, userId);
 
       const signals: BrainSyncSignals = {
@@ -147,6 +170,7 @@ export async function POST(request: NextRequest) {
           observation_count: 0,
           inserted: 0,
           observations: [],
+          ...(warnings.length > 0 && { warnings }),
         };
       }
 
@@ -166,6 +190,7 @@ export async function POST(request: NextRequest) {
           observation_count: observations.length,
           inserted: 0,
           observations: previews,
+          ...(warnings.length > 0 && { warnings }),
         };
       }
 
@@ -202,6 +227,7 @@ export async function POST(request: NextRequest) {
         inserted: data?.length ?? 0,
         memory_ids: (data ?? []).map((row: { id: string }) => row.id),
         observations: previews,
+        ...(warnings.length > 0 && { warnings }),
       };
     },
     { idempotencyKey },
@@ -220,14 +246,26 @@ function parseBoolean(value: unknown): boolean {
 }
 
 function getGoogleClient() {
-  const oauth = getGoogleOauthCredentials();
+  // Brain-sync needs Gmail + Calendar scopes, which are granted to the
+  // GOOGLE_* OAuth client (via /api/auth/gmail). Prefer GOOGLE_CLIENT_ID
+  // explicitly so we don't accidentally use the YOUTUBE_* client (which
+  // may lack Calendar API access).
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!oauth || !refreshToken) {
-    throw new Error("Missing Google OAuth credentials for brain-sync");
+  if (!clientId || !clientSecret || !refreshToken) {
+    // Fall back to shared resolver if GOOGLE_* not set
+    const oauth = getGoogleOauthCredentials();
+    if (!oauth || !refreshToken) {
+      throw new Error("Missing Google OAuth credentials for brain-sync");
+    }
+    const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
+    client.setCredentials({ refresh_token: refreshToken });
+    return client;
   }
 
-  const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
+  const client = new google.auth.OAuth2(clientId, clientSecret);
   client.setCredentials({ refresh_token: refreshToken });
   return client;
 }

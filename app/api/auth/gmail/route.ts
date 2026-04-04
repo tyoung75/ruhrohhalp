@@ -1,8 +1,8 @@
 /**
  * Gmail OAuth initiation for the weekly dev-log pipeline.
  *
- * This flow is only used to mint a long-lived GOOGLE_REFRESH_TOKEN that can be
- * copied into Vercel for server-side Gmail draft automation.
+ * This flow is used to mint a long-lived GOOGLE_REFRESH_TOKEN that can be
+ * copied into Vercel for server-side Gmail draft automation and brain-sync.
  *
  * It intentionally reuses the existing Google Drive callback URI so the same
  * Google OAuth client configuration can handle this flow without another
@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
   const scopes = [
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/tasks",
   ].join(" ");
 

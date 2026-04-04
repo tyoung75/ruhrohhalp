@@ -7,14 +7,16 @@ name: Creator OS — Publish Queue
 # If earlier runs were skipped, later runs catch up within the cap.
 #
 # Times are in UTC. Currently EDT (UTC-4), so:
-#   16:00 UTC = 12:00 PM ET  (midday window)
+#   12:00 UTC =  8:00 AM ET  (morning window — commute/catch-up)
+#   16:00 UTC = 12:00 PM ET  (midday window — lunch break)
 #   22:00 UTC =  6:00 PM ET  (evening window — highest engagement)
-#   01:30 UTC =  9:30 PM ET  (late-night window)
+#   01:30 UTC =  9:30 PM ET  (late-night window — evening scroll)
 #
 # Note: During EST (Nov–Mar, UTC-5) these fire 1 hour earlier than ET.
 
 on:
   schedule:
+    - cron: "0 12 * * *"   #  8:00 AM ET (EDT) — morning
     - cron: "0 16 * * *"   # 12:00 PM ET (EDT) — midday
     - cron: "0 22 * * *"   #  6:00 PM ET (EDT) — evening
     - cron: "30 1 * * *"   #  9:30 PM ET (EDT) — late-night
