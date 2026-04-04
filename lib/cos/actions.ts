@@ -137,6 +137,77 @@ async function storeDecision(userId: string, args: { decision: string; reasoning
   return { ok: true, message: `Stored decision: "${args.decision}"` };
 }
 
+// ── Content Actions ──
+
+async function approveContent(userId: string, args: { content_id: string }): Promise<ActionResult> {
+  const { error } = await supabase().from("content_queue").update({ status: "approved", updated_at: new Date().toISOString() }).eq("id", args.content_id).eq("user_id", userId);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, message: `Approved content ${args.content_id} — ready for publishing` };
+}
+
+async function rejectContent(userId: string, args: { content_id: string; reason?: string }): Promise<ActionResult> {
+  const { error } = await supabase().from("content_queue").update({ status: "rejected", updated_at: new Date().toISOString() }).eq("id", args.content_id).eq("user_id", userId);
+  if (error) return { ok: false, error: error.message };
+  if (args.reason) {
+    const { embedAndStore } = await import("@/lib/embedding/pipeline");
+    await embedAndStore(`[CONTENT REJECTED] Reason: ${args.reason}`, { userId, source: "manual", sourceId: `content-reject:${args.content_id}`, category: "general", importance: 7, tags: ["feedback:disliked", "domain:content", "system:feedback"] });
+  }
+  return { ok: true, message: `Rejected content${args.reason ? `: ${args.reason}` : ""}` };
+}
+
+async function editContent(userId: string, args: { content_id: string; instructions: string }): Promise<ActionResult> {
+  const { data: post } = await supabase().from("content_queue").select("body, platform, content_type").eq("id", args.content_id).eq("user_id", userId).single();
+  if (!post) return { ok: false, error: "Content not found" };
+  const { callClaude } = await import("@/lib/processors/claude");
+  const revised = await callClaude(
+    "You edit social media posts for Tyler Young. Apply the edit instructions precisely. Return ONLY the revised post text, nothing else.",
+    `Original post (${post.platform}/${post.content_type}):\n${post.body}\n\nEdit instructions: ${args.instructions}`,
+    512,
+  );
+  const { error } = await supabase().from("content_queue").update({ body: revised.trim(), status: "draft", updated_at: new Date().toISOString() }).eq("id", args.content_id);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, message: `Edited content: "${revised.trim().slice(0, 80)}..."`, data: { revised: revised.trim() } };
+}
+
+async function generateContent(userId: string, args: { topic: string; platform?: string }): Promise<ActionResult> {
+  const { callClaude } = await import("@/lib/processors/claude");
+  const post = await callClaude(
+    "You write social media posts for Tyler Young. Style: lowercase except I, direct, specific numbers, authentic texture, no clichés. Return ONLY the post text.",
+    `Write a ${args.platform ?? "Threads"} post about: ${args.topic}`,
+    512,
+  );
+  const { data, error } = await supabase().from("content_queue").insert({
+    user_id: userId, platform: args.platform ?? "threads", content_type: "text", body: post.trim(), status: "draft", created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  }).select("id").single();
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, message: `Generated ${args.platform ?? "Threads"} post: "${post.trim().slice(0, 80)}..."`, data: { id: data.id, body: post.trim() } };
+}
+
+// ── Habit Actions ──
+
+async function logHabit(userId: string, args: { habit_name: string; value?: number; note?: string }): Promise<ActionResult> {
+  const { data: habit } = await supabase().from("habits").select("id, name").eq("user_id", userId).ilike("name", `%${args.habit_name}%`).eq("active", true).limit(1).single();
+  if (!habit) return { ok: false, error: `Habit "${args.habit_name}" not found` };
+  const { error } = await supabase().from("habit_logs").insert({ habit_id: habit.id, user_id: userId, logged_at: new Date().toISOString(), value: args.value ?? 1, note: args.note ?? null, source: "manual" });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, message: `Logged "${habit.name}"${args.note ? `: ${args.note}` : ""}` };
+}
+
+async function listHabits(userId: string): Promise<ActionResult> {
+  const { data } = await supabase().from("habits").select("id, name, frequency, target_count, icon").eq("user_id", userId).eq("active", true);
+  return { ok: true, message: `${data?.length ?? 0} active habits`, data };
+}
+
+// ── People Actions ──
+
+async function addPerson(userId: string, args: { name: string; email?: string; company?: string; relationship?: string; notes?: string }): Promise<ActionResult> {
+  const { data, error } = await supabase().from("people").insert({
+    user_id: userId, name: args.name, email: args.email ?? null, company: args.company ?? null, relationship: args.relationship ?? "other", notes: args.notes ?? "", created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  }).select("id, name").single();
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, message: `Added ${data.name} to contacts`, data };
+}
+
 // ── Registry ──
 
 export const COS_ACTIONS: Record<string, {
@@ -213,6 +284,41 @@ export const COS_ACTIONS: Record<string, {
       context: { type: "string", description: "Additional context" },
     },
     execute: (uid, args) => storeDecision(uid, args as Parameters<typeof storeDecision>[1]),
+  },
+  approve_content: {
+    description: "Approve a content queue item for publishing",
+    parameters: { content_id: { type: "string", description: "Content queue item ID", required: true } },
+    execute: (uid, args) => approveContent(uid, args as Parameters<typeof approveContent>[1]),
+  },
+  reject_content: {
+    description: "Reject a content queue item with optional reason",
+    parameters: { content_id: { type: "string", description: "Content queue item ID", required: true }, reason: { type: "string", description: "Why it was rejected" } },
+    execute: (uid, args) => rejectContent(uid, args as Parameters<typeof rejectContent>[1]),
+  },
+  edit_content: {
+    description: "Edit a content queue post with natural language instructions",
+    parameters: { content_id: { type: "string", description: "Content queue item ID", required: true }, instructions: { type: "string", description: "Edit instructions (e.g. 'make it shorter', 'add Berlin angle')", required: true } },
+    execute: (uid, args) => editContent(uid, args as Parameters<typeof editContent>[1]),
+  },
+  generate_content: {
+    description: "Generate a new social media post on a topic",
+    parameters: { topic: { type: "string", description: "What to post about", required: true }, platform: { type: "string", description: "Platform", enum: ["threads", "instagram", "tiktok"] } },
+    execute: (uid, args) => generateContent(uid, args as Parameters<typeof generateContent>[1]),
+  },
+  log_habit: {
+    description: "Log a habit completion (e.g. ran today, hydrated, stretched)",
+    parameters: { habit_name: { type: "string", description: "Habit name (partial match)", required: true }, value: { type: "number", description: "Value (default 1)" }, note: { type: "string", description: "Optional note" } },
+    execute: (uid, args) => logHabit(uid, args as Parameters<typeof logHabit>[1]),
+  },
+  list_habits: {
+    description: "List all active habits with their details",
+    parameters: {},
+    execute: (uid) => listHabits(uid),
+  },
+  add_person: {
+    description: "Add a person/contact to the relationship manager",
+    parameters: { name: { type: "string", description: "Person's name", required: true }, email: { type: "string", description: "Email address" }, company: { type: "string", description: "Company" }, relationship: { type: "string", description: "Relationship type", enum: ["colleague", "client", "friend", "family", "mentor", "mentee", "other"] }, notes: { type: "string", description: "Notes about this person" } },
+    execute: (uid, args) => addPerson(uid, args as Parameters<typeof addPerson>[1]),
   },
 };
 

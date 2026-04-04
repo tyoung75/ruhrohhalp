@@ -12,6 +12,8 @@ const NAV_ITEMS: { href: string; label: string; icon: string; shortcut: string }
   { href: "/creator", label: "Creator", icon: "✧", shortcut: "5" },
   { href: "/settings/ingestion", label: "Ingestion", icon: "⟳", shortcut: "6" },
   { href: "/finance", label: "Finance", icon: "◆", shortcut: "7" },
+  { href: "/brands", label: "Brands", icon: "◉", shortcut: "8" },
+  { href: "/people", label: "People", icon: "◎", shortcut: "9" },
 ];
 
 interface NavSidebarProps {
