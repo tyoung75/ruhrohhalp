@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { callClaude } from "@/lib/processors/claude";
 import { TYLER_STATS, formatStatsBlock } from "@/lib/brands/voice";
 import { logError } from "@/lib/logger";
@@ -169,7 +170,8 @@ export async function POST(request: NextRequest) {
   const focus = (body?.focus as string) ?? "";
 
   try {
-    const supabase = await createClient();
+    // Use admin client to bypass RLS — user is already authenticated via requireUser()
+    const supabase = createAdminClient();
 
     // Load existing pipeline to avoid duplicates
     const { data: existing, error: existingErr } = await supabase
