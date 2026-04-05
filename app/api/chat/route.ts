@@ -147,21 +147,40 @@ export async function POST(request: NextRequest) {
       }
     } catch { /* page-specific context is best-effort */ }
 
-    // RAG brain search — skip for long messages to stay within timeout
-    if (message.length < 200) {
-      try {
-        const brain = await queryBrain(message, { userId: user.id, topK: 4, threshold: 0.6, maxTokens: 512 });
-        if (brain.answer) contextParts.push("## Relevant Memories\n" + brain.answer);
-      } catch { /* best-effort */ }
-    }
+    // RAG brain search — always query for relevant memories; truncate long messages for embedding lookup
+    try {
+      const queryText = message.length > 300 ? message.slice(0, 300) : message;
+      const brain = await queryBrain(queryText, { userId: user.id, topK: 6, threshold: 0.55, maxTokens: 800 });
+      if (brain.answer) contextParts.push("## Relevant Memories\n" + brain.answer);
+    } catch { /* best-effort */ }
 
     contextParts.push(`\nCurrent page: ${pageContext}`);
     contextParts.push(`Current date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })}`);
 
-    // 3. Build Claude messages
-    const recentMessages = session.messages.slice(-6);
+    // 3. Build Claude messages — include full conversation for continuity
+    const allMessages = session.messages;
+    const MAX_RECENT = 20;
+    let conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
+
+    if (allMessages.length <= MAX_RECENT) {
+      // Short conversation — include everything
+      conversationHistory = allMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+    } else {
+      // Long conversation — summarize older messages, keep recent ones
+      const older = allMessages.slice(0, -MAX_RECENT);
+      const recent = allMessages.slice(-MAX_RECENT);
+      const olderSummary = older.map((m) =>
+        `[${m.role === "user" ? "Tyler" : "CoS"}]: ${m.content.slice(0, 120)}${m.content.length > 120 ? "..." : ""}`
+      ).join("\n");
+      conversationHistory = [
+        { role: "user" as const, content: `[CONVERSATION SUMMARY — earlier in this session]\n${olderSummary}\n[END SUMMARY]` },
+        { role: "assistant" as const, content: "Understood, I have the context from earlier in our conversation." },
+        ...recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      ];
+    }
+
     const claudeMessages: Array<{ role: "user" | "assistant"; content: string }> = [
-      ...recentMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      ...conversationHistory,
       { role: "user" as const, content: message },
     ];
 
