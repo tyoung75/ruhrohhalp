@@ -5,6 +5,7 @@ import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { runBgTask } from "@/lib/bg-tasks";
 import { Spinner } from "@/components/primitives";
+import { BrandScoutPanel } from "@/components/brand-scout-panel";
 import { useMobile } from "@/lib/useMobile";
 import { BrandsDashboard } from "@/components/brands/BrandsDashboard";
 import { ContentCalendar } from "@/components/creator/ContentCalendar";
@@ -3767,6 +3768,8 @@ function StrategyTab() {
               })}
             </div>
           </div>
+
+          <BrandScoutPanel />
 
           {/* ── 3. What's Working / Adjustments ── */}
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 12 : 16 }}>
