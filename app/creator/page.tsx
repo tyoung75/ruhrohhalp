@@ -27,6 +27,7 @@ interface QueueItem {
   post_id: string | null;
   post_url: string | null;
   source: string | null;
+  model_source?: "internal" | "chatgpt" | "claude" | null;
   attempts: number;
   last_error: string | null;
   confidence_score: number | null;
@@ -84,6 +85,7 @@ interface AnalyticsResponse {
     body: string;
     platform: string;
     source?: string;
+    model_source?: "internal" | "chatgpt" | "claude";
     impressions: number;
     likes: number;
     replies: number;
@@ -101,6 +103,7 @@ interface AnalyticsResponse {
     engagement_rate: number;
   }>;
   source_breakdown?: Record<string, { posts: number; impressions: number; avgEngagement: number }>;
+  model_breakdown?: Record<string, { posts: number; impressions: number; avgEngagement: number }>;
   daily_trend: Array<{
     date: string;
     impressions: number;
@@ -169,6 +172,31 @@ function statusBadge(status: string) {
     border: `1px solid ${color}30`,
     textTransform: "uppercase" as const,
   };
+}
+
+function modelMeta(model?: string | null) {
+  if (model === "chatgpt") return { label: "ChatGPT", color: "#74aa9c" };
+  if (model === "claude") return { label: "Claude", color: "#d28f52" };
+  return { label: "Internal", color: C.cl };
+}
+
+function modelBadge(model?: string | null) {
+  const meta = modelMeta(model);
+  return (
+    <span
+      style={{
+        fontFamily: C.mono,
+        fontSize: 9,
+        color: meta.color,
+        background: `${meta.color}18`,
+        border: `1px solid ${meta.color}45`,
+        padding: "1px 6px",
+        borderRadius: 10,
+      }}
+    >
+      {meta.label}
+    </span>
+  );
 }
 
 /**
@@ -2414,6 +2442,7 @@ function AnalyticsTab() {
                     {post.body}
                   </div>
                   <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, display: "flex", gap: 10 }}>
+                    {modelBadge(post.model_source)}
                     <span>{(post.engagement_rate * 100).toFixed(1)}% eng</span>
                     <span>{post.impressions} views</span>
                     <span>{post.likes} likes</span>
@@ -2494,6 +2523,43 @@ function AnalyticsTab() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </>
+          )}
+
+          {/* Model performance breakdown */}
+          {data.model_breakdown && Object.keys(data.model_breakdown).length > 0 && (
+            <>
+              <SectionHeader>Model Performance</SectionHeader>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                {Object.entries(data.model_breakdown).map(([model, stats]) => {
+                  const meta = modelMeta(model);
+                  return (
+                    <div
+                      key={model}
+                      style={{
+                        background: C.card,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 8,
+                        padding: "10px 14px",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {modelBadge(model)}
+                          </div>
+                          <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
+                            {stats.posts} posts &middot; {stats.impressions.toLocaleString()} impressions
+                          </div>
+                        </div>
+                        <div style={{ fontFamily: C.mono, fontSize: 14, color: meta.color }}>
+                          {(stats.avgEngagement * 100).toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}
@@ -2913,6 +2979,7 @@ function HistoryTab() {
                   <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint }}>
                     {item.platform}
                   </span>
+                  {modelBadge(item.model_source)}
                   {item.source === "external" && (
                     <span style={{
                       fontFamily: C.mono,
