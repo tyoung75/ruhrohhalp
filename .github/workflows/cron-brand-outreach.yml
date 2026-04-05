@@ -7,11 +7,26 @@ on:
 jobs:
   brand-outreach:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Run brand outreach pipeline
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X GET "https://www.ruhrohhalp.com/api/cron/brand-outreach" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
-          echo "Response: $STATUS"
-          if [ "$STATUS" != "200" ]; then exit 1; fi
+          echo "Triggering brand outreach pipeline at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X GET \
+            "https://www.ruhrohhalp.com/api/cron/brand-outreach" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: brand-outreach returned HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✓ Brand outreach pipeline completed successfully"

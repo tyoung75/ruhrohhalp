@@ -162,6 +162,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     logError("cron.brand-outreach", error);
-    return NextResponse.json({ error: "Brand outreach cron failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Brand outreach cron failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
