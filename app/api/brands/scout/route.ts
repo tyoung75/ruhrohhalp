@@ -168,14 +168,19 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
 
     // Load existing pipeline to avoid duplicates
-    const { data: existing } = await supabase
+    const { data: existing, error: existingErr } = await supabase
       .from("brand_deals")
       .select("brand_name, status, priority, relationship_type, archive_reason")
       .eq("user_id", user.id);
 
-    const existingBrands = (existing ?? []).map((d) => d.brand_name);
+    if (existingErr) {
+      logError("brands.scout.load_existing", new Error(existingErr.message));
+      return NextResponse.json({ error: "Failed to load existing brands", detail: existingErr.message }, { status: 500 });
+    }
+
+    const existingBrands = (existing ?? []).map((d: { brand_name: string }) => d.brand_name);
     const existingContext = (existing ?? [])
-      .map((d) => `${d.brand_name} (${d.status}${d.archive_reason ? ` — archived: ${d.archive_reason}` : ""})`)
+      .map((d: { brand_name: string; status: string; archive_reason: string | null }) => `${d.brand_name} (${d.status}${d.archive_reason ? ` — archived: ${d.archive_reason}` : ""})`)
       .join("\n");
 
     // Load past brand feedback to inform scouting
@@ -187,8 +192,11 @@ export async function POST(request: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(20);
 
-    if (!fbErr && feedback && feedback.length > 0) {
-      feedbackContext = "\n\nPast brand feedback (learn from this):\n" + feedback.map((f) =>
+    if (fbErr) {
+      // Non-fatal — continue without feedback context
+      logError("brands.scout.load_feedback", new Error(fbErr.message));
+    } else if (feedback && feedback.length > 0) {
+      feedbackContext = "\n\nPast brand feedback (learn from this):\n" + feedback.map((f: { feedback_type: string; content: string }) =>
         `- [${f.feedback_type}] ${f.content}`
       ).join("\n");
     }
@@ -251,6 +259,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const errors = {
+      claude: claudeResult.status === "rejected" ? String(claudeResult.reason) : null,
+      chatgpt: chatgptResult.status === "rejected" ? String(chatgptResult.reason) : null,
+    };
+
+    // If both providers failed, return 500 with details
+    if (claudeBrands.length === 0 && chatgptBrands.length === 0 && (errors.claude || errors.chatgpt)) {
+      return NextResponse.json({
+        error: "Both brand scouts failed",
+        detail: [errors.claude, errors.chatgpt].filter(Boolean).join("; "),
+        errors,
+      }, { status: 500 });
+    }
+
     return NextResponse.json({
       ok: true,
       recommendations: filtered,
@@ -259,10 +281,7 @@ export async function POST(request: NextRequest) {
       persisted,
       focus: focus || null,
       existing_count: existingBrands.length,
-      errors: {
-        claude: claudeResult.status === "rejected" ? String(claudeResult.reason) : null,
-        chatgpt: chatgptResult.status === "rejected" ? String(chatgptResult.reason) : null,
-      },
+      errors,
     });
   } catch (error) {
     logError("brands.scout", error);
