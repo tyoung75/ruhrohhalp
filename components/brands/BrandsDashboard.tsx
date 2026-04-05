@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client-api";
+import { runBgTask, isRunning } from "@/lib/bg-tasks";
 import { C } from "@/lib/ui";
 import type { BrandDeal, BrandDealStatus, PipelineSummary } from "@/lib/types/brands";
 import { PIPELINE_COLUMNS } from "@/lib/types/brands";
@@ -82,21 +83,31 @@ export function BrandsDashboard() {
 
   async function fetchDeals() {
     try {
-      const [dealsRes, summaryRes] = await Promise.all([
+      const [dealsResult, summaryResult] = await Promise.allSettled([
         api<{ deals: BrandDeal[] }>("/api/brands"),
         api<PipelineSummary>("/api/brands/summary"),
       ]);
-      setDeals(dealsRes.deals);
-      setSummary(summaryRes);
-      setSetupState("ready");
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "";
-      if (msg.includes("brand_deals") || msg.includes("schema cache")) {
-        setSetupState("needs_setup");
+
+      if (dealsResult.status === "fulfilled") {
+        setDeals(dealsResult.value.deals);
+        setSetupState("ready");
       } else {
+        const msg = dealsResult.reason instanceof Error ? dealsResult.reason.message : "";
+        if (msg.includes("brand_deals") || msg.includes("schema cache")) {
+          setSetupState("needs_setup");
+          return;
+        }
         setSetupState("ready");
         showToast(msg || "Failed to load deals", "error");
       }
+
+      if (summaryResult.status === "fulfilled") {
+        setSummary(summaryResult.value);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "";
+      setSetupState("ready");
+      showToast(msg || "Failed to load deals", "error");
     }
   }
 
@@ -135,39 +146,42 @@ export function BrandsDashboard() {
     return map;
   }, [deals]);
 
-  async function runPipeline() {
+  function runPipeline() {
+    if (isRunning("Running brand pipeline")) return;
     setRunning(true);
-    try {
-      const result = await api<RunResponse>("/api/brands/run", { method: "POST" });
-      const { drafted, replied, archived } = result.actions_taken;
-      const parts = [];
-      if (drafted.length) parts.push(`${drafted.length} drafted`);
-      if (replied.length) parts.push(`${replied.length} replies processed`);
-      if (archived.length) parts.push(`${archived.length} archived`);
-      showToast(parts.length ? `Pipeline complete: ${parts.join(", ")}` : "Pipeline ran — no actions needed", "success");
-      window.dispatchEvent(new CustomEvent("brands:refresh"));
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Pipeline run failed", "error");
-    } finally {
-      setRunning(false);
-    }
+    runBgTask(
+      "Running brand pipeline",
+      async () => {
+        const result = await api<RunResponse>("/api/brands/run", { method: "POST" });
+        const { drafted, replied, archived } = result.actions_taken;
+        const parts = [];
+        if (drafted.length) parts.push(`${drafted.length} drafted`);
+        if (replied.length) parts.push(`${replied.length} replies processed`);
+        if (archived.length) parts.push(`${archived.length} archived`);
+        window.dispatchEvent(new CustomEvent("brands:refresh"));
+        return parts.length ? `Pipeline complete: ${parts.join(", ")}` : "Pipeline ran — no actions needed";
+      },
+      { onSuccess: () => setRunning(false), onError: () => setRunning(false) },
+    );
   }
 
-  async function researchBrand() {
+  function researchBrand() {
     if (!promptText.trim()) return;
     setResearching(true);
     setResearchResult(null);
-    try {
-      const res = await api<{ ok: boolean; research: ResearchResult }>("/api/brands/research", {
-        method: "POST",
-        body: JSON.stringify({ prompt: promptText.trim() }),
-      });
-      setResearchResult(res.research);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Research failed", "error");
-    } finally {
-      setResearching(false);
-    }
+    const prompt = promptText.trim();
+    runBgTask(
+      "Researching brand",
+      async () => {
+        const res = await api<{ ok: boolean; research: ResearchResult }>("/api/brands/research", {
+          method: "POST",
+          body: JSON.stringify({ prompt }),
+        });
+        setResearchResult(res.research);
+        return `Research complete for ${res.research.brand_name}`;
+      },
+      { onSuccess: () => setResearching(false), onError: () => setResearching(false) },
+    );
   }
 
   async function addResearchedBrand() {
@@ -204,17 +218,23 @@ export function BrandsDashboard() {
     }
   }
 
-  async function scoutBrands() {
+  function scoutBrands() {
+    if (isRunning("Scouting brands")) return;
     setScouting(true);
-    try {
-      const res = await api<{ ok: boolean; persisted: number }>("/api/brands/scout", { method: "POST" });
-      showToast(`${res.persisted} new brands scouted`, "success");
-      window.dispatchEvent(new CustomEvent("brands:refresh"));
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Scout failed", "error");
-    } finally {
-      setScouting(false);
-    }
+    runBgTask(
+      "Scouting brands",
+      async () => {
+        const res = await api<{ ok: boolean; persisted: number; claude_brands: unknown[]; chatgpt_brands: unknown[]; errors: { claude: string | null; chatgpt: string | null } }>("/api/brands/scout", { method: "POST" });
+        window.dispatchEvent(new CustomEvent("brands:refresh"));
+        const parts: string[] = [];
+        if (res.chatgpt_brands?.length) parts.push(`${res.chatgpt_brands.length} web-searched`);
+        if (res.claude_brands?.length) parts.push(`${res.claude_brands.length} AI-matched`);
+        if (res.errors?.claude) parts.push("Claude failed");
+        if (res.errors?.chatgpt) parts.push("web search failed");
+        return `${res.persisted} brands scouted${parts.length ? ` (${parts.join(", ")})` : ""}`;
+      },
+      { onSuccess: () => setScouting(false), onError: () => setScouting(false) },
+    );
   }
 
   async function promoteDeal(id: string, status: string) {
@@ -236,36 +256,39 @@ export function BrandsDashboard() {
     }
   }
 
-  async function generateDraft() {
+  function generateDraft() {
     if (!selected) return;
+    const dealId = selected.deal.id;
     setDrafting(true);
-    try {
-      const res = await api<{ draft_preview: string; subject: string; gmail_draft_id: string | null }>(`/api/brands/${selected.deal.id}/draft`, { method: "POST" });
-      showToast(res.gmail_draft_id ? "Gmail draft created" : "Draft generated (no Gmail)", "success");
-      const detail = await api<DealDetailResponse>(`/api/brands/${selected.deal.id}`);
-      setSelected(detail);
-      window.dispatchEvent(new CustomEvent("brands:refresh"));
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Draft failed", "error");
-    } finally {
-      setDrafting(false);
-    }
+    runBgTask(
+      "Generating draft",
+      async () => {
+        const res = await api<{ draft_preview: string; subject: string; gmail_draft_id: string | null }>(`/api/brands/${dealId}/draft`, { method: "POST" });
+        const detail = await api<DealDetailResponse>(`/api/brands/${dealId}`);
+        setSelected(detail);
+        window.dispatchEvent(new CustomEvent("brands:refresh"));
+        return res.gmail_draft_id ? "Gmail draft created" : "Draft generated (no Gmail)";
+      },
+      { onSuccess: () => setDrafting(false), onError: () => setDrafting(false) },
+    );
   }
 
-  async function sendDraft() {
+  function sendDraft() {
     if (!selected) return;
+    const dealId = selected.deal.id;
+    const email = selected.deal.contact_email;
     setSending(true);
-    try {
-      await api(`/api/brands/${selected.deal.id}/send`, { method: "POST" });
-      showToast(`Email sent to ${selected.deal.contact_email}`, "success");
-      const detail = await api<DealDetailResponse>(`/api/brands/${selected.deal.id}`);
-      setSelected(detail);
-      window.dispatchEvent(new CustomEvent("brands:refresh"));
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Send failed", "error");
-    } finally {
-      setSending(false);
-    }
+    runBgTask(
+      "Sending email",
+      async () => {
+        await api(`/api/brands/${dealId}/send`, { method: "POST" });
+        const detail = await api<DealDetailResponse>(`/api/brands/${dealId}`);
+        setSelected(detail);
+        window.dispatchEvent(new CustomEvent("brands:refresh"));
+        return `Email sent to ${email}`;
+      },
+      { onSuccess: () => setSending(false), onError: () => setSending(false) },
+    );
   }
 
   async function reviseDraft() {
@@ -527,8 +550,12 @@ export function BrandsDashboard() {
                         <div style={{ fontWeight: 700, fontSize: 13 }}>{deal.brand_name}</div>
                         {deal.priority && <span style={{ fontFamily: C.mono, fontSize: 10, color: C.cl, background: `${C.cl}15`, padding: "1px 6px", borderRadius: 4 }}>{deal.priority}</span>}
                       </div>
-                      <div style={{ color: C.textDim, fontSize: 11, marginTop: 4 }}>{deal.contact_email ?? "No contact"}</div>
-                      {deal.scout_reason && <div style={{ color: C.gem, fontSize: 10, marginTop: 4 }}>{deal.scout_reason}</div>}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                        <span style={{ color: C.textDim, fontSize: 11 }}>{deal.contact_email ?? "No contact"}</span>
+                        {deal.scout_reason?.startsWith("[CHATGPT]") && <span style={{ fontFamily: C.mono, fontSize: 8, padding: "1px 5px", borderRadius: 3, background: `${C.gpt}20`, color: C.gpt, fontWeight: 700 }}>WEB</span>}
+                        {deal.scout_reason?.startsWith("[CLAUDE]") && <span style={{ fontFamily: C.mono, fontSize: 8, padding: "1px 5px", borderRadius: 3, background: `${C.cl}20`, color: C.cl, fontWeight: 700 }}>AI</span>}
+                      </div>
+                      {deal.scout_reason && <div style={{ color: C.gem, fontSize: 10, marginTop: 4 }}>{deal.scout_reason.replace(/^\[(CLAUDE|CHATGPT)\]\s*/, "")}</div>}
                       {(deal.estimated_value_low || deal.estimated_value_high) && (
                         <div style={{ marginTop: 6, color: C.textFaint, fontSize: 10, fontFamily: C.mono }}>${deal.estimated_value_low ?? 0}–${deal.estimated_value_high ?? 0}</div>
                       )}

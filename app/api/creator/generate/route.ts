@@ -2,8 +2,8 @@
  * Content Generation Agent — POST /api/creator/generate
  *
  * Takes daily context (calendar, strava, recent posts, goals) and generates
- * a batch of Threads posts using Claude. Each post passes through the
- * Groq audit layer for safety before being queued.
+ * a batch of cross-platform posts from multiple models. Each post passes
+ * through safety and brand/timeliness audits before being queued.
  *
  * Auth: Requires authenticated user OR cron secret.
  */
@@ -13,7 +13,7 @@ import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { callClaude } from "@/lib/processors/claude";
 import { AI_MODELS } from "@/lib/ai-config";
-import { CONTENT_AGENT_SYSTEM, SAFETY_AUDIT_SYSTEM } from "@/lib/creator/prompts";
+import { CONTENT_AGENT_SYSTEM, SAFETY_AUDIT_SYSTEM, BRAND_VOICE_AUDIT_SYSTEM } from "@/lib/creator/prompts";
 import { limitByKey } from "@/lib/security/rate-limit";
 import { generateEmbeddings } from "@/lib/embedding/openai";
 import { buildTrainingSummary } from "@/lib/strava/client";
@@ -33,6 +33,71 @@ interface AuditResult {
   index: number;
   status: "approved" | "flagged" | "rejected";
   reason: string;
+}
+
+interface BrandVoiceAuditResult {
+  index: number;
+  verdict: "approve" | "flag" | "reject";
+  ai_detectability: number;
+  brand_voice_match: number;
+  factual_grounding: number;
+  issues: string[];
+  suggestion?: string;
+}
+
+type ContentGeneratorSource = "internal" | "chatgpt" | "claude";
+type GeneratedCandidate = { post: GeneratedPost; source: ContentGeneratorSource };
+
+async function callChatGPT(system: string, userMessage: string, maxTokens = 2048): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY for content generation");
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4.1",
+      max_tokens: maxTokens,
+      temperature: 0.9,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userMessage },
+      ],
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message ?? `ChatGPT call failed (${res.status})`);
+  }
+
+  return data.choices?.[0]?.message?.content ?? "";
+}
+
+function parseGeneratedPosts(rawResponse: string, source: ContentGeneratorSource): GeneratedPost[] {
+  const cleaned = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  try {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // Claude/ChatGPT sometimes wraps JSON in surrounding text
+      const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+      if (!arrayMatch) throw new Error("No JSON array found");
+      parsed = JSON.parse(arrayMatch[0]);
+    }
+    if (!Array.isArray(parsed)) {
+      console.error(`[creator-generate] ${source} returned non-array payload`);
+      return [];
+    }
+    return parsed as GeneratedPost[];
+  } catch {
+    console.error(`[creator-generate] Failed to parse ${source} response:`, rawResponse.slice(0, 500));
+    return [];
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -86,7 +151,7 @@ export async function POST(request: NextRequest) {
     const context = await gatherDailyContext(supabase, userId);
     const contentMemories = await searchContentMemories(supabase, userId);
 
-    // 2. Generate posts with Claude
+    // 2. Generate posts from three sources (internal agent + ChatGPT + Claude API)
     const isSeedMode = !!(seedTopic || seedPlatform);
     const memoryBlock = contentMemories.length
       ? `\n\n--- CONTENT PERFORMANCE LEARNINGS (from semantic memory) ---\n${contentMemories.join("\n\n")}`
@@ -99,26 +164,70 @@ export async function POST(request: NextRequest) {
     } else {
       userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate 5 posts across platforms based on this context. Learn from the performance data above — lean into patterns that worked and avoid patterns that didn't. Return ONLY a JSON array.`;
     }
-    const rawResponse = await callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048);
+    const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+    const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY;
 
-    // Parse JSON from response (handle markdown code blocks)
-    const jsonStr = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-    let posts: GeneratedPost[];
-    try {
-      posts = JSON.parse(jsonStr);
-    } catch {
-      console.error("[creator-generate] Failed to parse AI response:", rawResponse.slice(0, 500));
-      return NextResponse.json({ error: "Failed to parse generated content" }, { status: 500 });
+    if (!hasOpenAIKey && !hasAnthropicKey) {
+      return NextResponse.json(
+        { error: "No model API keys configured (OPENAI_API_KEY or ANTHROPIC_API_KEY required)" },
+        { status: 500 }
+      );
     }
 
+    const sourceCalls: Array<Promise<{ source: ContentGeneratorSource; raw: string }>> = [];
+
+    if (hasAnthropicKey) {
+      // Internal: Sonnet (default model, default temperature)
+      sourceCalls.push(
+        callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "internal" as const, raw }))
+      );
+      // Claude: Opus with higher temperature for more creative/divergent output
+      sourceCalls.push(
+        callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048, {
+          model: AI_MODELS.PLATFORM_INTELLIGENCE,
+          temperature: 0.95,
+        }).then((raw) => ({ source: "claude" as const, raw }))
+      );
+    } else {
+      console.info("[creator-generate] Skipping internal + claude generation (missing ANTHROPIC_API_KEY)");
+    }
+
+    if (hasOpenAIKey) {
+      sourceCalls.push(
+        callChatGPT(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "chatgpt" as const, raw }))
+      );
+    } else {
+      console.info("[creator-generate] Skipping chatgpt generation (missing OPENAI_API_KEY)");
+    }
+
+    const settledResponses = await Promise.allSettled(sourceCalls);
+    const candidates: GeneratedCandidate[] = [];
+    const generatedByModel: Record<ContentGeneratorSource, number> = { internal: 0, chatgpt: 0, claude: 0 };
+
+    for (const result of settledResponses) {
+      if (result.status === "fulfilled") {
+        const parsed = parseGeneratedPosts(result.value.raw, result.value.source);
+        for (const post of parsed) {
+          candidates.push({ post, source: result.value.source });
+        }
+        generatedByModel[result.value.source] += parsed.length;
+      } else {
+        console.error("[creator-generate] Model call failed:", result.reason);
+      }
+    }
+
+    const posts = candidates.map((c) => c.post);
     if (!Array.isArray(posts) || posts.length === 0) {
       return NextResponse.json({ error: "No posts generated" }, { status: 500 });
     }
 
-    // 3. Safety audit via Groq (Llama)
-    const auditResults = await auditPosts(posts);
+    // 3. Safety audit + brand voice audit (run in parallel)
+    const [auditResults, brandVoiceResults] = await Promise.all([
+      auditPosts(posts),
+      auditBrandVoice(posts, context),
+    ]);
 
-    // 4. Queue approved posts
+    // 4. Queue approved posts (must pass BOTH audits)
     const today = new Date();
     const queued: string[] = [];
     const flagged: string[] = [];
@@ -126,8 +235,17 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < posts.length; i++) {
       const post = posts[i];
+      const modelSource = candidates[i]?.source ?? "internal";
       const audit = auditResults.find((a) => a.index === i);
-      const status = audit?.status ?? "approved";
+      const brandAudit = brandVoiceResults.find((a) => a.index === i);
+
+      // Merge both audit layers: brand voice rejection/flag overrides safety approval
+      let status = audit?.status ?? "approved";
+      if (brandAudit?.verdict === "reject") {
+        status = "rejected";
+      } else if (brandAudit?.verdict === "flag" && status === "approved") {
+        status = "flagged";
+      }
 
       // Determine content type and normalize body
       const isThread = post.type === "thread" || Array.isArray(post.body);
@@ -164,6 +282,27 @@ export async function POST(request: NextRequest) {
 
       // Use seed platform if provided, otherwise check post for platform field, default to threads
       const postPlatform = seedPlatform ?? (post as unknown as Record<string, unknown>).platform as string ?? "threads";
+      // Use the independent brand voice audit score if available, fallback to self-reported
+      const auditedBrandScore = brandAudit
+        ? brandAudit.brand_voice_match
+        : (post.brand_voice_score ?? null);
+
+      const brandAuditMeta = brandAudit
+        ? {
+            ai_detectability: brandAudit.ai_detectability,
+            brand_voice_match: brandAudit.brand_voice_match,
+            factual_grounding: brandAudit.factual_grounding,
+            issues: brandAudit.issues,
+            suggestion: brandAudit.suggestion,
+          }
+        : null;
+
+      // Build reasoning with brand audit context
+      let reasoning = post.reasoning;
+      if (brandAudit?.issues?.length) {
+        reasoning += ` | Brand audit issues: ${brandAudit.issues.join("; ")}`;
+      }
+
       const { data, error } = await supabase.from("content_queue").insert({
         user_id: userId,
         platform: postPlatform,
@@ -172,10 +311,11 @@ export async function POST(request: NextRequest) {
         scheduled_for: scheduledFor.toISOString(),
         status: queueStatus,
         confidence_score: post.confidence,
-        brand_voice_score: post.brand_voice_score ?? null,
+        brand_voice_score: auditedBrandScore,
         timeliness_score: post.timeliness_score ?? null,
-        agent_reasoning: post.reasoning,
-        context_snapshot: context,
+        agent_reasoning: reasoning,
+        model_source: modelSource,
+        context_snapshot: { ...context, brand_audit: brandAuditMeta, model_source: modelSource },
       }).select("id").single();
 
       if (error) {
@@ -192,6 +332,7 @@ export async function POST(request: NextRequest) {
       flagged: flagged.length,
       rejected: rejected.length,
       queueIds: queued,
+      generatedByModel,
     });
   } catch (error) {
     console.error("[creator-generate] Error:", error);
@@ -461,12 +602,86 @@ async function auditPosts(posts: GeneratedPost[]): Promise<AuditResult[]> {
 
     const data = await res.json();
     const content = data.choices?.[0]?.message?.content ?? "";
-    const jsonStr = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(jsonStr);
+    const cleaned = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const objMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (!objMatch) throw new Error("No JSON object found in safety audit response");
+      parsed = JSON.parse(objMatch[0]);
+    }
     return parsed.results ?? [];
   } catch (error) {
     console.error("[creator-audit] Audit failed, approving all:", error);
     return posts.map((_, i) => ({ index: i, status: "approved" as const, reason: "Audit unavailable" }));
+  }
+}
+
+/**
+ * Run independent brand voice audit via Claude.
+ * Checks AI-detectability, brand voice match, and factual grounding.
+ */
+async function auditBrandVoice(
+  posts: GeneratedPost[],
+  context: Record<string, unknown>
+): Promise<BrandVoiceAuditResult[]> {
+  try {
+    const postList = posts
+      .map((p, i) => {
+        const bodyText = Array.isArray(p.body)
+          ? p.body.map((part, j) => `  Part ${j + 1}: ${part}`).join("\n")
+          : p.body;
+        return `[${i}] ${bodyText}`;
+      })
+      .join("\n\n");
+
+    // Include voice references and top posts for comparison, plus a context summary
+    // so the auditor can verify factual claims
+    const voiceRefs = (context.voiceReferences as string[]) ?? [];
+    const topPosts = (context.topPerformingPosts as string[]) ?? [];
+    const strava = context.strava ? JSON.stringify(context.strava) : "No Strava data today.";
+    const motus = context.motus ? JSON.stringify(context.motus) : "No Motus data today.";
+    const recentPosts = (context.recentPosts as string[]) ?? [];
+
+    const auditContext = [
+      `--- VOICE REFERENCES (Tyler's own writing — ground truth) ---`,
+      voiceRefs.length ? voiceRefs.join("\n") : "No voice references available.",
+      `\n--- TOP PERFORMING POSTS ---`,
+      topPosts.length ? topPosts.join("\n") : "No top posts available.",
+      `\n--- TODAY'S FACTUAL CONTEXT (for grounding checks) ---`,
+      `Date: ${context.date}`,
+      `Strava: ${strava}`,
+      `Motus: ${motus}`,
+      `\n--- RECENT POSTS (check for redundancy) ---`,
+      recentPosts.slice(0, 15).join("\n"),
+    ].join("\n");
+
+    const userMessage = `Audit these generated posts for brand voice quality, AI-detectability, and factual grounding.\n\n${auditContext}\n\n--- POSTS TO AUDIT ---\n${postList}`;
+
+    const rawResponse = await callClaude(BRAND_VOICE_AUDIT_SYSTEM, userMessage, 2048);
+
+    const cleaned = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const objMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (!objMatch) throw new Error("No JSON object found in brand audit response");
+      parsed = JSON.parse(objMatch[0]);
+    }
+    return parsed.results ?? [];
+  } catch (error) {
+    console.error("[creator-brand-audit] Brand voice audit failed, passing all:", error);
+    // Fail open but log — we don't want to block publishing if audit breaks
+    return posts.map((_, i) => ({
+      index: i,
+      verdict: "approve" as const,
+      ai_detectability: 0.7,
+      brand_voice_match: 0.7,
+      factual_grounding: 0.7,
+      issues: ["Brand voice audit unavailable — defaulting to approve"],
+    }));
   }
 }
 

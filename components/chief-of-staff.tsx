@@ -9,12 +9,20 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   ts: string;
+  actions?: string[];
 }
 
 interface ChatResponse {
   session_id: string;
   message: string;
   title: string;
+  actions?: string[];
+}
+
+interface FeatureSuggestion {
+  title: string;
+  description: string;
+  prompt: string;
 }
 
 const PAGE_LABELS: Record<string, string> = {
@@ -99,11 +107,13 @@ export function ChiefOfStaff() {
         body: JSON.stringify({ message: text, session_id: sessionId, page_context: pageContext }),
       });
       setSessionId(res.session_id);
-      setMessages((prev) => [...prev, { role: "assistant", content: res.message, ts: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: res.message, ts: new Date().toISOString(), actions: res.actions }]);
       window.dispatchEvent(new CustomEvent("tasks:refresh"));
       window.dispatchEvent(new CustomEvent("brands:refresh"));
     } catch (err) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `Something went wrong: ${err instanceof Error ? err.message : "Unknown error"}`, ts: new Date().toISOString() }]);
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      const hint = errMsg.includes("fetch") || errMsg.includes("Request") ? " (likely timeout — try a shorter message or break it into parts)" : "";
+      setMessages((prev) => [...prev, { role: "assistant", content: `Something went wrong: ${errMsg}${hint}`, ts: new Date().toISOString() }]);
     } finally {
       setLoading(false);
     }
@@ -290,7 +300,19 @@ export function ChiefOfStaff() {
           </div>
         )}
 
-        {messages.map((msg, i) => (
+        {messages.map((msg, i) => {
+          // Parse feature suggestions from assistant messages
+          let displayContent = msg.content;
+          let featureSuggestion: FeatureSuggestion | null = null;
+          if (msg.role === "assistant" && msg.content.includes("[FEATURE_SUGGESTION]")) {
+            const match = msg.content.match(/\[FEATURE_SUGGESTION\](.*?)\[\/FEATURE_SUGGESTION\]/s);
+            if (match) {
+              try { featureSuggestion = JSON.parse(match[1]); } catch { /* ignore */ }
+              displayContent = msg.content.replace(/\[FEATURE_SUGGESTION\].*?\[\/FEATURE_SUGGESTION\]/s, "").trim();
+            }
+          }
+
+          return (
           <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start", gap: 3 }}>
             <div style={{
               maxWidth: "88%",
@@ -304,13 +326,67 @@ export function ChiefOfStaff() {
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
             }}>
-              {msg.content}
+              {displayContent}
+
+              {/* Actions taken */}
+              {msg.actions && msg.actions.length > 0 && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ fontFamily: C.mono, fontSize: 9, color: C.gpt, textTransform: "uppercase", marginBottom: 4 }}>Actions taken</div>
+                  {msg.actions.map((a, j) => (
+                    <div key={j} style={{ fontSize: 11, color: C.textDim, paddingLeft: 8, borderLeft: `2px solid ${C.gpt}30`, marginBottom: 2 }}>{a}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* Feature suggestion */}
+              {featureSuggestion && (
+                <div style={{ marginTop: 10, padding: 10, background: `${C.gem}08`, border: `1px solid ${C.gem}25`, borderRadius: 8 }}>
+                  <div style={{ fontFamily: C.mono, fontSize: 9, color: C.gem, textTransform: "uppercase", marginBottom: 6 }}>Feature Idea: {featureSuggestion.title}</div>
+                  <div style={{ fontSize: 11, color: C.textDim, marginBottom: 8, lineHeight: 1.5 }}>{featureSuggestion.description}</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {[
+                      { label: "Codex", icon: "C", color: "#10B981" },
+                      { label: "Claude Code", icon: "CC", color: C.cl },
+                      { label: "ChatGPT", icon: "G", color: C.gpt },
+                    ].map((target) => (
+                      <button
+                        key={target.label}
+                        onClick={() => {
+                          const prompt = `# Feature: ${featureSuggestion!.title}\n\n${featureSuggestion!.description}\n\n## Implementation Prompt\n\n${featureSuggestion!.prompt}`;
+                          navigator.clipboard.writeText(prompt);
+                          const el = document.createElement("div");
+                          el.textContent = `Copied for ${target.label}!`;
+                          el.style.cssText = `position:fixed;top:16px;right:16px;z-index:999;padding:8px 16px;background:${target.color};color:#fff;border-radius:8px;font-size:12px;font-family:${C.mono}`;
+                          document.body.appendChild(el);
+                          setTimeout(() => el.remove(), 2000);
+                        }}
+                        style={{
+                          background: `${target.color}15`,
+                          color: target.color,
+                          border: `1px solid ${target.color}30`,
+                          borderRadius: 6,
+                          padding: "4px 10px",
+                          fontFamily: C.mono,
+                          fontSize: 10,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        <span style={{ fontWeight: 700 }}>{target.icon}</span> Copy for {target.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint, padding: "0 4px" }}>
               {formatTime(msg.ts)}
             </span>
           </div>
-        ))}
+          );
+        })}
 
         {loading && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0" }}>

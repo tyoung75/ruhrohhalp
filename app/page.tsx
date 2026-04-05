@@ -42,6 +42,7 @@ import { TodaysFocus } from "@/components/todays-focus";
 import { SignalsPanel } from "@/components/signals-panel";
 import { BrainDumpModal } from "@/components/brain-dump-modal";
 import { BriefingView } from "@/components/briefing-view";
+import { RevenueHabitsWidget } from "@/components/revenue-habits-widget";
 // CaptureBar + Spinner removed — Chief of Staff handles task/note capture
 
 function healthNumberToEnum(health: number): "strong" | "stable" | "at_risk" | "critical" {
@@ -229,7 +230,10 @@ export default function CommandConsolePage() {
               </button>
             </div>
 
-            {/* Quick Capture removed — use Chief of Staff (bottom bar or Ctrl+J) */}
+            {/* Revenue + Habits Widget */}
+            <div style={{ padding: isMobile ? "10px 14px 0" : "12px 28px 0", maxWidth: isMobile ? undefined : 720 }}>
+              <RevenueHabitsWidget />
+            </div>
 
             {/* Tab content */}
             <div style={{ flex: 1, overflowY: isMobile ? undefined : "auto" }}>

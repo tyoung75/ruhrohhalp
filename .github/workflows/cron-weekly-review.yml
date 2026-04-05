@@ -1,0 +1,17 @@
+name: Weekly Review
+on:
+  schedule:
+    - cron: '23 0 * * 0'  # 00:23 UTC Sunday = 7:23 PM ET Saturday (close enough to Sunday evening)
+  workflow_dispatch:
+
+jobs:
+  weekly-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate weekly review
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X GET "https://www.ruhrohhalp.com/api/cron/weekly-review" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "Response: $STATUS"
+          if [ "$STATUS" != "200" ]; then exit 1; fi

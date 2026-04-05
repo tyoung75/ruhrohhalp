@@ -147,6 +147,9 @@ export async function POST(request: NextRequest) {
         warnings.push(`tasks: ${taskResult.reason instanceof Error ? taskResult.reason.message : String(taskResult.reason)}`);
       }
 
+      // Sync Google Tasks completion back to ruhrohhalp tasks
+      await syncCalendarRemindersToTasks(supabase, calendarSignals, userId);
+
       const signals: BrainSyncSignals = {
         gmail: gmailSignals,
         calendar: calendarSignals,
@@ -370,6 +373,60 @@ async function fetchCalendarSignals(auth: ReturnType<typeof getGoogleClient>): P
       attendees: summarizeAttendees(event.attendees),
       description: truncate(cleanText(event.description ?? ""), 800),
     }));
+}
+
+/**
+ * Sync Google Tasks completion back to ruhrohhalp tasks.
+ * When a Google Task is marked complete in Calendar, find the linked
+ * ruhrohhalp task and mark it done too.
+ */
+async function syncCalendarRemindersToTasks(
+  supabase: ReturnType<typeof createAdminClient>,
+  _calendarSignals: CalendarSignal[],
+  userId: string,
+) {
+  try {
+    const auth = getGoogleClient();
+    const tasksApi = google.tasks({ version: "v1", auth });
+
+    // Get all task lists
+    const { data: lists } = await tasksApi.tasklists.list({ maxResults: 100 });
+
+    for (const list of lists.items ?? []) {
+      if (!list.id) continue;
+
+      // Get completed tasks from the last 7 days
+      const { data: completed } = await tasksApi.tasks.list({
+        tasklist: list.id,
+        showCompleted: true,
+        showHidden: true,
+        updatedMin: new Date(Date.now() - 7 * 86400000).toISOString(),
+      });
+
+      for (const gTask of completed.items ?? []) {
+        if (gTask.status !== "completed" || !gTask.id) continue;
+
+        // Find linked ruhrohhalp task via ai_metadata
+        const { data: rrhTask } = await supabase
+          .from("tasks")
+          .select("id, state")
+          .eq("user_id", userId)
+          .not("state", "in", '("done","cancelled")')
+          .contains("ai_metadata", { google_task_id: gTask.id })
+          .maybeSingle();
+
+        if (rrhTask) {
+          await supabase.from("tasks").update({
+            state: "done",
+            status: "done",
+            updated_at: new Date().toISOString(),
+          }).eq("id", rrhTask.id);
+        }
+      }
+    }
+  } catch {
+    // Google Tasks API may not be available — skip silently
+  }
 }
 
 async function fetchTaskSignals(userId: string): Promise<TaskSignal[]> {

@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/tasks",
   ].join(" ");
 
   const state = Buffer.from(
