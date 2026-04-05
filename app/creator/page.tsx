@@ -1070,7 +1070,7 @@ function QueueTab() {
         if (res.queued) parts.push(`${res.queued} queued`);
         if (res.flagged) parts.push(`${res.flagged} drafts`);
         if (res.rejected) parts.push(`${res.rejected} rejected`);
-        if (res.insertErrors?.length) parts.push(`${res.insertErrors.length} insert errors`);
+        if (res.insertErrors?.length) parts.push(`${res.insertErrors.length} DB errors: ${res.insertErrors[0]}`);
         if (!parts.length) return `${res.generated} generated but none passed audit`;
         if (!res.queued && !res.flagged) return `${res.generated} generated — ${parts.join(", ")}`;
         return parts.join(", ");

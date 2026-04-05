@@ -314,20 +314,31 @@ export async function POST(request: NextRequest) {
         model_source: modelSource,
       };
 
-      const { data, error } = await supabase.from("content_queue").insert({
+      const baseRow = {
         user_id: userId,
         platform: postPlatform,
         content_type: contentType,
         body: bodyStr,
         scheduled_for: scheduledFor.toISOString(),
         status: queueStatus,
-        confidence_score: post.confidence,
+        confidence_score: post.confidence ?? null,
         brand_voice_score: auditedBrandScore,
         timeliness_score: post.timeliness_score ?? null,
         agent_reasoning: reasoning,
-        model_source: modelSource,
         context_snapshot: trimmedSnapshot,
+      };
+
+      // Try with model_source column first; if it fails (column may not exist yet),
+      // retry without it so generation still works before migration is applied
+      let { data, error } = await supabase.from("content_queue").insert({
+        ...baseRow,
+        model_source: modelSource,
       }).select("id").single();
+
+      if (error && error.message?.includes("model_source")) {
+        console.warn("[creator-generate] model_source column missing, retrying without it");
+        ({ data, error } = await supabase.from("content_queue").insert(baseRow).select("id").single());
+      }
 
       if (error) {
         console.error("[creator-generate] Queue insert error:", error.message, error.details, error.hint);
@@ -343,7 +354,7 @@ export async function POST(request: NextRequest) {
       queued: queued.length,
       flagged: flagged.length,
       rejected: rejected.length,
-      insertErrors: insertErrors.length ? insertErrors : undefined,
+      insertErrors: insertErrors.length ? insertErrors.slice(0, 3) : undefined,
       queueIds: queued,
       generatedByModel,
     });
