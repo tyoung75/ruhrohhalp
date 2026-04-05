@@ -241,7 +241,6 @@ export async function POST(request: NextRequest) {
     );
 
     // Persist scouted brands as 'scouted' status
-    const now = new Date().toISOString();
     let persisted = 0;
     const insertErrors: { brand: string; error: string }[] = [];
     for (const rec of filtered) {
