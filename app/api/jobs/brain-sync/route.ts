@@ -246,26 +246,14 @@ function parseBoolean(value: unknown): boolean {
 }
 
 function getGoogleClient() {
-  // Brain-sync needs Gmail + Calendar scopes, which are granted to the
-  // GOOGLE_* OAuth client (via /api/auth/gmail). Prefer GOOGLE_CLIENT_ID
-  // explicitly so we don't accidentally use the YOUTUBE_* client (which
-  // may lack Calendar API access).
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const oauth = getGoogleOauthCredentials();
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    // Fall back to shared resolver if GOOGLE_* not set
-    const oauth = getGoogleOauthCredentials();
-    if (!oauth || !refreshToken) {
-      throw new Error("Missing Google OAuth credentials for brain-sync");
-    }
-    const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
-    client.setCredentials({ refresh_token: refreshToken });
-    return client;
+  if (!oauth || !refreshToken) {
+    throw new Error("Missing Google OAuth credentials for brain-sync");
   }
 
-  const client = new google.auth.OAuth2(clientId, clientSecret);
+  const client = new google.auth.OAuth2(oauth.clientId, oauth.clientSecret);
   client.setCredentials({ refresh_token: refreshToken });
   return client;
 }
