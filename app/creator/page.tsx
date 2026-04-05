@@ -1027,6 +1027,10 @@ function QueueTab() {
     api<{ best_hours: number[] }>("/api/creator/optimal-hours?platform=threads")
       .then((res) => { if (res.best_hours?.length) setBestHours(res.best_hours); })
       .catch(() => {});
+    // Listen for background task completions (survives page navigation)
+    const onRefresh = () => void fetchQueue();
+    window.addEventListener("queue:refresh", onRefresh);
+    return () => window.removeEventListener("queue:refresh", onRefresh);
   }, [fetchQueue, fetchSettings]);
 
   async function updateItem(id: string, updates: Record<string, unknown>) {
@@ -1061,7 +1065,7 @@ function QueueTab() {
       "Generating content",
       async () => {
         await api("/api/creator/generate", { method: "POST" });
-        fetchQueue();
+        window.dispatchEvent(new CustomEvent("queue:refresh"));
         return "Content generated";
       },
       { onSuccess: () => setSaving(false), onError: () => setSaving(false) },
@@ -1074,7 +1078,7 @@ function QueueTab() {
       "Publishing posts",
       async () => {
         await api("/api/creator/publish-now", { method: "POST" });
-        fetchQueue();
+        window.dispatchEvent(new CustomEvent("queue:refresh"));
         return "Posts published";
       },
       { onSuccess: () => setSaving(false), onError: () => setSaving(false) },
@@ -1090,7 +1094,7 @@ function QueueTab() {
           method: "POST",
           body: JSON.stringify({ postId }),
         });
-        fetchQueue();
+        window.dispatchEvent(new CustomEvent("queue:refresh"));
         return "Post published";
       },
       { onSuccess: () => setPublishingId(null), onError: () => setPublishingId(null) },
@@ -1116,7 +1120,7 @@ function QueueTab() {
           ? `Synced ${result.imported} external post${result.imported !== 1 ? "s" : ""}`
           : "All posts already synced";
         setSyncResult(msg);
-        if (result.imported > 0) fetchQueue();
+        if (result.imported > 0) window.dispatchEvent(new CustomEvent("queue:refresh"));
         setTimeout(() => setSyncResult(null), 4000);
         return msg;
       },
@@ -1444,7 +1448,7 @@ function QueueTab() {
           onClose={() => setShowGenerateModal(false)}
           onGenerated={(variants) => {
             setGeneratedVariants(variants);
-            fetchQueue();
+            window.dispatchEvent(new CustomEvent("queue:refresh"));
           }}
         />
       )}
