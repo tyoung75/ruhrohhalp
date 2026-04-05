@@ -225,14 +225,15 @@ export function BrandsDashboard() {
     runBgTask(
       "Scouting brands",
       async () => {
-        const res = await api<{ ok: boolean; persisted: number; claude_brands: unknown[]; chatgpt_brands: unknown[]; errors: { claude: string | null; chatgpt: string | null } }>("/api/brands/scout", { method: "POST" });
+        const res = await api<{ ok: boolean; persisted: number; filtered_out?: string[]; claude_brands: unknown[]; chatgpt_brands: unknown[]; errors: { claude: string | null; chatgpt: string | null } }>("/api/brands/scout", { method: "POST" });
         window.dispatchEvent(new CustomEvent("brands:refresh"));
         const parts: string[] = [];
         if (res.chatgpt_brands?.length) parts.push(`${res.chatgpt_brands.length} web-searched`);
         if (res.claude_brands?.length) parts.push(`${res.claude_brands.length} AI-matched`);
+        if (res.filtered_out?.length) parts.push(`${res.filtered_out.length} already in pipeline`);
         if (res.errors?.claude) parts.push("Claude failed");
         if (res.errors?.chatgpt) parts.push("web search failed");
-        return `${res.persisted} brands scouted${parts.length ? ` (${parts.join(", ")})` : ""}`;
+        return `${res.persisted} new brands scouted${parts.length ? ` (${parts.join(", ")})` : ""}`;
       },
       { onSuccess: () => setScouting(false), onError: () => setScouting(false) },
     );

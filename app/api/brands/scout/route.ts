@@ -59,9 +59,11 @@ IMPORTANT: Only include brands where:
 - You can provide a REAL contact email or application URL (not guessed)
 - The partnership is realistic for someone with ~6K followers
 
-Already in pipeline (DO NOT recommend these):
+CRITICAL — DO NOT recommend ANY of these brands (they are already in Tyler's pipeline):
 ${existingContext || "None yet"}
-${feedbackContext}`;
+${feedbackContext}
+
+You MUST find brands NOT on the above list. Think beyond the obvious — find emerging DTC brands, local Austin brands, or niche fitness/running brands that most people wouldn't think of.`;
 
   const raw = await callClaude(systemPrompt, userPrompt, 2048);
   const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
@@ -120,9 +122,11 @@ ${statsBlock}`,
 
 ${focus ? `Focus area: ${focus}` : ""}
 
-Already in pipeline (DO NOT recommend these):
+CRITICAL — DO NOT recommend ANY of these brands (they are already in Tyler's pipeline):
 ${existingContext || "None yet"}
 ${feedbackContext}
+
+You MUST find brands NOT on the above list. Search for emerging DTC brands, local Austin brands, or niche fitness/running/HYROX brands.
 
 Return ONLY a JSON array of exactly 3 objects with these fields:
 brand_name, contact_email (real verified email or null), contact_source (the URL or page where you found the contact), why, relationship_type ("active_user"|"regular_buyer"|"new"|"long_term"), product_usage (specific products Tyler could use), angle (specific pitch angle), estimated_value_low (number in dollars), estimated_value_high (number in dollars), priority ("P0"|"P1"|"P2")
@@ -273,12 +277,18 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
+    // Track which brands were filtered out so we can debug
+    const filteredOut = deduped
+      .filter((r) => existingBrands.some((name) => name.toLowerCase() === r.brand_name.toLowerCase()))
+      .map((r) => r.brand_name);
+
     return NextResponse.json({
       ok: true,
       recommendations: filtered,
       claude_brands: claudeBrands,
       chatgpt_brands: chatgptBrands,
       persisted,
+      filtered_out: filteredOut,
       focus: focus || null,
       existing_count: existingBrands.length,
       errors,
