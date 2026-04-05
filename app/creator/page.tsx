@@ -26,6 +26,7 @@ interface QueueItem {
   post_id: string | null;
   post_url: string | null;
   source: string | null;
+  model_source?: string | null;
   attempts: number;
   last_error: string | null;
   confidence_score: number | null;
@@ -83,6 +84,7 @@ interface AnalyticsResponse {
     body: string;
     platform: string;
     source?: string;
+    model_source?: string | null;
     impressions: number;
     likes: number;
     replies: number;
@@ -100,6 +102,7 @@ interface AnalyticsResponse {
     engagement_rate: number;
   }>;
   source_breakdown?: Record<string, { posts: number; impressions: number; avgEngagement: number }>;
+  model_breakdown?: Record<string, { posts: number; impressions: number; avgEngagement: number }>;
   daily_trend: Array<{
     date: string;
     impressions: number;
@@ -168,6 +171,14 @@ function statusBadge(status: string) {
     border: `1px solid ${color}30`,
     textTransform: "uppercase" as const,
   };
+}
+
+function modelMeta(modelSource?: string | null): { label: string; color: string } {
+  const model = (modelSource ?? "unknown").toLowerCase();
+  if (model === "internal") return { label: "Internal", color: C.gem };
+  if (model === "chatgpt") return { label: "ChatGPT", color: C.gpt };
+  if (model === "claude") return { label: "Claude", color: "#f59e0b" };
+  return { label: "Unknown", color: C.textDim };
 }
 
 /**
@@ -2397,6 +2408,26 @@ function AnalyticsTab() {
                     padding: "10px 14px",
                   }}
                 >
+                  <div style={{ marginBottom: 6 }}>
+                    {(() => {
+                      const model = modelMeta(post.model_source);
+                      return (
+                        <span
+                          style={{
+                            fontFamily: C.mono,
+                            fontSize: 9,
+                            color: model.color,
+                            background: `${model.color}18`,
+                            border: `1px solid ${model.color}40`,
+                            padding: "1px 6px",
+                            borderRadius: 10,
+                          }}
+                        >
+                          {model.label}
+                        </span>
+                      );
+                    })()}
+                  </div>
                   <div
                     style={{
                       fontFamily: C.sans,
@@ -2493,6 +2524,43 @@ function AnalyticsTab() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </>
+          )}
+
+          {/* Model performance breakdown */}
+          {data.model_breakdown && Object.keys(data.model_breakdown).length > 0 && (
+            <>
+              <SectionHeader>Model Performance</SectionHeader>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                {Object.entries(data.model_breakdown).map(([modelKey, stats]) => {
+                  const model = modelMeta(modelKey);
+                  return (
+                    <div
+                      key={modelKey}
+                      style={{
+                        background: C.card,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 8,
+                        padding: "10px 14px",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <div style={{ fontFamily: C.sans, fontSize: 13, color: model.color }}>
+                            {model.label}
+                          </div>
+                          <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textFaint, marginTop: 2 }}>
+                            {stats.posts} posts &middot; {stats.impressions.toLocaleString()} impressions
+                          </div>
+                        </div>
+                        <div style={{ fontFamily: C.mono, fontSize: 14, color: model.color }}>
+                          {(stats.avgEngagement * 100).toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}
@@ -2923,6 +2991,22 @@ function HistoryTab() {
                       borderRadius: 10,
                     }}>
                       External
+                    </span>
+                  )}
+                  {item.model_source && (
+                    <span
+                      style={{
+                        fontFamily: C.mono,
+                        fontSize: 9,
+                        color: modelMeta(item.model_source).color,
+                        background: `${modelMeta(item.model_source).color}18`,
+                        border: `1px solid ${modelMeta(item.model_source).color}40`,
+                        padding: "1px 6px",
+                        borderRadius: 10,
+                      }}
+                      title="Model that generated this post"
+                    >
+                      {modelMeta(item.model_source).label}
                     </span>
                   )}
                   {item.post_url && (
