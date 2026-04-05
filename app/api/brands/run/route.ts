@@ -41,21 +41,26 @@ export async function POST() {
       const matched = active.find((d) => d.contact_email && reply.from.includes(d.contact_email));
       if (!matched) continue;
 
-      const classification = await classifyReply(reply.subject, reply.body);
-      await updateDealStatus(matched.id, "replied", { last_reply_date: new Date().toISOString(), next_action: `Reply needed (${classification})` });
-      await recordEmail({
-        brand_deal_id: matched.id,
-        sent_at: new Date().toISOString(),
-        email_type: "response",
-        subject: reply.subject,
-        gmail_thread_id: reply.threadId,
-        gmail_message_id: reply.messageId,
-        gmail_draft_id: null,
-        direction: "inbound",
-        summary: reply.body.slice(0, 280),
-      });
-      await createFollowUpTask(user.id, { ...matched, next_action_date: new Date().toISOString().slice(0, 10), next_action: `Respond to ${matched.brand_name}` });
-      actionsTaken.replied.push({ brand: matched.brand_name, classification });
+      try {
+        const classification = await classifyReply(reply.subject, reply.body);
+        await updateDealStatus(matched.id, "replied", { last_reply_date: new Date().toISOString(), next_action: `Reply needed (${classification})` });
+        await recordEmail({
+          brand_deal_id: matched.id,
+          sent_at: new Date().toISOString(),
+          email_type: "response",
+          subject: reply.subject,
+          gmail_thread_id: reply.threadId,
+          gmail_message_id: reply.messageId,
+          gmail_draft_id: null,
+          direction: "inbound",
+          summary: reply.body.slice(0, 280),
+        });
+        await createFollowUpTask(user.id, { ...matched, next_action_date: new Date().toISOString().slice(0, 10), next_action: `Respond to ${matched.brand_name}` });
+        actionsTaken.replied.push({ brand: matched.brand_name, classification });
+      } catch (replyErr) {
+        logError("brands.run.reply", replyErr, { brand: matched.brand_name });
+        actionsTaken.skipped.push({ brand: matched.brand_name, reason: "Reply processing failed" });
+      }
     }
 
     // Include deals past their next_action_date (not just 10-day-old follow-ups)
