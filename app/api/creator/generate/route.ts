@@ -2,8 +2,8 @@
  * Content Generation Agent — POST /api/creator/generate
  *
  * Takes daily context (calendar, strava, recent posts, goals) and generates
- * a batch of Threads posts using Claude. Each post passes through the
- * Groq audit layer for safety before being queued.
+ * a batch of cross-platform posts from multiple models. Each post passes
+ * through safety and brand/timeliness audits before being queued.
  *
  * Auth: Requires authenticated user OR cron secret.
  */
@@ -43,6 +43,79 @@ interface BrandVoiceAuditResult {
   factual_grounding: number;
   issues: string[];
   suggestion?: string;
+}
+
+type ContentGeneratorSource = "internal" | "chatgpt" | "claude";
+
+async function callChatGPT(system: string, userMessage: string, maxTokens = 2048): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY for content generation");
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4.1",
+      max_tokens: maxTokens,
+      temperature: 0.8,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userMessage },
+      ],
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message ?? `ChatGPT call failed (${res.status})`);
+  }
+
+  return data.choices?.[0]?.message?.content ?? "";
+}
+
+async function callClaudeDirect(system: string, userMessage: string, maxTokens = 2048): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY for content generation");
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: AI_MODELS.PRIMARY,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: userMessage }],
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message ?? `Claude call failed (${res.status})`);
+  }
+
+  return data.content?.find((c: { type: string }) => c.type === "text")?.text ?? "";
+}
+
+function parseGeneratedPosts(rawResponse: string, source: ContentGeneratorSource): GeneratedPost[] {
+  const jsonStr = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (!Array.isArray(parsed)) {
+      console.error(`[creator-generate] ${source} returned non-array payload`);
+      return [];
+    }
+    return parsed as GeneratedPost[];
+  } catch {
+    console.error(`[creator-generate] Failed to parse ${source} response:`, rawResponse.slice(0, 500));
+    return [];
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -96,7 +169,7 @@ export async function POST(request: NextRequest) {
     const context = await gatherDailyContext(supabase, userId);
     const contentMemories = await searchContentMemories(supabase, userId);
 
-    // 2. Generate posts with Claude
+    // 2. Generate posts from three sources (internal agent + ChatGPT + Claude API)
     const isSeedMode = !!(seedTopic || seedPlatform);
     const memoryBlock = contentMemories.length
       ? `\n\n--- CONTENT PERFORMANCE LEARNINGS (from semantic memory) ---\n${contentMemories.join("\n\n")}`
@@ -109,16 +182,21 @@ export async function POST(request: NextRequest) {
     } else {
       userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate 5 posts across platforms based on this context. Learn from the performance data above — lean into patterns that worked and avoid patterns that didn't. Return ONLY a JSON array.`;
     }
-    const rawResponse = await callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048);
+    const sourceCalls: Array<Promise<{ source: ContentGeneratorSource; raw: string }>> = [
+      callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "internal" as const, raw })),
+      callChatGPT(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "chatgpt" as const, raw })),
+      callClaudeDirect(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "claude" as const, raw })),
+    ];
 
-    // Parse JSON from response (handle markdown code blocks)
-    const jsonStr = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-    let posts: GeneratedPost[];
-    try {
-      posts = JSON.parse(jsonStr);
-    } catch {
-      console.error("[creator-generate] Failed to parse AI response:", rawResponse.slice(0, 500));
-      return NextResponse.json({ error: "Failed to parse generated content" }, { status: 500 });
+    const settledResponses = await Promise.allSettled(sourceCalls);
+    const posts: GeneratedPost[] = [];
+
+    for (const result of settledResponses) {
+      if (result.status === "fulfilled") {
+        posts.push(...parseGeneratedPosts(result.value.raw, result.value.source));
+      } else {
+        console.error("[creator-generate] Model call failed:", result.reason);
+      }
     }
 
     if (!Array.isArray(posts) || posts.length === 0) {
