@@ -18,6 +18,8 @@ import { limitByKey } from "@/lib/security/rate-limit";
 import { generateEmbeddings } from "@/lib/embedding/openai";
 import { buildTrainingSummary } from "@/lib/strava/client";
 
+export const maxDuration = 120;
+
 interface GeneratedPost {
   body: string | string[]; // string for single posts, string[] for threads
   type: string;
@@ -232,6 +234,7 @@ export async function POST(request: NextRequest) {
     const queued: string[] = [];
     const flagged: string[] = [];
     const rejected: string[] = [];
+    const insertErrors: string[] = [];
 
     for (let i = 0; i < posts.length; i++) {
       const post = posts[i];
@@ -303,6 +306,14 @@ export async function POST(request: NextRequest) {
         reasoning += ` | Brand audit issues: ${brandAudit.issues.join("; ")}`;
       }
 
+      // Trim context_snapshot to avoid oversized JSONB — keep only audit metadata
+      const trimmedSnapshot = {
+        date: context.date,
+        dayOfWeek: context.dayOfWeek,
+        brand_audit: brandAuditMeta,
+        model_source: modelSource,
+      };
+
       const { data, error } = await supabase.from("content_queue").insert({
         user_id: userId,
         platform: postPlatform,
@@ -315,11 +326,12 @@ export async function POST(request: NextRequest) {
         timeliness_score: post.timeliness_score ?? null,
         agent_reasoning: reasoning,
         model_source: modelSource,
-        context_snapshot: { ...context, brand_audit: brandAuditMeta, model_source: modelSource },
+        context_snapshot: trimmedSnapshot,
       }).select("id").single();
 
       if (error) {
-        console.error("[creator-generate] Queue insert error:", error);
+        console.error("[creator-generate] Queue insert error:", error.message, error.details, error.hint);
+        insertErrors.push(`${modelSource}/${i}: ${error.message}`);
       } else if (data) {
         queued.push(data.id);
       }
@@ -331,6 +343,7 @@ export async function POST(request: NextRequest) {
       queued: queued.length,
       flagged: flagged.length,
       rejected: rejected.length,
+      insertErrors: insertErrors.length ? insertErrors : undefined,
       queueIds: queued,
       generatedByModel,
     });
