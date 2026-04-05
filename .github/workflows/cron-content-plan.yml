@@ -1,0 +1,48 @@
+name: Weekly Content Planner
+
+# Plans next week's content calendar every Sunday night.
+# Uses AI + analytics + trend signals + strategy insights to create
+# 2-3 planned slots per day across brand pillars.
+#
+# The overnight content generation job (cron-content-gen) then uses
+# these planned slots as seeds instead of generating blindly.
+#
+# Times are in UTC. Currently EDT (UTC-4):
+#   02:00 UTC = 10:00 PM ET (Sunday night, before overnight content gen)
+
+on:
+  schedule:
+    - cron: "0 2 * * 0"    # 10:00 PM ET (EDT) — Sunday night
+  workflow_dispatch:        # Allow manual trigger from GitHub Actions UI
+
+jobs:
+  plan:
+    name: Plan next week's content
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger weekly content planner
+        run: |
+          echo "Triggering weekly content planner at $(date -u)"
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://www.ruhrohhalp.com/api/creator/calendar/plan" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --data '{}' \
+            --max-time 120)
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Response body:"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "ERROR: content planner returned HTTP $http_code"
+            exit 1
+          fi
+
+          planned=$(echo "$body" | jq -r '.planned // 0' 2>/dev/null)
+          echo "✓ Weekly content plan created: $planned slots planned"

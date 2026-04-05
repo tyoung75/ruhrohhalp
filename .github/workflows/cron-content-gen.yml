@@ -1,11 +1,13 @@
 name: Overnight Content Generation
 
-# Generates a batch of Threads posts overnight so the queue is stocked
-# for tomorrow's publish windows.
+# Generates tomorrow's Threads posts from the content calendar plan.
+# If planned slots exist for tomorrow, generates from those (seeded).
+# Falls back to blind batch generation if no plan exists.
 #
-# Flow: generate → safety audit → score → sit in queue → published at 12/6/9:30 PM
+# Flow: check calendar → generate from plan (or batch) → audit → queue → publish next day
 #
 # Runs at 11:00 PM ET (03:00 UTC during EDT, 04:00 UTC during EST).
+# The weekly planner runs at 10 PM ET Sunday to plan the week first.
 
 on:
   schedule:
@@ -19,25 +21,77 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Trigger content generation
+      - name: Generate from calendar plan or batch
         run: |
-          echo "Triggering overnight content generation at $(date -u)"
-          response=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://www.ruhrohhalp.com/api/creator/generate" \
+          echo "Overnight content generation at $(date -u)"
+
+          # Tomorrow's date (ET is UTC-4 during EDT)
+          TOMORROW=$(TZ="America/New_York" date -d "+1 day" "+%Y-%m-%d" 2>/dev/null || date -u -d "+1 day" "+%Y-%m-%d")
+          echo "Planning for: $TOMORROW"
+
+          # Check for planned calendar slots for tomorrow
+          cal_response=$(curl -s -w "\n%{http_code}" -X GET \
+            "https://www.ruhrohhalp.com/api/creator/calendar?week=$TOMORROW" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json" \
-            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
-            --max-time 300)
+            --max-time 30)
 
-          http_code=$(echo "$response" | tail -n1)
-          body=$(echo "$response" | sed '$d')
+          cal_code=$(echo "$cal_response" | tail -n1)
+          cal_body=$(echo "$cal_response" | sed '$d')
 
-          echo "HTTP status: $http_code"
-          echo "Response body:"
-          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+          # Extract planned slot IDs for tomorrow
+          planned_slots=$(echo "$cal_body" | jq -r --arg d "$TOMORROW" \
+            '[.calendar[] | select(.planned_date == $d and .status == "planned")] | .[].id // empty' 2>/dev/null)
 
-          if [ "$http_code" -ne 200 ]; then
-            echo "ERROR: content generation returned HTTP $http_code"
-            exit 1
+          slot_count=$(echo "$planned_slots" | grep -c . 2>/dev/null || echo "0")
+          echo "Found $slot_count planned slots for $TOMORROW"
+
+          generated=0
+
+          # Generate from each planned slot
+          if [ "$slot_count" -gt 0 ]; then
+            echo "=== Generating from calendar plan ==="
+            for slot_id in $planned_slots; do
+              echo "Generating from slot: $slot_id"
+              gen_response=$(curl -s -w "\n%{http_code}" -X POST \
+                "https://www.ruhrohhalp.com/api/creator/calendar/fill-gap" \
+                -H "Content-Type: application/json" \
+                -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+                --data "{\"slot_id\": \"$slot_id\"}" \
+                --max-time 120)
+
+              gen_code=$(echo "$gen_response" | tail -n1)
+              gen_body=$(echo "$gen_response" | sed '$d')
+              echo "  HTTP $gen_code: $(echo "$gen_body" | jq -c '.' 2>/dev/null || echo "$gen_body")"
+
+              if [ "$gen_code" -eq 200 ]; then
+                generated=$((generated + 1))
+              fi
+            done
+            echo "✓ Generated $generated posts from calendar plan"
           fi
 
-          echo "✓ Content generation completed successfully"
+          # Fall back to batch generation if no calendar slots (or too few)
+          if [ "$generated" -lt 2 ]; then
+            echo "=== Supplementing with batch generation ==="
+            response=$(curl -s -w "\n%{http_code}" -X POST \
+              "https://www.ruhrohhalp.com/api/creator/generate" \
+              -H "Content-Type: application/json" \
+              -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+              --max-time 300)
+
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+
+            echo "HTTP status: $http_code"
+            echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+            if [ "$http_code" -ne 200 ]; then
+              echo "WARNING: batch generation returned HTTP $http_code"
+            else
+              batch_count=$(echo "$body" | jq -r '.queued // 0' 2>/dev/null)
+              echo "✓ Batch generated $batch_count additional posts"
+            fi
+          fi
+
+          echo "✓ Overnight content generation completed"
