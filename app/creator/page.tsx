@@ -8,7 +8,7 @@ import { Spinner } from "@/components/primitives";
 import { BrandScoutPanel } from "@/components/brand-scout-panel";
 import { useMobile } from "@/lib/useMobile";
 import { BrandsDashboard } from "@/components/brands/BrandsDashboard";
-import { ContentCalendar } from "@/components/creator/ContentCalendar";
+
 import { MediaPipeline } from "@/components/creator/MediaPipeline";
 
 // ---------------------------------------------------------------------------
@@ -290,7 +290,7 @@ export default function CreatorPage() {
         {tab === "history" && <HistoryTab />}
         {tab === "strategy" && <StrategyTab />}
         {tab === "brands" && <BrandsDashboard />}
-        {tab === "calendar" && <ContentCalendar />}
+        {tab === "calendar" && <CalendarTab />}
         {tab === "media" && <MediaPipeline />}
       </div>
     </div>
@@ -4089,6 +4089,411 @@ function guessPillar(text: string): string {
   if (/gym|lift|strength|muscle|deadlift|squat|functional|concurrent/i.test(lower)) return "fitness";
   if (/travel|trip|adventure|destination|explore/i.test(lower)) return "travel";
   return "running"; // default
+}
+
+// ---------------------------------------------------------------------------
+// Calendar Tab
+// ---------------------------------------------------------------------------
+
+interface CalendarSlot {
+  id: string;
+  planned_date: string;
+  time_slot: string;
+  platform: string;
+  pillar: string;
+  topic: string;
+  format: string;
+  rationale: string | null;
+  trend_relevance: number;
+  status: string;
+  content_queue_id: string | null;
+}
+
+interface CalendarPost {
+  id: string;
+  platform: string;
+  content_type: string;
+  body: string;
+  status: string;
+  scheduled_for: string | null;
+  pillar_name: string | null;
+  topic: string | null;
+}
+
+interface CalendarData {
+  week_start: string;
+  week_end: string;
+  calendar: CalendarSlot[];
+  posts: CalendarPost[];
+  pillar_coverage: Record<string, number>;
+  total_posts_30d: number;
+}
+
+const CAL_PILLAR_COLORS: Record<string, string> = {
+  running: C.cl,
+  building: C.gem,
+  nyc: C.gold,
+  fitness: C.gpt,
+  travel: C.note,
+  default: C.textDim,
+};
+
+const CAL_TIME_SLOT_LABELS: Record<string, string> = {
+  morning: "AM",
+  midday: "Mid",
+  evening: "PM",
+  late_night: "Late",
+};
+
+function getMonday(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function formatDateShort(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  return d.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" }).replace("/", "-");
+}
+
+function CalendarTab() {
+  const isMobile = useMobile();
+  const [data, setData] = useState<CalendarData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [planning, setPlanning] = useState(false);
+  const [fillingGap, setFillingGap] = useState<string | null>(null);
+
+  const currentMonday = getMonday(new Date());
+  const displayMonday = new Date(currentMonday);
+  displayMonday.setDate(displayMonday.getDate() + weekOffset * 7);
+  const weekStr = displayMonday.toISOString().slice(0, 10);
+
+  const fetchCalendar = useCallback(() => {
+    setLoading(true);
+    api<CalendarData>(`/api/creator/calendar?week=${weekStr}`)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [weekStr]);
+
+  useEffect(() => { fetchCalendar(); }, [fetchCalendar]);
+
+  const handlePlanWeek = async () => {
+    setPlanning(true);
+    try {
+      await api("/api/creator/calendar/plan", {
+        method: "POST",
+        body: JSON.stringify({ week: weekStr }),
+      });
+      fetchCalendar();
+    } catch {
+      // silently fail
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const handleFillGap = async (date: string) => {
+    setFillingGap(date);
+    try {
+      await api("/api/creator/calendar/fill-gap", {
+        method: "POST",
+        body: JSON.stringify({ date }),
+      });
+      fetchCalendar();
+    } catch {
+      // silently fail
+    } finally {
+      setFillingGap(null);
+    }
+  };
+
+  const handleGenerateFromSlot = async (slotId: string) => {
+    setFillingGap(slotId);
+    try {
+      await api("/api/creator/calendar/fill-gap", {
+        method: "POST",
+        body: JSON.stringify({ slot_id: slotId }),
+      });
+      fetchCalendar();
+    } catch {
+      // silently fail
+    } finally {
+      setFillingGap(null);
+    }
+  };
+
+  // Build 7-day array
+  const days: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(displayMonday);
+    d.setDate(d.getDate() + i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  // Group slots and posts by date
+  const slotsByDate = new Map<string, CalendarSlot[]>();
+  const postsByDate = new Map<string, CalendarPost[]>();
+
+  for (const slot of data?.calendar ?? []) {
+    const existing = slotsByDate.get(slot.planned_date) ?? [];
+    existing.push(slot);
+    slotsByDate.set(slot.planned_date, existing);
+  }
+
+  for (const post of data?.posts ?? []) {
+    if (!post.scheduled_for) continue;
+    const dateKey = post.scheduled_for.slice(0, 10);
+    const existing = postsByDate.get(dateKey) ?? [];
+    existing.push(post);
+    postsByDate.set(dateKey, existing);
+  }
+
+  const displaySunday = new Date(displayMonday);
+  displaySunday.setDate(displaySunday.getDate() + 6);
+
+  return (
+    <div style={{ padding: isMobile ? 14 : 28, maxWidth: 1200 }}>
+      {/* Pillar Coverage Bar */}
+      {data && data.total_posts_30d > 0 && (
+        <div style={{
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          padding: 14,
+          marginBottom: 20,
+        }}>
+          <div style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+            Content Pillar Coverage
+          </div>
+          <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
+            {Object.entries(data.pillar_coverage)
+              .sort(([, a], [, b]) => b - a)
+              .map(([pillar, pct]) => (
+                <div key={pillar} style={{
+                  width: `${pct}%`,
+                  background: CAL_PILLAR_COLORS[pillar] ?? C.textDim,
+                  minWidth: pct > 0 ? 3 : 0,
+                }} />
+              ))}
+          </div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {Object.entries(data.pillar_coverage)
+              .sort(([, a], [, b]) => b - a)
+              .map(([pillar, pct]) => (
+                <span key={pillar} style={{ fontSize: 11, fontFamily: C.mono, color: CAL_PILLAR_COLORS[pillar] ?? C.textDim }}>
+                  {pillar}: {pct}%
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Week Navigation */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <button
+          onClick={() => setWeekOffset((o) => o - 1)}
+          style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 12px", color: C.text, cursor: "pointer", fontFamily: C.mono, fontSize: 12 }}
+        >
+          ← Prev
+        </button>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontFamily: C.mono, fontSize: 13, color: C.cream }}>
+            {displayMonday.toISOString().slice(0, 10)} — {displaySunday.toISOString().slice(0, 10)}
+          </span>
+          {weekOffset !== 0 && (
+            <button
+              onClick={() => setWeekOffset(0)}
+              style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 8px", color: C.textDim, cursor: "pointer", fontFamily: C.mono, fontSize: 10 }}
+            >
+              This Week
+            </button>
+          )}
+          <button
+            onClick={handlePlanWeek}
+            disabled={planning}
+            style={{
+              background: planning ? C.surface : C.cl,
+              border: "none",
+              borderRadius: 6,
+              padding: "6px 14px",
+              color: planning ? C.textDim : "#fff",
+              cursor: planning ? "default" : "pointer",
+              fontFamily: C.mono,
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >
+            {planning ? "Planning..." : "Plan Week"}
+          </button>
+        </div>
+
+        <button
+          onClick={() => setWeekOffset((o) => o + 1)}
+          style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 12px", color: C.text, cursor: "pointer", fontFamily: C.mono, fontSize: 12 }}
+        >
+          Next →
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 60 }}><Spinner /></div>
+      ) : (
+        /* Weekly Grid */
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr" : "repeat(7, 1fr)",
+          gap: 1,
+          background: C.border,
+          borderRadius: 8,
+          overflow: "hidden",
+        }}>
+          {days.map((date, i) => {
+            const isToday = date === today;
+            const slots = slotsByDate.get(date) ?? [];
+            const posts = postsByDate.get(date) ?? [];
+            const hasContent = slots.length > 0 || posts.length > 0;
+
+            return (
+              <div key={date} style={{
+                background: isToday ? `${C.cl}08` : C.surface,
+                padding: 10,
+                minHeight: isMobile ? 100 : 160,
+                display: "flex",
+                flexDirection: "column",
+                borderLeft: isToday ? `2px solid ${C.cl}` : undefined,
+              }}>
+                {/* Day Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontFamily: C.mono, fontSize: 11, color: isToday ? C.cl : C.textDim, fontWeight: isToday ? 700 : 400 }}>
+                    {dayNames[i]}
+                  </span>
+                  <span style={{ fontFamily: C.mono, fontSize: 10, color: isToday ? C.cl : C.textFaint }}>
+                    {formatDateShort(date)}
+                  </span>
+                </div>
+
+                {/* Posts (actual content) */}
+                {posts.map((post) => (
+                  <div key={post.id} style={{
+                    background: C.card,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    marginBottom: 4,
+                    borderLeft: `3px solid ${CAL_PILLAR_COLORS[post.pillar_name ?? "default"] ?? C.textDim}`,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+                      <span style={statusBadge(post.status)}>{post.status}</span>
+                      <span style={{ fontSize: 9, color: C.textDim, fontFamily: C.mono }}>{post.platform?.slice(0, 2).toUpperCase()}</span>
+                    </div>
+                    <div style={{
+                      fontSize: 11,
+                      color: C.text,
+                      lineHeight: 1.3,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical" as const,
+                    }}>
+                      {post.body?.startsWith("[") ? (JSON.parse(post.body)?.[0] ?? post.body).slice(0, 80) : post.body?.slice(0, 80)}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Planned Slots */}
+                {slots.map((slot) => (
+                  <div key={slot.id} style={{
+                    background: slot.status === "generated" ? `${C.gpt}10` : `${C.gem}08`,
+                    border: `1px solid ${slot.status === "generated" ? `${C.gpt}30` : `${C.gem}20`}`,
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    marginBottom: 4,
+                    borderLeft: `3px solid ${CAL_PILLAR_COLORS[slot.pillar] ?? C.textDim}`,
+                    cursor: slot.status === "planned" ? "pointer" : "default",
+                    opacity: slot.status === "skipped" ? 0.4 : 1,
+                  }}
+                    onClick={() => {
+                      if (slot.status === "planned") handleGenerateFromSlot(slot.id);
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+                      <span style={{
+                        fontSize: 9,
+                        fontFamily: C.mono,
+                        color: slot.status === "generated" ? C.gpt : C.gem,
+                        textTransform: "uppercase",
+                      }}>
+                        {slot.status === "planned" ? "planned" : slot.status === "generating" ? "generating..." : slot.status}
+                      </span>
+                      <span style={{ fontSize: 9, color: C.textDim, fontFamily: C.mono }}>
+                        {CAL_TIME_SLOT_LABELS[slot.time_slot] ?? slot.time_slot}
+                      </span>
+                      {slot.format === "thread" && (
+                        <span style={{ fontSize: 8, color: C.gold, fontFamily: C.mono }}>THREAD</span>
+                      )}
+                    </div>
+                    <div style={{
+                      fontSize: 11,
+                      color: C.text,
+                      lineHeight: 1.3,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical" as const,
+                    }}>
+                      {slot.topic}
+                    </div>
+                    {slot.status === "planned" && fillingGap === slot.id && (
+                      <div style={{ fontSize: 9, color: C.gem, fontFamily: C.mono, marginTop: 2 }}>generating...</div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Fill Gap button for empty days */}
+                {!hasContent && (
+                  <button
+                    onClick={() => handleFillGap(date)}
+                    disabled={fillingGap === date}
+                    style={{
+                      background: "none",
+                      border: `1px dashed ${C.borderMid}`,
+                      borderRadius: 6,
+                      padding: "8px 0",
+                      color: fillingGap === date ? C.textDim : C.textFaint,
+                      cursor: fillingGap === date ? "default" : "pointer",
+                      fontFamily: C.mono,
+                      fontSize: 11,
+                      marginTop: "auto",
+                    }}
+                  >
+                    {fillingGap === date ? "planning..." : "+ fill gap"}
+                  </button>
+                )}
+
+                {/* Dash for days with no content */}
+                {!hasContent && !fillingGap && (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ color: C.textFaint, fontSize: 16 }}>—</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function buildTimingHeatmap(bestTimes: string[]): number[][] {
