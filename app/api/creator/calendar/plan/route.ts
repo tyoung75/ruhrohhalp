@@ -27,8 +27,6 @@ const PILLAR_TARGETS: Record<string, number> = {
   fitness: 0.125,
 };
 
-const TIME_SLOTS = ["morning", "midday", "evening", "late_night"] as const;
-
 const PLANNER_SYSTEM = `You are Tyler Young's Content Calendar Planner. Your job is to create a week of daily content plans that maximize engagement, align with brand pillars, and leverage current trends.
 
 Tyler is a NYC-based runner, software engineer, and entrepreneur. His brand pillars (with target distribution):
