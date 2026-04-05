@@ -60,7 +60,7 @@ export function ChiefOfStaff() {
   const [uploading, setUploading] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const expandedInputRef = useRef<HTMLInputElement>(null);
+  const expandedInputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -97,6 +97,7 @@ export function ChiefOfStaff() {
     if (!text || loading) return;
 
     setInput("");
+    if (expandedInputRef.current) expandedInputRef.current.style.height = "auto";
     const userMsg: ChatMessage = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
@@ -411,7 +412,7 @@ export function ChiefOfStaff() {
         background: C.surface,
         display: "flex",
         gap: 8,
-        alignItems: "center",
+        alignItems: "flex-end",
       }}>
         <input ref={fileRef} type="file" accept="image/*,.pdf,.csv,.txt,.json" onChange={(e) => void handleFileUpload(e)} style={{ display: "none" }} />
         <button
@@ -439,11 +440,15 @@ export function ChiefOfStaff() {
         >
           {uploading ? "\u2026" : "+"}
         </button>
-        <input
+        <textarea
           ref={expandedInputRef}
-          type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onInput={(e) => {
+            const target = e.target as HTMLTextAreaElement;
+            target.style.height = "auto";
+            target.style.height = `${Math.min(target.scrollHeight, 140)}px`;
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && input.trim()) {
               e.preventDefault();
@@ -452,6 +457,7 @@ export function ChiefOfStaff() {
           }}
           placeholder="What do you need?"
           disabled={loading}
+          rows={1}
           style={{
             flex: 1,
             background: C.card,
@@ -463,6 +469,10 @@ export function ChiefOfStaff() {
             fontFamily: C.sans,
             outline: "none",
             transition: "border-color 0.15s",
+            resize: "none",
+            overflow: "auto",
+            lineHeight: 1.4,
+            maxHeight: 140,
           }}
           onFocus={(e) => { (e.currentTarget as HTMLElement).style.borderColor = `${C.cl}50`; }}
           onBlur={(e) => { (e.currentTarget as HTMLElement).style.borderColor = C.border; }}
