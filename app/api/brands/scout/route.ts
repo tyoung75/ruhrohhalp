@@ -241,6 +241,9 @@ export async function POST(request: NextRequest) {
     );
 
     // Persist scouted brands as 'scouted' status
+    const VALID_PRIORITIES = ["P0", "P1", "P2"];
+    const VALID_RELATIONSHIP_TYPES = ["long_term", "active_user", "new", "regular_buyer", "competitor"];
+
     let persisted = 0;
     const insertErrors: { brand: string; error: string }[] = [];
     for (const rec of filtered) {
@@ -248,9 +251,9 @@ export async function POST(request: NextRequest) {
         user_id: user.id,
         brand_name: rec.brand_name,
         contact_email: rec.contact_email ?? null,
-        status: "scouted" as const,
-        priority: rec.priority ?? null,
-        relationship_type: rec.relationship_type ?? null,
+        status: "scouted",
+        priority: VALID_PRIORITIES.includes(rec.priority) ? rec.priority : null,
+        relationship_type: VALID_RELATIONSHIP_TYPES.includes(rec.relationship_type) ? rec.relationship_type : "new",
         product_usage: rec.product_usage ?? null,
         angle: rec.angle ?? null,
         estimated_value_low: typeof rec.estimated_value_low === "number" ? rec.estimated_value_low : null,
