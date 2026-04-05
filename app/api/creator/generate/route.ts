@@ -61,7 +61,7 @@ async function callChatGPT(system: string, userMessage: string, maxTokens = 2048
     body: JSON.stringify({
       model: "gpt-4.1",
       max_tokens: maxTokens,
-      temperature: 0.8,
+      temperature: 0.9,
       messages: [
         { role: "system", content: system },
         { role: "user", content: userMessage },
@@ -77,37 +77,18 @@ async function callChatGPT(system: string, userMessage: string, maxTokens = 2048
   return data.choices?.[0]?.message?.content ?? "";
 }
 
-async function callClaudeDirect(system: string, userMessage: string, maxTokens = 2048): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY for content generation");
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: AI_MODELS.PRIMARY,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content: userMessage }],
-    }),
-  });
-
-  const data = await res.json();
-  if (!res.ok || data.error) {
-    throw new Error(data.error?.message ?? `Claude call failed (${res.status})`);
-  }
-
-  return data.content?.find((c: { type: string }) => c.type === "text")?.text ?? "";
-}
-
 function parseGeneratedPosts(rawResponse: string, source: ContentGeneratorSource): GeneratedPost[] {
-  const jsonStr = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  const cleaned = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
   try {
-    const parsed = JSON.parse(jsonStr);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // Claude/ChatGPT sometimes wraps JSON in surrounding text
+      const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+      if (!arrayMatch) throw new Error("No JSON array found");
+      parsed = JSON.parse(arrayMatch[0]);
+    }
     if (!Array.isArray(parsed)) {
       console.error(`[creator-generate] ${source} returned non-array payload`);
       return [];
@@ -196,11 +177,16 @@ export async function POST(request: NextRequest) {
     const sourceCalls: Array<Promise<{ source: ContentGeneratorSource; raw: string }>> = [];
 
     if (hasAnthropicKey) {
+      // Internal: Sonnet (default model, default temperature)
       sourceCalls.push(
         callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "internal" as const, raw }))
       );
+      // Claude: Opus with higher temperature for more creative/divergent output
       sourceCalls.push(
-        callClaudeDirect(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "claude" as const, raw }))
+        callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048, {
+          model: AI_MODELS.PLATFORM_INTELLIGENCE,
+          temperature: 0.95,
+        }).then((raw) => ({ source: "claude" as const, raw }))
       );
     } else {
       console.info("[creator-generate] Skipping internal + claude generation (missing ANTHROPIC_API_KEY)");
@@ -616,8 +602,15 @@ async function auditPosts(posts: GeneratedPost[]): Promise<AuditResult[]> {
 
     const data = await res.json();
     const content = data.choices?.[0]?.message?.content ?? "";
-    const jsonStr = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(jsonStr);
+    const cleaned = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const objMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (!objMatch) throw new Error("No JSON object found in safety audit response");
+      parsed = JSON.parse(objMatch[0]);
+    }
     return parsed.results ?? [];
   } catch (error) {
     console.error("[creator-audit] Audit failed, approving all:", error);
@@ -668,8 +661,15 @@ async function auditBrandVoice(
 
     const rawResponse = await callClaude(BRAND_VOICE_AUDIT_SYSTEM, userMessage, 2048);
 
-    const jsonStr = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(jsonStr);
+    const cleaned = rawResponse.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const objMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (!objMatch) throw new Error("No JSON object found in brand audit response");
+      parsed = JSON.parse(objMatch[0]);
+    }
     return parsed.results ?? [];
   } catch (error) {
     console.error("[creator-brand-audit] Brand voice audit failed, passing all:", error);
