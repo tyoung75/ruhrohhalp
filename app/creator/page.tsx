@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { C } from "@/lib/ui";
 import { api } from "@/lib/client-api";
 import { Spinner } from "@/components/primitives";
+import { BrandScoutPanel } from "@/components/brand-scout-panel";
 import { useMobile } from "@/lib/useMobile";
 
 // ---------------------------------------------------------------------------
@@ -3657,6 +3658,8 @@ function StrategyTab() {
               })}
             </div>
           </div>
+
+          <BrandScoutPanel />
 
           {/* ── 3. What's Working / Adjustments ── */}
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 12 : 16 }}>
