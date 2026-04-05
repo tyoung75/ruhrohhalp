@@ -5,9 +5,13 @@
 import { AI_MODELS } from "@/lib/ai-config";
 
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
-const CLAUDE_MODEL = AI_MODELS.PRIMARY;
 
-export async function callClaude(system: string, userMessage: string, maxTokens = 1024): Promise<string> {
+export async function callClaude(
+  system: string,
+  userMessage: string,
+  maxTokens = 1024,
+  opts?: { model?: string; temperature?: number },
+): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY for processor enrichment");
 
@@ -19,8 +23,9 @@ export async function callClaude(system: string, userMessage: string, maxTokens 
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model: opts?.model ?? AI_MODELS.PRIMARY,
       max_tokens: maxTokens,
+      ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
       system,
       messages: [{ role: "user", content: userMessage }],
     }),
