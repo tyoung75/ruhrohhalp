@@ -14,7 +14,7 @@ interface DealDetailResponse {
 
 interface RunResponse {
   ok: boolean;
-  actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[] };
+  actions_taken: { drafted: unknown[]; replied: unknown[]; archived: unknown[]; skipped?: unknown[] };
 }
 
 interface ResearchResult {
@@ -153,11 +153,12 @@ export function BrandsDashboard() {
       "Running brand pipeline",
       async () => {
         const result = await api<RunResponse>("/api/brands/run", { method: "POST" });
-        const { drafted, replied, archived } = result.actions_taken;
+        const { drafted, replied, archived, skipped } = result.actions_taken;
         const parts = [];
         if (drafted.length) parts.push(`${drafted.length} drafted`);
         if (replied.length) parts.push(`${replied.length} replies processed`);
         if (archived.length) parts.push(`${archived.length} archived`);
+        if (skipped?.length) parts.push(`${skipped.length} skipped`);
         window.dispatchEvent(new CustomEvent("brands:refresh"));
         return parts.length ? `Pipeline complete: ${parts.join(", ")}` : "Pipeline ran — no actions needed";
       },

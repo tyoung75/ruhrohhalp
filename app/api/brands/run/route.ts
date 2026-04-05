@@ -29,12 +29,13 @@ export async function POST() {
   const { user, response } = await requireUser();
   if (response || !user) return response;
 
-  const actionsTaken: Record<string, unknown[]> = { replied: [], drafted: [], archived: [] };
+  const actionsTaken: Record<string, unknown[]> = { replied: [], drafted: [], archived: [], skipped: [] };
 
   try {
     const active = await getActivePipeline(user.id);
     const emails = active.map((d) => d.contact_email).filter((e): e is string => Boolean(e));
 
+    // Check for replies (skips gracefully if Gmail is not configured)
     const replies = await searchForBrandReplies(emails);
     for (const reply of replies) {
       const matched = active.find((d) => d.contact_email && reply.from.includes(d.contact_email));
@@ -74,56 +75,65 @@ export async function POST() {
       .slice(0, 3);
 
     for (const target of targets) {
-      if (!target.contact_email) continue;
-      const emailType = !target.last_contact_date ? "initial" : target.follow_up_count === 0 ? "follow_up_1" : "follow_up_2";
-      const prompt = emailType === "initial"
-        ? buildInitialOutreachPrompt(target, TYLER_STATS)
-        : buildFollowUpPrompt(
-            target,
-            {
-              id: "",
-              brand_deal_id: target.id,
-              sent_at: target.last_contact_date ?? new Date().toISOString(),
-              email_type: emailType,
-              subject: null,
-              gmail_thread_id: null,
-              gmail_message_id: null,
-              gmail_draft_id: null,
-              direction: "outbound",
-              summary: null,
-              created_at: new Date().toISOString(),
-            },
-            target.follow_up_count === 0 ? 1 : 2,
-            TYLER_STATS,
-          );
-      const generated = await callClaude(BRAND_VOICE_SYSTEM_PROMPT, prompt, 1024);
-      const parsed = parseDraft(generated);
-      const draft = await createBrandDraft(target.contact_email, parsed.subject, parsed.body);
+      if (!target.contact_email) {
+        actionsTaken.skipped.push({ brand: target.brand_name, reason: "No contact email" });
+        continue;
+      }
 
-      await recordEmail({
-        brand_deal_id: target.id,
-        sent_at: new Date().toISOString(),
-        email_type: emailType,
-        subject: parsed.subject,
-        gmail_thread_id: null,
-        gmail_message_id: draft.messageId,
-        gmail_draft_id: draft.draftId,
-        direction: "outbound",
-        summary: parsed.body.slice(0, 280),
-      });
+      try {
+        const emailType = !target.last_contact_date ? "initial" : target.follow_up_count === 0 ? "follow_up_1" : "follow_up_2";
+        const prompt = emailType === "initial"
+          ? buildInitialOutreachPrompt(target, TYLER_STATS)
+          : buildFollowUpPrompt(
+              target,
+              {
+                id: "",
+                brand_deal_id: target.id,
+                sent_at: target.last_contact_date ?? new Date().toISOString(),
+                email_type: emailType,
+                subject: null,
+                gmail_thread_id: null,
+                gmail_message_id: null,
+                gmail_draft_id: null,
+                direction: "outbound",
+                summary: null,
+                created_at: new Date().toISOString(),
+              },
+              target.follow_up_count === 0 ? 1 : 2,
+              TYLER_STATS,
+            );
+        const generated = await callClaude(BRAND_VOICE_SYSTEM_PROMPT, prompt, 1024);
+        const parsed = parseDraft(generated);
+        const draft = await createBrandDraft(target.contact_email, parsed.subject, parsed.body);
 
-      await updateDealStatus(target.id, "draft_ready", {
-        next_action: "Review and send draft",
-        next_action_date: new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10),
-      });
+        await recordEmail({
+          brand_deal_id: target.id,
+          sent_at: new Date().toISOString(),
+          email_type: emailType,
+          subject: parsed.subject,
+          gmail_thread_id: null,
+          gmail_message_id: draft.messageId,
+          gmail_draft_id: draft.draftId,
+          direction: "outbound",
+          summary: parsed.body.slice(0, 280),
+        });
 
-      await createFollowUpTask(user.id, {
-        ...target,
-        next_action_date: new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10),
-        next_action: `Follow up with ${target.brand_name}`,
-      });
+        await updateDealStatus(target.id, "draft_ready", {
+          next_action: draft.draftId ? "Review and send draft" : "Gmail not connected — draft saved locally",
+          next_action_date: new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10),
+        });
 
-      actionsTaken.drafted.push({ brand: target.brand_name, draftId: draft.draftId });
+        await createFollowUpTask(user.id, {
+          ...target,
+          next_action_date: new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10),
+          next_action: `Follow up with ${target.brand_name}`,
+        });
+
+        actionsTaken.drafted.push({ brand: target.brand_name, draftId: draft.draftId, gmail: !!draft.draftId });
+      } catch (draftError) {
+        logError("brands.run.draft", draftError, { brand: target.brand_name });
+        actionsTaken.skipped.push({ brand: target.brand_name, reason: draftError instanceof Error ? draftError.message : "Draft generation failed" });
+      }
     }
 
     const stale = await getStaleDeals(user.id);
@@ -136,6 +146,7 @@ export async function POST() {
     return NextResponse.json({ ok: true, actions_taken: actionsTaken, pipeline_status: summary });
   } catch (error) {
     logError("brands.run", error, { userId: user.id });
-    return NextResponse.json({ error: "Failed to run brand sourcing and drafting" }, { status: 500 });
+    const detail = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: "Failed to run brand sourcing and drafting", detail }, { status: 500 });
   }
 }
