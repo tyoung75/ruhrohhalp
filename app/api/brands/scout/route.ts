@@ -233,31 +233,34 @@ export async function POST(request: NextRequest) {
     }
 
     // Filter out any that match existing brands
+    const filteredOut = deduped
+      .filter((r) => existingBrands.some((name: string) => name.toLowerCase() === r.brand_name.toLowerCase()))
+      .map((r) => r.brand_name);
     const filtered = deduped.filter(
-      (r) => !existingBrands.some((name) => name.toLowerCase() === r.brand_name.toLowerCase()),
+      (r) => !existingBrands.some((name: string) => name.toLowerCase() === r.brand_name.toLowerCase()),
     );
 
     // Persist scouted brands as 'scouted' status
-    const now = new Date().toISOString();
     let persisted = 0;
+    const insertErrors: { brand: string; error: string }[] = [];
     for (const rec of filtered) {
-      const { error: insertErr } = await supabase.from("brand_deals").insert({
+      const row = {
         user_id: user.id,
         brand_name: rec.brand_name,
-        contact_email: rec.contact_email,
-        status: "scouted",
-        priority: rec.priority,
-        relationship_type: rec.relationship_type,
-        product_usage: rec.product_usage,
-        angle: rec.angle,
-        estimated_value_low: rec.estimated_value_low,
-        estimated_value_high: rec.estimated_value_high,
+        contact_email: rec.contact_email ?? null,
+        status: "scouted" as const,
+        priority: rec.priority ?? null,
+        relationship_type: rec.relationship_type ?? null,
+        product_usage: rec.product_usage ?? null,
+        angle: rec.angle ?? null,
+        estimated_value_low: typeof rec.estimated_value_low === "number" ? rec.estimated_value_low : null,
+        estimated_value_high: typeof rec.estimated_value_high === "number" ? rec.estimated_value_high : null,
         scout_reason: `[${rec.source.toUpperCase()}] ${rec.why}${rec.contact_source ? ` | Contact via: ${rec.contact_source}` : ""}`,
-        created_at: now,
-        updated_at: now,
-      });
+      };
+      const { error: insertErr } = await supabase.from("brand_deals").insert(row);
       if (insertErr) {
-        logError("brands.scout.insert", new Error(insertErr.message), { brand: rec.brand_name });
+        logError("brands.scout.insert", new Error(insertErr.message), { brand: rec.brand_name, row });
+        insertErrors.push({ brand: rec.brand_name, error: insertErr.message });
       } else {
         persisted++;
       }
@@ -277,18 +280,16 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // Track which brands were filtered out so we can debug
-    const filteredOut = deduped
-      .filter((r) => existingBrands.some((name) => name.toLowerCase() === r.brand_name.toLowerCase()))
-      .map((r) => r.brand_name);
-
     return NextResponse.json({
       ok: true,
       recommendations: filtered,
       claude_brands: claudeBrands,
       chatgpt_brands: chatgptBrands,
       persisted,
+      attempted: filtered.length,
       filtered_out: filteredOut,
+      insert_errors: insertErrors,
+      existing_in_db: existingBrands,
       focus: focus || null,
       existing_count: existingBrands.length,
       errors,
