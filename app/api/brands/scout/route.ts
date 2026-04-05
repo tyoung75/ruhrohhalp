@@ -5,11 +5,12 @@ import { callClaude } from "@/lib/processors/claude";
 import { TYLER_STATS, formatStatsBlock } from "@/lib/brands/voice";
 import { logError } from "@/lib/logger";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 interface ScoutRecommendation {
   brand_name: string;
   contact_email: string | null;
+  contact_source: string;
   why: string;
   relationship_type: string;
   product_usage: string;
@@ -17,6 +18,143 @@ interface ScoutRecommendation {
   estimated_value_low: number;
   estimated_value_high: number;
   priority: string;
+  source: "claude" | "chatgpt";
+}
+
+const SCOUT_SYSTEM_PROMPT = `You are a brand partnership scout for Tyler Young, a fitness micro-creator.
+
+YOUR #1 JOB: Find brands that ACTIVELY partner with micro-creators (under 10K followers) and have a REAL, FINDABLE contact method.
+
+Tyler's stats:
+{STATS}
+
+CRITICAL RULES:
+1. ONLY recommend brands where you have EVIDENCE they work with micro-creators or have a creator/ambassador program accepting small creators
+2. Every brand MUST have a validated contact method — a real partnerships email, creator program application URL, or specific contact form. Do NOT guess emails.
+3. contact_source must explain HOW you know this contact works (e.g. "Listed on their creator program page", "Found on brand website /partnerships", "Public ambassador application form")
+4. If you cannot find a real contact method, DO NOT include that brand
+5. Focus on: running, HYROX, strength training, nutrition, recovery, tech/productivity brands
+6. Prioritize brands Tyler already uses or would genuinely use
+7. Think DTC and emerging brands — they're more likely to work with micro-creators than Nike or Adidas
+8. Factor in realistic deal sizes: $200-2000 per deal, product seeding, or affiliate
+
+Output EXACTLY a JSON array of 3 objects with these fields:
+brand_name, contact_email (real email or null), contact_source (how you verified the contact), why, relationship_type ("active_user"|"regular_buyer"|"new"|"long_term"), product_usage, angle, estimated_value_low (number), estimated_value_high (number), priority ("P0"|"P1"|"P2")
+
+Return ONLY the JSON array, no markdown fences, no explanation.`;
+
+async function scoutWithClaude(
+  existingContext: string,
+  feedbackContext: string,
+  focus: string,
+): Promise<ScoutRecommendation[]> {
+  const systemPrompt = SCOUT_SYSTEM_PROMPT.replace("{STATS}", formatStatsBlock(TYLER_STATS));
+
+  const userPrompt = `Find exactly 3 brand partnership prospects for Tyler Young — a fitness micro-creator with ~6K TikTok followers who runs marathons, does HYROX, and strength trains.
+
+${focus ? `Focus area: ${focus}` : ""}
+
+IMPORTANT: Only include brands where:
+- The brand has a known creator/ambassador program OR has worked with micro-creators before
+- You can provide a REAL contact email or application URL (not guessed)
+- The partnership is realistic for someone with ~6K followers
+
+Already in pipeline (DO NOT recommend these):
+${existingContext || "None yet"}
+${feedbackContext}`;
+
+  const raw = await callClaude(systemPrompt, userPrompt, 2048);
+  const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+    if (!arrayMatch) throw new Error("No JSON array found in Claude response");
+    parsed = JSON.parse(arrayMatch[0]);
+  }
+  if (!Array.isArray(parsed)) throw new Error("Claude response is not an array");
+  return parsed.slice(0, 3).map((r: ScoutRecommendation) => ({ ...r, source: "claude" as const }));
+}
+
+async function scoutWithChatGPT(
+  existingContext: string,
+  feedbackContext: string,
+  focus: string,
+): Promise<ScoutRecommendation[]> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
+
+  const statsBlock = formatStatsBlock(TYLER_STATS);
+
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    signal: AbortSignal.timeout(55_000),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o",
+      tools: [{ type: "web_search_preview" }],
+      instructions: `You are a brand partnership scout. Use web search to find REAL brands with active creator/ambassador programs for micro-creators (under 10K followers).
+
+SEARCH STRATEGY:
+- Search for "micro creator ambassador program fitness 2025 2026"
+- Search for "running brand ambassador program small creators"
+- Search for "HYROX sponsor micro influencer program"
+- Search for "fitness brand creator partnerships application"
+- Search for "DTC fitness brand ambassador program"
+
+For each brand you find, VERIFY:
+1. They actually have a creator program or work with small creators
+2. Find the REAL contact email or application URL from their website
+3. The contact_source must cite WHERE you found this info (URL or page name)
+
+Tyler's stats:
+${statsBlock}`,
+      input: `Search the web and find exactly 3 fitness/running/HYROX/nutrition brands that:
+1. Have ACTIVE creator or ambassador programs accepting micro-creators (~6K TikTok followers)
+2. Have a VERIFIED contact method (real email or application form you found on their site)
+3. Would be a genuine fit for a marathon runner / HYROX athlete / strength training creator
+
+${focus ? `Focus area: ${focus}` : ""}
+
+Already in pipeline (DO NOT recommend these):
+${existingContext || "None yet"}
+${feedbackContext}
+
+Return ONLY a JSON array of exactly 3 objects with these fields:
+brand_name, contact_email (real verified email or null), contact_source (the URL or page where you found the contact), why, relationship_type ("active_user"|"regular_buyer"|"new"|"long_term"), product_usage (specific products Tyler could use), angle (specific pitch angle), estimated_value_low (number in dollars), estimated_value_high (number in dollars), priority ("P0"|"P1"|"P2")
+
+Return ONLY the raw JSON array — no markdown, no explanation.`,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message ?? `ChatGPT web search failed (${res.status})`);
+  }
+
+  // Extract text from the Responses API output
+  const outputText =
+    data.output?.find((o: { type: string }) => o.type === "message")?.content?.find(
+      (c: { type: string }) => c.type === "output_text",
+    )?.text ?? "";
+
+  if (!outputText) throw new Error("Empty response from ChatGPT web search");
+
+  const cleaned = outputText.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+    if (!arrayMatch) throw new Error("No JSON array found in ChatGPT response");
+    parsed = JSON.parse(arrayMatch[0]);
+  }
+  if (!Array.isArray(parsed)) throw new Error("ChatGPT response is not an array");
+  return parsed.slice(0, 3).map((r: ScoutRecommendation) => ({ ...r, source: "chatgpt" as const }));
 }
 
 export async function POST(request: NextRequest) {
@@ -55,66 +193,39 @@ export async function POST(request: NextRequest) {
       ).join("\n");
     }
 
-    const systemPrompt = `You are a brand partnership scout for Tyler Young, a fitness content creator.
-Your job is to find brands that authentically align with Tyler's life, training, and content.
+    // Run Claude and ChatGPT scouts in parallel
+    const [claudeResult, chatgptResult] = await Promise.allSettled([
+      scoutWithClaude(existingContext, feedbackContext, focus),
+      scoutWithChatGPT(existingContext, feedbackContext, focus),
+    ]);
 
-CRITICAL RULES:
-- Only recommend brands Tyler actually uses OR would genuinely use
-- Every recommendation must have a real, specific product usage angle — not generic "Tyler could promote this"
-- Prioritize brands where Tyler is already a customer or has genuine experience
-- Consider Tyler's content pillars: running (Berlin Marathon training), HYROX, strength training, nutrition, recovery, tech/productivity
-- Think about brands at all levels — emerging DTC brands are often better fits than mega-corps
-- Factor in realistic deal sizes for a creator with ~6K TikTok followers (not mega-influencer rates)
+    const claudeBrands: ScoutRecommendation[] = claudeResult.status === "fulfilled" ? claudeResult.value : [];
+    const chatgptBrands: ScoutRecommendation[] = chatgptResult.status === "fulfilled" ? chatgptResult.value : [];
 
-Tyler's stats:
-${formatStatsBlock(TYLER_STATS)}
+    if (claudeResult.status === "rejected") {
+      logError("brands.scout.claude", new Error(String(claudeResult.reason)));
+    }
+    if (chatgptResult.status === "rejected") {
+      logError("brands.scout.chatgpt", new Error(String(chatgptResult.reason)));
+    }
 
-Output EXACTLY a JSON array of objects with these fields:
-brand_name, contact_email (null if unknown), why, relationship_type ("active_user"|"regular_buyer"|"new"|"long_term"), product_usage, angle, estimated_value_low (number), estimated_value_high (number), priority ("P0"|"P1"|"P2")
-
-Return ONLY the JSON array, no markdown fences, no explanation.`;
-
-    const userPrompt = `Find 3-5 brand partnership prospects for Tyler Young.
-${focus ? `\nFocus area: ${focus}` : ""}
-
-Already in pipeline (DO NOT recommend these):
-${existingContext || "None yet"}
-${feedbackContext}
-
-Recommend brands that are:
-1. Authentic — Tyler uses or would genuinely use the product
-2. Realistic — appropriate for a micro-creator (~6K followers)
-3. Specific — include exact product usage and pitch angle
-4. Actionable — include a contact email if you can reasonably guess it (partnerships@brand.com pattern)`;
-
-    const raw = await callClaude(systemPrompt, userPrompt, 2048);
-
-    // Parse the JSON response — extract the JSON array even if Claude adds surrounding text
-    let recommendations: ScoutRecommendation[];
-    try {
-      const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-      // Try direct parse first, then extract the JSON array from surrounding text
-      try {
-        recommendations = JSON.parse(cleaned);
-      } catch {
-        const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-        if (!arrayMatch) throw new Error("No JSON array found in response");
-        recommendations = JSON.parse(arrayMatch[0]);
+    // Deduplicate across providers — prefer ChatGPT (web-searched) over Claude
+    const seen = new Set<string>();
+    const deduped: ScoutRecommendation[] = [];
+    for (const rec of [...chatgptBrands, ...claudeBrands]) {
+      const key = rec.brand_name.toLowerCase().trim();
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduped.push(rec);
       }
-      if (!Array.isArray(recommendations)) {
-        throw new Error("Response is not an array");
-      }
-    } catch (parseErr) {
-      logError("brands.scout.parse", parseErr instanceof Error ? parseErr : new Error("Failed to parse scout response"), { raw: raw.slice(0, 500) });
-      return NextResponse.json({ error: "Failed to parse brand recommendations", raw: raw.slice(0, 500) }, { status: 500 });
     }
 
     // Filter out any that match existing brands
-    const filtered = recommendations.filter(
+    const filtered = deduped.filter(
       (r) => !existingBrands.some((name) => name.toLowerCase() === r.brand_name.toLowerCase()),
     );
 
-    // Persist scouted brands as 'scouted' status so they don't vanish
+    // Persist scouted brands as 'scouted' status
     const now = new Date().toISOString();
     let persisted = 0;
     for (const rec of filtered) {
@@ -129,7 +240,7 @@ Recommend brands that are:
         angle: rec.angle,
         estimated_value_low: rec.estimated_value_low,
         estimated_value_high: rec.estimated_value_high,
-        scout_reason: rec.why,
+        scout_reason: `[${rec.source.toUpperCase()}] ${rec.why}${rec.contact_source ? ` | Contact via: ${rec.contact_source}` : ""}`,
         created_at: now,
         updated_at: now,
       });
@@ -143,9 +254,15 @@ Recommend brands that are:
     return NextResponse.json({
       ok: true,
       recommendations: filtered,
+      claude_brands: claudeBrands,
+      chatgpt_brands: chatgptBrands,
       persisted,
       focus: focus || null,
       existing_count: existingBrands.length,
+      errors: {
+        claude: claudeResult.status === "rejected" ? String(claudeResult.reason) : null,
+        chatgpt: chatgptResult.status === "rejected" ? String(chatgptResult.reason) : null,
+      },
     });
   } catch (error) {
     logError("brands.scout", error);

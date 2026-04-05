@@ -224,9 +224,14 @@ export function BrandsDashboard() {
     runBgTask(
       "Scouting brands",
       async () => {
-        const res = await api<{ ok: boolean; persisted: number }>("/api/brands/scout", { method: "POST" });
+        const res = await api<{ ok: boolean; persisted: number; claude_brands: unknown[]; chatgpt_brands: unknown[]; errors: { claude: string | null; chatgpt: string | null } }>("/api/brands/scout", { method: "POST" });
         window.dispatchEvent(new CustomEvent("brands:refresh"));
-        return `${res.persisted} new brands scouted`;
+        const parts: string[] = [];
+        if (res.chatgpt_brands?.length) parts.push(`${res.chatgpt_brands.length} web-searched`);
+        if (res.claude_brands?.length) parts.push(`${res.claude_brands.length} AI-matched`);
+        if (res.errors?.claude) parts.push("Claude failed");
+        if (res.errors?.chatgpt) parts.push("web search failed");
+        return `${res.persisted} brands scouted${parts.length ? ` (${parts.join(", ")})` : ""}`;
       },
       { onSuccess: () => setScouting(false), onError: () => setScouting(false) },
     );
@@ -545,8 +550,12 @@ export function BrandsDashboard() {
                         <div style={{ fontWeight: 700, fontSize: 13 }}>{deal.brand_name}</div>
                         {deal.priority && <span style={{ fontFamily: C.mono, fontSize: 10, color: C.cl, background: `${C.cl}15`, padding: "1px 6px", borderRadius: 4 }}>{deal.priority}</span>}
                       </div>
-                      <div style={{ color: C.textDim, fontSize: 11, marginTop: 4 }}>{deal.contact_email ?? "No contact"}</div>
-                      {deal.scout_reason && <div style={{ color: C.gem, fontSize: 10, marginTop: 4 }}>{deal.scout_reason}</div>}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                        <span style={{ color: C.textDim, fontSize: 11 }}>{deal.contact_email ?? "No contact"}</span>
+                        {deal.scout_reason?.startsWith("[CHATGPT]") && <span style={{ fontFamily: C.mono, fontSize: 8, padding: "1px 5px", borderRadius: 3, background: `${C.gpt}20`, color: C.gpt, fontWeight: 700 }}>WEB</span>}
+                        {deal.scout_reason?.startsWith("[CLAUDE]") && <span style={{ fontFamily: C.mono, fontSize: 8, padding: "1px 5px", borderRadius: 3, background: `${C.cl}20`, color: C.cl, fontWeight: 700 }}>AI</span>}
+                      </div>
+                      {deal.scout_reason && <div style={{ color: C.gem, fontSize: 10, marginTop: 4 }}>{deal.scout_reason.replace(/^\[(CLAUDE|CHATGPT)\]\s*/, "")}</div>}
                       {(deal.estimated_value_low || deal.estimated_value_high) && (
                         <div style={{ marginTop: 6, color: C.textFaint, fontSize: 10, fontFamily: C.mono }}>${deal.estimated_value_low ?? 0}–${deal.estimated_value_high ?? 0}</div>
                       )}
