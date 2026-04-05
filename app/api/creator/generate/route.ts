@@ -190,9 +190,23 @@ export async function POST(request: NextRequest) {
     }
     const sourceCalls: Array<Promise<{ source: ContentGeneratorSource; raw: string }>> = [
       callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "internal" as const, raw })),
-      callChatGPT(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "chatgpt" as const, raw })),
-      callClaudeDirect(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "claude" as const, raw })),
     ];
+
+    if (process.env.OPENAI_API_KEY) {
+      sourceCalls.push(
+        callChatGPT(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "chatgpt" as const, raw }))
+      );
+    } else {
+      console.warn("[creator-generate] OPENAI_API_KEY missing, skipping ChatGPT generation");
+    }
+
+    if (process.env.ANTHROPIC_API_KEY) {
+      sourceCalls.push(
+        callClaudeDirect(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "claude" as const, raw }))
+      );
+    } else {
+      console.warn("[creator-generate] ANTHROPIC_API_KEY missing, skipping direct Claude generation");
+    }
 
     const settledResponses = await Promise.allSettled(sourceCalls);
     const posts: GeneratedPostCandidate[] = [];
