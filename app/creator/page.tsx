@@ -1064,9 +1064,16 @@ function QueueTab() {
     runBgTask(
       "Generating content",
       async () => {
-        await api("/api/creator/generate", { method: "POST" });
+        const res = await api<{ generated: number; queued: number; flagged: number; rejected: number; insertErrors?: string[] }>("/api/creator/generate", { method: "POST" });
         window.dispatchEvent(new CustomEvent("queue:refresh"));
-        return "Content generated";
+        const parts = [];
+        if (res.queued) parts.push(`${res.queued} queued`);
+        if (res.flagged) parts.push(`${res.flagged} drafts`);
+        if (res.rejected) parts.push(`${res.rejected} rejected`);
+        if (res.insertErrors?.length) parts.push(`${res.insertErrors.length} insert errors`);
+        if (!parts.length) return `${res.generated} generated but none passed audit`;
+        if (!res.queued && !res.flagged) return `${res.generated} generated — ${parts.join(", ")}`;
+        return parts.join(", ");
       },
       { onSuccess: () => setSaving(false), onError: () => setSaving(false) },
     );
