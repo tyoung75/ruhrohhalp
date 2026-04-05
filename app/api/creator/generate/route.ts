@@ -46,6 +46,7 @@ interface BrandVoiceAuditResult {
 }
 
 type ContentGeneratorSource = "internal" | "chatgpt" | "claude";
+type GeneratedCandidate = { post: GeneratedPost; source: ContentGeneratorSource };
 
 async function callChatGPT(system: string, userMessage: string, maxTokens = 2048): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -182,23 +183,54 @@ export async function POST(request: NextRequest) {
     } else {
       userMessage = `Here is today's context for content generation:\n\n${JSON.stringify(context, null, 2)}${memoryBlock}\n\nGenerate 5 posts across platforms based on this context. Learn from the performance data above — lean into patterns that worked and avoid patterns that didn't. Return ONLY a JSON array.`;
     }
-    const sourceCalls: Array<Promise<{ source: ContentGeneratorSource; raw: string }>> = [
-      callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "internal" as const, raw })),
-      callChatGPT(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "chatgpt" as const, raw })),
-      callClaudeDirect(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "claude" as const, raw })),
-    ];
+    const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+    const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY;
+
+    if (!hasOpenAIKey && !hasAnthropicKey) {
+      return NextResponse.json(
+        { error: "No model API keys configured (OPENAI_API_KEY or ANTHROPIC_API_KEY required)" },
+        { status: 500 }
+      );
+    }
+
+    const sourceCalls: Array<Promise<{ source: ContentGeneratorSource; raw: string }>> = [];
+
+    if (hasAnthropicKey) {
+      sourceCalls.push(
+        callClaude(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "internal" as const, raw }))
+      );
+      sourceCalls.push(
+        callClaudeDirect(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "claude" as const, raw }))
+      );
+    } else {
+      console.info("[creator-generate] Skipping internal + claude generation (missing ANTHROPIC_API_KEY)");
+    }
+
+    if (hasOpenAIKey) {
+      sourceCalls.push(
+        callChatGPT(CONTENT_AGENT_SYSTEM, userMessage, 2048).then((raw) => ({ source: "chatgpt" as const, raw }))
+      );
+    } else {
+      console.info("[creator-generate] Skipping chatgpt generation (missing OPENAI_API_KEY)");
+    }
 
     const settledResponses = await Promise.allSettled(sourceCalls);
-    const posts: GeneratedPost[] = [];
+    const candidates: GeneratedCandidate[] = [];
+    const generatedByModel: Record<ContentGeneratorSource, number> = { internal: 0, chatgpt: 0, claude: 0 };
 
     for (const result of settledResponses) {
       if (result.status === "fulfilled") {
-        posts.push(...parseGeneratedPosts(result.value.raw, result.value.source));
+        const parsed = parseGeneratedPosts(result.value.raw, result.value.source);
+        for (const post of parsed) {
+          candidates.push({ post, source: result.value.source });
+        }
+        generatedByModel[result.value.source] += parsed.length;
       } else {
         console.error("[creator-generate] Model call failed:", result.reason);
       }
     }
 
+    const posts = candidates.map((c) => c.post);
     if (!Array.isArray(posts) || posts.length === 0) {
       return NextResponse.json({ error: "No posts generated" }, { status: 500 });
     }
@@ -217,6 +249,7 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < posts.length; i++) {
       const post = posts[i];
+      const modelSource = candidates[i]?.source ?? "internal";
       const audit = auditResults.find((a) => a.index === i);
       const brandAudit = brandVoiceResults.find((a) => a.index === i);
 
@@ -295,7 +328,8 @@ export async function POST(request: NextRequest) {
         brand_voice_score: auditedBrandScore,
         timeliness_score: post.timeliness_score ?? null,
         agent_reasoning: reasoning,
-        context_snapshot: { ...context, brand_audit: brandAuditMeta },
+        model_source: modelSource,
+        context_snapshot: { ...context, brand_audit: brandAuditMeta, model_source: modelSource },
       }).select("id").single();
 
       if (error) {
@@ -312,6 +346,7 @@ export async function POST(request: NextRequest) {
       flagged: flagged.length,
       rejected: rejected.length,
       queueIds: queued,
+      generatedByModel,
     });
   } catch (error) {
     console.error("[creator-generate] Error:", error);
