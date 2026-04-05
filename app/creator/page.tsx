@@ -8,7 +8,7 @@ import { Spinner } from "@/components/primitives";
 import { BrandScoutPanel } from "@/components/brand-scout-panel";
 import { useMobile } from "@/lib/useMobile";
 import { BrandsDashboard } from "@/components/brands/BrandsDashboard";
-import { ContentCalendar } from "@/components/creator/ContentCalendar";
+
 import { MediaPipeline } from "@/components/creator/MediaPipeline";
 
 // ---------------------------------------------------------------------------
