@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
     if (topPostIds.length) {
       const { data: postBodies } = await supabase
         .from("content_queue")
-        .select("id, body, platform, content_type, source, created_at")
+        .select("id, body, platform, content_type, source, model_source, created_at")
         .in("id", topPostIds);
 
       topPosts = sorted.slice(0, 5).map((metric) => {
@@ -90,6 +90,7 @@ export async function GET(request: NextRequest) {
           body: (post?.body as string)?.slice(0, 280) ?? "",
           platform: metric.platform,
           source: post?.source ?? "creator_os",
+          model_source: (post?.model_source as string) ?? null,
           impressions: metric.impressions,
           likes: metric.likes,
           replies: metric.replies,
@@ -176,7 +177,41 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 8. Per-post analytics lookup (for History tab — all posts, not just top 5)
+    // 8. Model breakdown (performance by generating model)
+    let modelBreakdown: Record<string, { posts: number; impressions: number; avgEngagement: number }> = {};
+    if (allQueueIds.length) {
+      const { data: modelPosts } = await supabase
+        .from("content_queue")
+        .select("id, model_source")
+        .in("id", allQueueIds);
+
+      const modelMap = new Map(
+        (modelPosts ?? []).map((p: Record<string, unknown>) => [p.id as string, (p.model_source as string) ?? "unknown"])
+      );
+
+      const modelBuckets = new Map<string, { posts: number; impressions: number; totalEngagement: number }>();
+      for (const metric of uniqueMetrics) {
+        const model = modelMap.get(metric.content_queue_id as string) ?? "unknown";
+        const existing = modelBuckets.get(model) ?? { posts: 0, impressions: 0, totalEngagement: 0 };
+        existing.posts++;
+        existing.impressions += (metric.impressions as number) ?? 0;
+        existing.totalEngagement += (metric.engagement_rate as number) ?? 0;
+        modelBuckets.set(model, existing);
+      }
+
+      modelBreakdown = Object.fromEntries(
+        Array.from(modelBuckets.entries()).map(([model, data]) => [
+          model,
+          {
+            posts: data.posts,
+            impressions: data.impressions,
+            avgEngagement: data.posts > 0 ? data.totalEngagement / data.posts : 0,
+          },
+        ])
+      );
+    }
+
+    // 9. Per-post analytics lookup (for History tab — all posts, not just top 5)
     const allPostAnalytics = uniqueMetrics.map((m) => ({
       content_queue_id: m.content_queue_id,
       platform: m.platform,
@@ -187,7 +222,7 @@ export async function GET(request: NextRequest) {
       engagement_rate: m.engagement_rate,
     }));
 
-    // 9. Queue status
+    // 10. Queue status
     const { data: queueCounts } = await supabase
       .from("content_queue")
       .select("status")
@@ -199,7 +234,7 @@ export async function GET(request: NextRequest) {
       queueStatus[status] = (queueStatus[status] ?? 0) + 1;
     }
 
-    // 10. Most recent analytics pull timestamp
+    // 11. Most recent analytics pull timestamp
     const { data: latestFetch } = await supabase
       .from("post_analytics")
       .select("fetched_at")
@@ -221,6 +256,7 @@ export async function GET(request: NextRequest) {
       top_posts: topPosts,
       all_post_analytics: allPostAnalytics,
       source_breakdown: sourceBreakdown,
+      model_breakdown: modelBreakdown,
       daily_trend: trend,
       platforms,
       queue_status: queueStatus,
