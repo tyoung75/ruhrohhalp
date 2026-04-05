@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { callClaude } from "@/lib/processors/claude";
 import { TYLER_STATS, formatStatsBlock } from "@/lib/brands/voice";
