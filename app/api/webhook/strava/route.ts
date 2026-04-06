@@ -22,6 +22,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { syncStravaActivities } from "@/lib/strava/sync";
+import { getActivity } from "@/lib/strava/client";
+import { generateWorkoutPost } from "@/lib/creator/workout-post";
 import { logError } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -82,11 +84,25 @@ export async function POST(request: NextRequest) {
   // For create/update: trigger a sync of recent activities (deduped by source_ref)
   try {
     const result = await syncStravaActivities();
+
+    // After syncing, generate a Threads post for new activities
+    let postResult: { queued: boolean; postId?: string; error?: string } | null = null;
+    if (event.aspect_type === "create") {
+      try {
+        const activity = await getActivity(event.object_id);
+        postResult = await generateWorkoutPost(activity);
+      } catch (postErr) {
+        logError("webhook.strava.post-gen", postErr);
+        postResult = { queued: false, error: postErr instanceof Error ? postErr.message : "Post generation failed" };
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       event_type: event.aspect_type,
       activity_id: event.object_id,
       sync: result,
+      post: postResult,
     });
   } catch (error) {
     logError("webhook.strava", error);
