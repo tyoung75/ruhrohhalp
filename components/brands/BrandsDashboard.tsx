@@ -225,16 +225,25 @@ export function BrandsDashboard() {
     runBgTask(
       "Scouting brands",
       async () => {
-        const res = await api<{ ok: boolean; persisted: number; attempted?: number; filtered_out?: string[]; insert_errors?: { brand: string; error: string }[]; claude_brands: unknown[]; chatgpt_brands: unknown[]; errors: { claude: string | null; chatgpt: string | null } }>("/api/brands/scout", { method: "POST" });
+        const res = await api<{ ok: boolean; persisted: number; attempted?: number; filtered_out?: string[]; insert_errors?: { brand: string; error: string }[]; existing_in_db?: string[]; claude_brands: unknown[]; chatgpt_brands: unknown[]; errors: { claude: string | null; chatgpt: string | null } }>("/api/brands/scout", { method: "POST" });
+        console.log("[Scout Brands] Full response:", JSON.stringify(res, null, 2));
         window.dispatchEvent(new CustomEvent("brands:refresh"));
+        if (res.insert_errors?.length) {
+          console.error("[Scout Brands] Insert errors:", res.insert_errors);
+        }
         const parts: string[] = [];
         if (res.chatgpt_brands?.length) parts.push(`${res.chatgpt_brands.length} web`);
         if (res.claude_brands?.length) parts.push(`${res.claude_brands.length} AI`);
-        if (res.filtered_out?.length) parts.push(`${res.filtered_out.length} dupes skipped`);
-        if (res.insert_errors?.length) parts.push(`${res.insert_errors.length} insert failed: ${res.insert_errors.map((e) => e.error).join(", ")}`);
-        if (res.errors?.claude) parts.push("Claude failed");
-        if (res.errors?.chatgpt) parts.push("web search failed");
-        return `${res.persisted}/${res.attempted ?? "?"} brands saved (${parts.join(", ")})`;
+        if (res.filtered_out?.length) parts.push(`${res.filtered_out.length} dupes`);
+        if (res.insert_errors?.length) parts.push(`${res.insert_errors.length} failed`);
+        if (res.errors?.claude) parts.push("Claude err");
+        if (res.errors?.chatgpt) parts.push("GPT err");
+        const msg = `${res.persisted}/${res.attempted ?? "?"} saved (${parts.join(", ")})`;
+        if (res.insert_errors?.length) {
+          const errDetail = res.insert_errors.map((e) => `${e.brand}: ${e.error}`).join("\n");
+          showToast(`${msg}\n\nInsert errors:\n${errDetail}`, res.persisted > 0 ? "success" : "error");
+        }
+        return msg;
       },
       { onSuccess: () => setScouting(false), onError: () => setScouting(false) },
     );
@@ -422,6 +431,9 @@ export function BrandsDashboard() {
             border: `1px solid ${toast.type === "error" ? "#ef444450" : "#22c55e50"}`,
             boxShadow: "0 4px 12px #0006",
             cursor: "pointer",
+            maxWidth: 500,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
           }}
           onClick={() => setToast(null)}
         >
