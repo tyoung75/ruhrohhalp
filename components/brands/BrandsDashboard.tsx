@@ -243,10 +243,6 @@ export function BrandsDashboard() {
       { onSuccess: () => setScouting(false), onError: () => setScouting(false) },
     );
   }
-      },
-      { onSuccess: () => setScouting(false), onError: () => setScouting(false) },
-    );
-  }
 
   async function promoteDeal(id: string, status: string) {
     try {
