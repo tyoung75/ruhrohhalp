@@ -1067,11 +1067,12 @@ function QueueTab() {
     runBgTask(
       "Generating content",
       async () => {
-        const res = await api<{ generated: number; queued: number; flagged: number; rejected: number; insertErrors?: string[] }>("/api/creator/generate", { method: "POST" });
+        const res = await api<{ generated: number; deduplicated?: number; queued: number; flagged: number; rejected: number; insertErrors?: string[] }>("/api/creator/generate", { method: "POST" });
         window.dispatchEvent(new CustomEvent("queue:refresh"));
         const parts = [];
         if (res.queued) parts.push(`${res.queued} queued`);
         if (res.flagged) parts.push(`${res.flagged} drafts`);
+        if (res.deduplicated) parts.push(`${res.deduplicated} deduped`);
         if (res.rejected) parts.push(`${res.rejected} rejected`);
         if (res.insertErrors?.length) parts.push(`${res.insertErrors.length} DB errors: ${res.insertErrors[0]}`);
         if (!parts.length) return `${res.generated} generated but none passed audit`;
