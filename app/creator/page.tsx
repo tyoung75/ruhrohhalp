@@ -1054,7 +1054,10 @@ function QueueTab() {
     setEditBody(item.body);
     setEditSchedule(
       item.scheduled_for
-        ? new Date(item.scheduled_for).toISOString().slice(0, 16)
+        ? (() => {
+            const d = new Date(item.scheduled_for);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+          })()
         : ""
     );
   }
@@ -1064,11 +1067,12 @@ function QueueTab() {
     runBgTask(
       "Generating content",
       async () => {
-        const res = await api<{ generated: number; queued: number; flagged: number; rejected: number; insertErrors?: string[] }>("/api/creator/generate", { method: "POST" });
+        const res = await api<{ generated: number; deduplicated?: number; queued: number; flagged: number; rejected: number; insertErrors?: string[] }>("/api/creator/generate", { method: "POST" });
         window.dispatchEvent(new CustomEvent("queue:refresh"));
         const parts = [];
         if (res.queued) parts.push(`${res.queued} queued`);
         if (res.flagged) parts.push(`${res.flagged} drafts`);
+        if (res.deduplicated) parts.push(`${res.deduplicated} deduped`);
         if (res.rejected) parts.push(`${res.rejected} rejected`);
         if (res.insertErrors?.length) parts.push(`${res.insertErrors.length} DB errors: ${res.insertErrors[0]}`);
         if (!parts.length) return `${res.generated} generated but none passed audit`;
@@ -1904,14 +1908,16 @@ function QueueTab() {
                                   // Find the next upcoming optimal hour (today or tomorrow)
                                   const now = new Date();
                                   const currentHour = now.getHours();
-                                  const nextBestHour = bestHours.find((h) => h > currentHour);
+                                  // Convert UTC bestHours to local hours for comparison
+                                  const localBestHours = bestHours.map((utcH) => { const d = new Date(); d.setUTCHours(utcH, 0, 0, 0); return d.getHours(); });
+                                  const nextBestHour = localBestHours.find((h) => h > currentHour);
                                   const target = new Date();
                                   if (nextBestHour !== undefined) {
                                     target.setHours(nextBestHour, 0, 0, 0);
                                   } else {
                                     // All optimal hours passed today — use first optimal hour tomorrow
                                     target.setDate(target.getDate() + 1);
-                                    target.setHours(bestHours[0] ?? 8, 0, 0, 0);
+                                    target.setHours(localBestHours[0] ?? 8, 0, 0, 0);
                                   }
                                   // Format as local datetime-local string (not UTC via toISOString)
                                   const local = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}T${String(target.getHours()).padStart(2, "0")}:${String(target.getMinutes()).padStart(2, "0")}`;
@@ -2025,7 +2031,7 @@ function QueueTab() {
                       }}
                     />
                     <span style={{ fontFamily: C.mono, fontSize: 8, color: C.textFaint }}>
-                      Peak engagement hours: {bestHours.map((h) => `${h > 12 ? h - 12 : h}${h >= 12 ? "pm" : "am"}`).join(", ")}
+                      Peak engagement hours: {bestHours.map((utcH) => { const d = new Date(); d.setUTCHours(utcH, 0, 0, 0); const h = d.getHours(); return `${h > 12 ? h - 12 : h === 0 ? 12 : h}${h >= 12 ? "pm" : "am"}`; }).join(", ")}
                     </span>
                   </div>
                 )}

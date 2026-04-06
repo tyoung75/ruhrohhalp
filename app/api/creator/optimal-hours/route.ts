@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
     for (const post of (posts ?? []) as Record<string, unknown>[]) {
       const timestamp = (post.scheduled_for as string) || (post.updated_at as string);
       if (timestamp) {
-        postHourMap.set(post.id as string, new Date(timestamp).getHours());
+        postHourMap.set(post.id as string, new Date(timestamp).getUTCHours());
       }
     }
 
